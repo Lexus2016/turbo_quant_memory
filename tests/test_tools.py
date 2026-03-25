@@ -10,10 +10,21 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from turbo_memory_mcp.contracts import PHASE_1_TOOL_NAMES
+from turbo_memory_mcp.contracts import PHASE_2_TOOL_NAMES
+from turbo_memory_mcp.identity import resolve_project_identity
+from turbo_memory_mcp.server import build_current_project_payload
+from turbo_memory_mcp.store import resolve_storage_root
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TOOL_NAMES = ["health", "server_info", "list_scopes", "self_test"]
+EXPECTED_TOOL_NAMES = [
+    "health",
+    "server_info",
+    "list_scopes",
+    "self_test",
+    "remember_note",
+    "promote_note",
+    "search_memory",
+]
 
 
 def _result_payload(result: Any) -> dict[str, Any]:
@@ -53,7 +64,7 @@ def collect_server_contract() -> dict[str, Any]:
 def test_tool_catalog_is_exact() -> None:
     contract = collect_server_contract()
 
-    assert list(PHASE_1_TOOL_NAMES) == EXPECTED_TOOL_NAMES
+    assert list(PHASE_2_TOOL_NAMES) == EXPECTED_TOOL_NAMES
     assert contract["tool_names"] == EXPECTED_TOOL_NAMES
 
 
@@ -67,6 +78,7 @@ def test_health_payload_matches_runtime_contract() -> None:
 
 def test_server_info_payload_fields() -> None:
     payload = collect_server_contract()["server_info"]
+    expected_project = build_current_project_payload(resolve_project_identity(cwd=PROJECT_ROOT))
 
     assert payload["product_name"] == "Turbo Quant Memory for AI Agents"
     assert payload["package_name"] == "turbo-memory-mcp"
@@ -80,22 +92,29 @@ def test_server_info_payload_fields() -> None:
         "OpenCode",
     ]
     assert payload["client_tiers"]["tier_2"] == ["Antigravity"]
+    assert payload["default_write_scope"] == "project"
+    assert payload["default_query_mode"] == "hybrid"
+    assert payload["query_modes"] == ["project", "global", "hybrid"]
+    assert payload["storage_root"] == str(resolve_storage_root())
+    assert payload["current_project"] == expected_project
 
 
-def test_reserved_scopes_are_exposed() -> None:
+def test_live_scope_contract_exposes_active_namespace_modes() -> None:
     payload = collect_server_contract()["list_scopes"]
     scopes = payload["scopes"]
 
     assert [scope["name"] for scope in scopes] == ["project", "global", "hybrid"]
-    assert [scope["status"] for scope in scopes] == ["planned", "planned", "planned"]
-    assert all("later phases" in scope["note"] for scope in scopes)
+    assert [scope["status"] for scope in scopes] == ["active", "active", "active"]
+    assert [scope["writes"] for scope in scopes] == ["default", "promotion_only", "read_only"]
+    assert payload["default_write_scope"] == "project"
+    assert payload["default_query_mode"] == "hybrid"
 
 
-def test_self_test_summarises_contract() -> None:
+def test_self_test_summarises_namespace_contract() -> None:
     payload = collect_server_contract()["self_test"]
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 4
+    assert payload["tool_count"] == 7
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"
@@ -105,3 +124,7 @@ def test_self_test_summarises_contract() -> None:
         "Cursor",
         "OpenCode",
     ]
+    assert payload["storage_root"] == str(resolve_storage_root())
+    assert payload["namespace_contract"]["default_write_scope"] == "project"
+    assert payload["namespace_contract"]["default_query_mode"] == "hybrid"
+    assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
