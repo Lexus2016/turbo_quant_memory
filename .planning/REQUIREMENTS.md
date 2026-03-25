@@ -14,10 +14,10 @@
 
 ### Scope
 
-- [ ] **SCP-01**: User can store and query project-scoped memory tied to the current repository. / Користувач може зберігати і запитувати project-scoped memory, прив'язану до поточного репозиторію.
-- [ ] **SCP-02**: User can store and query global memory shared across all projects on the same machine. / Користувач може зберігати і запитувати global memory, спільну для всіх проєктів на одній машині.
-- [ ] **SCP-03**: Agent can search in `project`, `global`, or `hybrid` mode with deterministic precedence rules. / Агент може шукати в режимах `project`, `global` або `hybrid` з детермінованими правилами пріоритету.
-- [ ] **SCP-04**: Every returned result identifies its scope and project origin to prevent accidental cross-project contamination. / Кожен повернений результат ідентифікує свій scope і project origin, щоб запобігти випадковому змішуванню проєктів.
+- [x] **SCP-01**: User can store and query project-scoped memory tied to the current repository. / Користувач може зберігати і запитувати project-scoped memory, прив'язану до поточного репозиторію.
+- [x] **SCP-02**: User can store and query global memory shared across all projects on the same machine. / Користувач може зберігати і запитувати global memory, спільну для всіх проєктів на одній машині.
+- [x] **SCP-03**: Agent can search in `project`, `global`, or `hybrid` mode with deterministic precedence rules. / Агент може шукати в режимах `project`, `global` або `hybrid` з детермінованими правилами пріоритету.
+- [x] **SCP-04**: Every returned result identifies its scope and project origin to prevent accidental cross-project contamination. / Кожен повернений результат ідентифікує свій scope і project origin, щоб запобігти випадковому змішуванню проєктів.
 
 ### Ingestion
 
@@ -81,10 +81,10 @@
 | INT-02 | Phase 1 | Complete |
 | INT-03 | Phase 1 | Complete |
 | INT-04 | Phase 1 | Complete |
-| SCP-01 | Phase 2 | Pending |
-| SCP-02 | Phase 2 | Pending |
-| SCP-03 | Phase 2 | Pending |
-| SCP-04 | Phase 2 | Pending |
+| SCP-01 | Phase 2 | Complete |
+| SCP-02 | Phase 2 | Complete |
+| SCP-03 | Phase 2 | Complete |
+| SCP-04 | Phase 2 | Complete |
 | ING-01 | Phase 3 | Pending |
 | ING-02 | Phase 3 | Pending |
 | ING-03 | Phase 3 | Pending |
@@ -106,4 +106,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after Phase 1 execution*
+*Last updated: 2026-03-25 after Phase 2 execution*
