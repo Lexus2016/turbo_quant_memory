@@ -1,241 +1,203 @@
 # Memory Strategy / Стратегія пам'яті
 
-## 1. One Server, Many Clients / Один сервер, багато клієнтів
+## 1. Implemented Shape / Реалізована форма
 
-The right shape is **one core MCP memory server** and **thin client-specific configs**, not different memory implementations per agent.
+The implemented shape is **one core local stdio MCP server** with **thin client-specific configs**.
 
-Правильна форма тут: **один core MCP memory server** і **тонкі client-specific config-обгортки**, а не різні реалізації пам'яті для кожного агента.
+Реалізована форма: **один core local stdio MCP server** з **тонкими client-specific config-обгортками**.
 
-### Verified integration targets / Підтверджені цілі інтеграції
+There is no separate memory implementation per agent.
 
-| Client | Verified integration pattern | Recommended scope model |
-|--------|------------------------------|--------------------------|
-| Claude Code | `claude mcp add ...` and `.mcp.json` | project + user |
-| Codex | `codex mcp add ...` and config file support | project + user |
-| Cursor | `.cursor/mcp.json` or user-level Cursor MCP config | project + user |
-| OpenCode | `mcp` config with local or remote server definitions | project + user |
-| Antigravity | Custom MCP server config in the agent UI/raw config flow | project + user |
+Окремої реалізації пам'яті під кожного агента немає.
 
-## 2. Memory Topology / Топологія пам'яті
+## 2. Active Namespaces / Активні namespace
 
-I recommend **two scopes from day one**:
+Phase 2 implements two stored namespaces and one merged read mode:
 
-Я рекомендую **два scopes з першого дня**:
+Phase 2 реалізує два stored namespace і один merged read mode:
 
-1. **Project scope**
-2. **Global scope**
+1. `project`
+2. `global`
+3. `hybrid`
 
-### Project scope / Project scope
+### `project`
 
-Used for repository-specific knowledge:
+- default write target
+- repository-local knowledge
+- used for notes tied to one codebase
 
-Використовується для knowledge, специфічного для конкретного репозиторію:
+- дефолтна ціль для запису
+- knowledge, прив’язане до конкретного репозиторію
+- використовується для notes, пов’язаних з одним codebase
 
-- project docs
-- ADRs
-- local conventions
-- project TODOs
-- session conclusions tied to one codebase
+### `global`
 
-### Global scope / Global scope
+- reusable knowledge across repositories
+- populated only through explicit promotion
+- keeps provenance back to the original project note
 
-Used for reusable knowledge across repositories:
+- reusable knowledge між різними репозиторіями
+- поповнюється лише через явну промоцію
+- зберігає provenance до оригінальної project-note
 
-Використовується для reusable knowledge між різними репозиторіями:
+### `hybrid`
 
-- coding preferences
-- deployment recipes
-- reusable debugging playbooks
-- template prompts
-- architectural patterns that are not project-specific
+- default read mode
+- merges project and global results
+- applies a strong project bias with deterministic ordering
 
-## 3. Default Search Behavior / Поведінка пошуку за замовчуванням
+- дефолтний режим читання
+- зливає project і global результати
+- застосовує сильний project bias з детермінованим порядком
 
-The default should be **hybrid with project bias**:
+## 3. Current Project Identity / Ідентичність поточного проєкту
 
-Дефолт має бути **hybrid із project bias**:
+Current project identity is resolved in this order:
 
-1. Search the current project namespace first.
-2. Search the global namespace second.
-3. Merge results with a strong score bonus for the current project.
-4. Never let global memory override a clearly better project-local result.
+Ідентичність поточного проєкту резолвиться в такому порядку:
 
-1. Спочатку шукати в namespace поточного проєкту.
-2. Потім шукати в global namespace.
-3. Зливати результати з сильним score-bonus для поточного проєкту.
-4. Ніколи не дозволяти global memory перекривати явно кращий project-local результат.
+1. normalized `origin` remote URL
+2. repo-root path hash fallback
+3. explicit overrides when provided
 
-### Supported query modes / Підтримувані режими запиту
+1. нормалізований `origin` remote URL
+2. fallback на hash від root path репозиторію
+3. явні overrides, якщо їх передано
 
-- `project`
-- `global`
-- `hybrid` (default)
+Supported overrides:
 
-## 4. Write Policy / Політика запису
+Підтримувані overrides:
 
-The safe default is:
+- `TQMEMORY_PROJECT_ROOT`
+- `TQMEMORY_PROJECT_ID`
+- `TQMEMORY_PROJECT_NAME`
 
-Безпечний дефолт:
+## 4. Physical Storage / Фізичне зберігання
 
-- all new notes go to `project` scope;
-- only explicitly reusable knowledge is promoted to `global`.
+Current storage is file-backed and local-first:
 
-- усі нові notes ідуть у `project` scope;
-- лише явно reusable knowledge переводиться в `global`.
-
-### Promotion rule / Правило промоції
-
-Add an explicit tool or parameter for promotion:
-
-Додати явний tool або параметр для промоції:
-
-- `remember_note(..., scope="project")`
-- `promote_note(note_id, to="global")`
-
-This prevents accidental pollution of cross-project memory.
-
-Це запобігає випадковому засміченню cross-project memory.
-
-## 5. Physical Storage Proposal / Пропозиція щодо фізичного зберігання
-
-Recommended base directory:
-
-Рекомендована базова директорія:
-
-`~/.turbo-quant-memory/`
-
-Suggested structure:
-
-Запропонована структура:
+Поточне зберігання є file-backed і local-first:
 
 ```text
 ~/.turbo-quant-memory/
-  store/
-    lancedb/
   projects/
     <project_id>/
+      manifest.json
       notes/
-      manifests/
+        <note_id>.json
   global/
+    manifest.json
     notes/
-    manifests/
-  cache/
-  logs/
+      <note_id>.json
 ```
 
-### Project identity / Ідентичність проєкту
+Notes and manifests are written atomically via `NamedTemporaryFile(...)` + `os.replace(...)`.
 
-Each repository should have a stable `project_id`, derived from:
+Notes і manifests пишуться атомарно через `NamedTemporaryFile(...)` + `os.replace(...)`.
 
-Кожен репозиторій має мати стабільний `project_id`, який походить із:
+## 5. Write Policy / Політика запису
 
-- repo remote URL if available;
-- otherwise repo root path hash;
-- plus a human-readable project name.
+The implemented write policy is:
 
-- remote URL репозиторію, якщо вона є;
-- інакше hash від root path репозиторію;
-- плюс human-readable назва проєкту.
+Реалізована політика запису:
 
-## 6. Result Envelope / Формат результату
+- `remember_note(..., scope="project")` stores a project note
+- direct public writes to `global` are rejected
+- `promote_note(note_id)` creates the reusable global copy
 
-Every retrieval result should include:
+- `remember_note(..., scope="project")` зберігає project-note
+- прямі публічні записи в `global` відхиляються
+- `promote_note(note_id)` створює reusable global-copy
 
-Кожен retrieval-result має містити:
+This keeps `global` curated and prevents cross-project contamination.
+
+Це тримає `global` curated і запобігає cross-project contamination.
+
+## 6. Default Search Behaviour / Дефолтна поведінка пошуку
+
+`search_memory` supports:
+
+`search_memory` підтримує:
+
+- `project`
+- `global`
+- `hybrid`
+
+`hybrid` is the default and follows these rules:
+
+`hybrid` є дефолтом і працює за такими правилами:
+
+1. merge project and global candidates
+2. apply a strong project bonus
+3. tie-break by project preference, then newer `updated_at`, then stable item identity
+
+1. злити project і global candidates
+2. застосувати сильний project bonus
+3. tie-break: спочатку project preference, потім новіший `updated_at`, потім стабільний item identity
+
+## 7. Result Envelope / Формат результату
+
+Every returned item includes compact provenance fields:
+
+Кожен повернений item містить компактні provenance-поля:
 
 - `scope`
 - `project_id`
 - `project_name`
-- `block_id`
+- `source_kind`
+- `item_id`
 - `source_path`
-- `heading_path`
-- `score`
+- `updated_at`
 - `confidence`
 - `can_hydrate`
+- `promoted_from` when relevant / коли релевантно
 
-This is critical for trust and debugging.
+The payload also includes lightweight usability fields:
 
-Це критично для довіри і дебагу.
+Payload також містить легкі usability-поля:
 
-## 7. How Agents Should Use It / Як агенти мають це використовувати
+- `title`
+- `content_preview`
+- `tags`
+
+This keeps trust high without paying for heavy debug metadata on every result.
+
+Це тримає trust високим без оплати важких debug metadata у кожному результаті.
+
+## 8. Promotion Provenance / Provenance промоції
+
+Promoted global notes preserve `promoted_from`, which points back to:
+
+Promoted global-notes зберігають `promoted_from`, який вказує назад на:
+
+- original `project` scope
+- source `project_id`
+- source `project_name`
+- original `note_id`
+- original `source_path`
+
+This makes cross-project reuse traceable instead of opaque.
+
+Це робить cross-project reuse traceable, а не opaque.
+
+## 9. How Agents Should Use It / Як агенти мають це використовувати
 
 ### Within one project / В межах одного проєкту
 
-- Use `hybrid` search by default.
-- Prefer project hits.
-- Hydrate only when compressed recall is insufficient.
-- Write decisions back into the same project namespace.
+1. write into `project`
+2. query with `hybrid`
+3. prefer the first `project` hit when it is clearly relevant
 
-- Використовувати `hybrid` search за замовчуванням.
-- Віддавати пріоритет project hits.
-- Робити hydrate лише коли compressed recall недостатній.
-- Записувати рішення назад у namespace цього ж проєкту.
+1. записувати в `project`
+2. запитувати через `hybrid`
+3. віддавати пріоритет першому `project` hit, коли він явно релевантний
 
-### Across all projects / Між усіма проєктами
+### Across many projects / Між багатьма проєктами
 
-- Search global memory only for reusable patterns or user preferences.
-- Promote project notes to global only after explicit confirmation or rule-based validation.
-- Keep global memory small and high-signal.
+1. promote only reusable knowledge
+2. search `global` when you need cross-project patterns
+3. keep `global` small and high-signal
 
-- Шукати global memory лише для reusable patterns або user preferences.
-- Промотувати project notes у global лише після явного підтвердження або rule-based validation.
-- Тримати global memory маленькою і high-signal.
-
-## 8. Why This Is Better Than a Single Flat Memory / Чому це краще за одну плоску пам'ять
-
-Flat shared memory causes contamination:
-
-Плоска shared memory створює contamination:
-
-- one repo leaks assumptions into another;
-- reusable patterns drown in local noise;
-- agents lose confidence in what is actually current.
-
-- один репозиторій "протікає" своїми припущеннями в інший;
-- reusable patterns тонуть у локальному шумі;
-- агенти втрачають впевненість у тому, що саме є актуальним.
-
-The two-scope model keeps memory useful without making it dangerous.
-
-Модель із двома scopes зберігає memory корисною, не роблячи її небезпечною.
-
-## 9. Rollout Proposal / Пропозиція по rollout
-
-### Stage 1
-
-- Local stdio MCP server
-- Claude Code + Codex + Cursor + OpenCode + Antigravity config examples
-- Project and global scopes
-- Hybrid retrieval with project bias
-
-### Stage 2
-
-- Optional remote HTTP deployment for team-shared memory
-- Optional OAuth or API-key auth
-- Team scope between `project` and `global`
-
-### Stage 3
-
-- Benchmarks for token savings and answer quality
-- Quality-aware hydration policies
-- Promotion heuristics from project to global
-
-## 10. My Recommendation / Моя рекомендація
-
-For v1, I would build:
-
-Для v1 я б будував:
-
-1. One local stdio MCP server.
-2. One embedded storage engine.
-3. Two namespaces: `project` and `global`.
-4. Hybrid search as the default.
-5. Explicit promotion from project to global.
-6. Documented configs for the five target clients.
-
-1. Один local stdio MCP server.
-2. Один embedded storage engine.
-3. Два namespaces: `project` і `global`.
-4. Hybrid search як дефолт.
-5. Явну промоцію з project у global.
-6. Задокументовані конфіги для п'яти цільових клієнтів.
+1. промотувати лише reusable knowledge
+2. шукати в `global`, коли потрібні cross-project patterns
+3. тримати `global` маленьким і high-signal
