@@ -11,10 +11,8 @@ from . import __version__
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="turbo-memory-mcp",
-        description=(
-            "Run the local Turbo Quant Memory MCP server. "
-            "Blessed runtime: turbo-memory-mcp serve"
-        ),
+        description="Run the local Turbo Quant Memory MCP server.",
+        epilog="Blessed runtime: turbo-memory-mcp serve",
     )
     parser.add_argument(
         "--version",

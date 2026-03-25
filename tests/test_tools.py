@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+from turbo_memory_mcp.contracts import PHASE_1_TOOL_NAMES
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_TOOL_NAMES = ["health", "server_info", "list_scopes", "self_test"]
+
+
+def _result_payload(result: Any) -> dict[str, Any]:
+    if getattr(result, "structuredContent", None):
+        return dict(result.structuredContent)
+
+    text_content = result.content[0].text
+    return json.loads(text_content)
+
+
+async def _collect_server_contract() -> dict[str, Any]:
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "turbo_memory_mcp", "serve"],
+        cwd=PROJECT_ROOT,
+    )
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+
+            return {
+                "tool_names": [tool.name for tool in tools.tools],
+                "health": _result_payload(await session.call_tool("health")),
+                "server_info": _result_payload(await session.call_tool("server_info")),
+                "list_scopes": _result_payload(await session.call_tool("list_scopes")),
+                "self_test": _result_payload(await session.call_tool("self_test")),
+            }
+
+
+@lru_cache(maxsize=1)
+def collect_server_contract() -> dict[str, Any]:
+    return asyncio.run(_collect_server_contract())
+
+
+def test_tool_catalog_is_exact() -> None:
+    contract = collect_server_contract()
+
+    assert list(PHASE_1_TOOL_NAMES) == EXPECTED_TOOL_NAMES
+    assert contract["tool_names"] == EXPECTED_TOOL_NAMES
+
+
+def test_health_payload_matches_runtime_contract() -> None:
+    payload = collect_server_contract()["health"]
+
+    assert payload["status"] == "ok"
+    assert payload["transport"] == "stdio"
+    assert payload["server_id"] == "tqmemory"
+
+
+def test_server_info_payload_fields() -> None:
+    payload = collect_server_contract()["server_info"]
+
+    assert payload["product_name"] == "Turbo Quant Memory for AI Agents"
+    assert payload["package_name"] == "turbo-memory-mcp"
+    assert payload["runtime_command"] == "turbo-memory-mcp serve"
+    assert payload["install"]["primary"]["tool"] == "uv"
+    assert payload["install"]["fallback"]["tool"] == "pip"
+    assert payload["client_tiers"]["tier_1"] == [
+        "Claude Code",
+        "Codex",
+        "Cursor",
+        "OpenCode",
+    ]
+    assert payload["client_tiers"]["tier_2"] == ["Antigravity"]
+
+
+def test_reserved_scopes_are_exposed() -> None:
+    payload = collect_server_contract()["list_scopes"]
+    scopes = payload["scopes"]
+
+    assert [scope["name"] for scope in scopes] == ["project", "global", "hybrid"]
+    assert [scope["status"] for scope in scopes] == ["planned", "planned", "planned"]
+    assert all("later phases" in scope["note"] for scope in scopes)
+
+
+def test_self_test_summarises_contract() -> None:
+    payload = collect_server_contract()["self_test"]
+
+    assert payload["status"] == "ok"
+    assert payload["tool_count"] == 4
+    assert payload["tool_names"] == EXPECTED_TOOL_NAMES
+    assert payload["runtime_command"] == "turbo-memory-mcp serve"
+    assert payload["package_name"] == "turbo-memory-mcp"
+    assert payload["client_tiers"]["tier_1"] == [
+        "Claude Code",
+        "Codex",
+        "Cursor",
+        "OpenCode",
+    ]

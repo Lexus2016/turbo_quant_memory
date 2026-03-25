@@ -25,6 +25,7 @@ def build_server() -> MCPServer:
             "contract for Turbo Quant Memory."
         ),
         json_response=True,
+        log_level="ERROR",
     )
 
     @mcp.tool()
