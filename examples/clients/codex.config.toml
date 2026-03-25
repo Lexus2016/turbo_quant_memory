@@ -1,0 +1,4 @@
+[mcp_servers.tqmemory]
+command = "uv"
+args = ["run", "turbo-memory-mcp", "serve"]
+env = {}

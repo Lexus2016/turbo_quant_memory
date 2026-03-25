@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "tqmemory": {
+      "type": "local",
+      "command": ["uv", "run", "turbo-memory-mcp", "serve"],
+      "enabled": true,
+      "environment": {}
+    }
+  }
+}
