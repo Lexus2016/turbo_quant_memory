@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "turbo-memory-mcp"
+version = "0.1.0"
+description = "Local-first stdio MCP server for Turbo Quant Memory for AI Agents."
+readme = "TECHNICAL_SPEC.md"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.12.4,<2.0",
+]
+
+[project.scripts]
+turbo-memory-mcp = "turbo_memory_mcp.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0,<9.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
