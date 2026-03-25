@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** Ready for Phase 1 discussion
+**Status:** Phase 1 completed; ready for Phase 2 discussion
 
 ## Overview
 
@@ -20,6 +20,8 @@
 ### Phase 1: Client Integration Foundation
 
 **Goal:** Establish the smallest useful server that can run locally, expose initial tools, and be connected to supported agent clients without custom infrastructure.
+
+**Status:** Complete (2026-03-25)
 
 **Requirements:** `INT-01`, `INT-02`, `INT-03`, `INT-04`
 
@@ -109,4 +111,4 @@
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
 
 ---
-*Last updated: 2026-03-25 after roadmap creation*
+*Last updated: 2026-03-25 after Phase 1 execution*

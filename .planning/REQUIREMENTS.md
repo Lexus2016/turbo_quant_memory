@@ -9,8 +9,8 @@
 
 - [x] **INT-01**: User can run the memory server locally over stdio so Claude Code can connect to it as an MCP server. / Користувач може запустити memory server локально через stdio, щоб Claude Code підключався до нього як до MCP-сервера.
 - [x] **INT-02**: User can install and run the MVP without a separate database service or mandatory GPU dependency. / Користувач може встановити і запустити MVP без окремого database-сервісу та без обов'язкової GPU-залежності.
-- [ ] **INT-03**: User can connect the server to Claude Code using a documented `claude mcp add ...` or `.mcp.json` flow. / Користувач може підключити сервер до Claude Code через задокументований сценарій `claude mcp add ...` або `.mcp.json`.
-- [ ] **INT-04**: User has documented MCP connection examples for Claude Code, Codex, Cursor, OpenCode, and Antigravity. / Користувач має задокументовані приклади MCP-підключення для Claude Code, Codex, Cursor, OpenCode і Antigravity.
+- [x] **INT-03**: User can connect the server to Claude Code using a documented `claude mcp add ...` or `.mcp.json` flow. / Користувач може підключити сервер до Claude Code через задокументований сценарій `claude mcp add ...` або `.mcp.json`.
+- [x] **INT-04**: User has documented MCP connection examples for Claude Code, Codex, Cursor, OpenCode, and Antigravity. / Користувач має задокументовані приклади MCP-підключення для Claude Code, Codex, Cursor, OpenCode і Antigravity.
 
 ### Scope
 
@@ -79,8 +79,8 @@
 |-------------|-------|--------|
 | INT-01 | Phase 1 | Complete |
 | INT-02 | Phase 1 | Complete |
-| INT-03 | Phase 1 | Pending |
-| INT-04 | Phase 1 | Pending |
+| INT-03 | Phase 1 | Complete |
+| INT-04 | Phase 1 | Complete |
 | SCP-01 | Phase 2 | Pending |
 | SCP-02 | Phase 2 | Pending |
 | SCP-03 | Phase 2 | Pending |
@@ -106,4 +106,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after initial definition*
+*Last updated: 2026-03-25 after Phase 1 execution*
