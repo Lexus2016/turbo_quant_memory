@@ -44,11 +44,13 @@ def test_no_remote_fallback_uses_repo_root_path(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "local-only")
 
     identity = resolve_project_identity(cwd=repo)
+    repeated_identity = resolve_project_identity(cwd=repo)
 
     assert identity.identity_kind == "repo_path"
     assert identity.identity_source == str(repo.resolve())
     assert identity.project_id == hash_identity_source(str(repo.resolve()))
     assert identity.project_id
+    assert repeated_identity.project_id == identity.project_id
 
 
 def test_explicit_override_precedence_bypasses_git_discovery(tmp_path: Path) -> None:
@@ -68,6 +70,7 @@ def test_explicit_override_precedence_bypasses_git_discovery(tmp_path: Path) -> 
     assert identity.project_id == "manual-project-id"
     assert identity.project_name == "Manual Name"
     assert identity.identity_kind == "override"
+    assert identity.identity_source == "manual-project-id"
     assert identity.remote_url is None
 
 

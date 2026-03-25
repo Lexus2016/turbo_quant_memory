@@ -52,6 +52,8 @@ def test_project_manifest_and_note_persist_with_project_metadata(tmp_path: Path)
     assert note_payload["project_id"] == "proj1234567890abc"
     assert note_payload["project_name"] == "Turbo Quant Memory"
     assert note_payload["source_kind"] == "memory_note"
+    assert store.read_note("note-auth", PROJECT_SCOPE)["title"] == "Auth Summary"
+    assert [note["note_id"] for note in store.list_notes(PROJECT_SCOPE)] == ["note-auth"]
 
 
 def test_promotion_preserves_provenance_and_global_partition(tmp_path: Path) -> None:
@@ -76,3 +78,4 @@ def test_promotion_preserves_provenance_and_global_partition(tmp_path: Path) -> 
     assert global_payload["promoted_from"]["source_path"].endswith(
         "projects/proj1234567890abc/notes/note-promote.json"
     )
+    assert [note["note_id"] for note in store.list_notes(GLOBAL_SCOPE)] == ["note-promote"]
