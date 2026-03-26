@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ DEFAULT_STORAGE_DIRNAME = ".turbo-quant-memory"
 PROJECT_SCOPE = "project"
 GLOBAL_SCOPE = "global"
 NOTE_SOURCE_KIND = "memory_note"
+MARKDOWN_SOURCE_KIND = "markdown"
 
 
 class MemoryStore:
@@ -44,6 +46,30 @@ class MemoryStore:
     def project_note_path(self, note_id: str, project_id: str | None = None) -> Path:
         return self.project_notes_dir(project_id) / f"{note_id}.json"
 
+    def project_markdown_dir(self, project_id: str | None = None) -> Path:
+        return self.project_dir(project_id) / "markdown"
+
+    def project_markdown_manifest_path(self, project_id: str | None = None) -> Path:
+        return self.project_markdown_dir(project_id) / "manifest.json"
+
+    def project_markdown_roots_dir(self, project_id: str | None = None) -> Path:
+        return self.project_markdown_dir(project_id) / "roots"
+
+    def project_markdown_root_path(self, root_id: str, project_id: str | None = None) -> Path:
+        return self.project_markdown_roots_dir(project_id) / f"{root_id}.json"
+
+    def project_markdown_files_dir(self, project_id: str | None = None) -> Path:
+        return self.project_markdown_dir(project_id) / "files"
+
+    def project_markdown_file_path(self, file_key: str, project_id: str | None = None) -> Path:
+        return self.project_markdown_files_dir(project_id) / f"{file_key}.json"
+
+    def project_markdown_blocks_dir(self, project_id: str | None = None) -> Path:
+        return self.project_markdown_dir(project_id) / "blocks"
+
+    def project_markdown_block_path(self, block_id: str, project_id: str | None = None) -> Path:
+        return self.project_markdown_blocks_dir(project_id) / f"{block_id}.json"
+
     def global_dir(self) -> Path:
         return self.storage_root / "global"
 
@@ -59,6 +85,11 @@ class MemoryStore:
     def ensure_layout(self) -> None:
         self.project_notes_dir().mkdir(parents=True, exist_ok=True)
         self.global_notes_dir().mkdir(parents=True, exist_ok=True)
+
+    def ensure_markdown_layout(self, project_id: str | None = None) -> None:
+        self.project_markdown_roots_dir(project_id).mkdir(parents=True, exist_ok=True)
+        self.project_markdown_files_dir(project_id).mkdir(parents=True, exist_ok=True)
+        self.project_markdown_blocks_dir(project_id).mkdir(parents=True, exist_ok=True)
 
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
@@ -78,6 +109,18 @@ class MemoryStore:
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.global_manifest_path(), manifest)
+        return manifest
+
+    def write_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any]:
+        resolved_project_id = project_id or self.project.project_id
+        self.ensure_markdown_layout(resolved_project_id)
+        manifest = {
+            "scope": PROJECT_SCOPE,
+            "project_id": resolved_project_id,
+            "source_kind": MARKDOWN_SOURCE_KIND,
+            "updated_at": utc_now(),
+        }
+        _write_json_atomic(self.project_markdown_manifest_path(resolved_project_id), manifest)
         return manifest
 
     def write_project_note(
@@ -187,6 +230,146 @@ class MemoryStore:
             promoted_from=promoted_from,
         )
 
+    def write_markdown_root(self, root_record: Mapping[str, Any]) -> dict[str, Any]:
+        record = {
+            "root_id": str(root_record["root_id"]),
+            "scope": PROJECT_SCOPE,
+            "project_id": self.project.project_id,
+            "path": str(root_record["path"]),
+            "path_hash": str(root_record["path_hash"]),
+            "registered_at": str(root_record.get("registered_at", utc_now())),
+            "updated_at": str(root_record.get("updated_at", utc_now())),
+        }
+        self.write_markdown_manifest(record["project_id"])
+        _write_json_atomic(self.project_markdown_root_path(record["root_id"], record["project_id"]), record)
+        return record
+
+    def read_markdown_root(self, root_id: str, project_id: str | None = None) -> dict[str, Any]:
+        return _read_json(self.project_markdown_root_path(root_id, project_id))
+
+    def list_markdown_roots(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        root_dir = self.project_markdown_roots_dir(project_id)
+        if not root_dir.exists():
+            return []
+        return [_read_json(path) for path in sorted(root_dir.glob("*.json"))]
+
+    def write_markdown_file_manifest(self, manifest_record: Mapping[str, Any]) -> dict[str, Any]:
+        record = {
+            "root_id": str(manifest_record["root_id"]),
+            "source_path": str(manifest_record["source_path"]),
+            "file_key": str(manifest_record["file_key"]),
+            "size": int(manifest_record["size"]),
+            "mtime_ns": int(manifest_record["mtime_ns"]),
+            "source_checksum": str(manifest_record["source_checksum"]),
+            "block_ids": [str(block_id) for block_id in manifest_record.get("block_ids", [])],
+            "indexed_at": str(manifest_record.get("indexed_at", utc_now())),
+        }
+        self.write_markdown_manifest()
+        _write_json_atomic(self.project_markdown_file_path(record["file_key"]), record)
+        return record
+
+    def read_markdown_file_manifest(self, file_key: str, project_id: str | None = None) -> dict[str, Any]:
+        return _read_json(self.project_markdown_file_path(file_key, project_id))
+
+    def list_markdown_file_manifests(
+        self,
+        *,
+        project_id: str | None = None,
+        root_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        manifest_dir = self.project_markdown_files_dir(project_id)
+        if not manifest_dir.exists():
+            return []
+        manifests = [_read_json(path) for path in sorted(manifest_dir.glob("*.json"))]
+        if root_id is None:
+            return manifests
+        return [manifest for manifest in manifests if manifest["root_id"] == root_id]
+
+    def delete_markdown_file_manifest(self, file_key: str, project_id: str | None = None) -> None:
+        self.project_markdown_file_path(file_key, project_id).unlink(missing_ok=True)
+
+    def write_markdown_block(self, block_record: Mapping[str, Any]) -> dict[str, Any]:
+        record = {
+            "block_id": str(block_record["block_id"]),
+            "scope": PROJECT_SCOPE,
+            "project_id": self.project.project_id,
+            "source_kind": MARKDOWN_SOURCE_KIND,
+            "root_id": str(block_record["root_id"]),
+            "source_path": str(block_record["source_path"]),
+            "heading_path": [str(heading) for heading in block_record.get("heading_path", [])],
+            "chunk_index": int(block_record["chunk_index"]),
+            "content_raw": str(block_record["content_raw"]),
+            "block_checksum": str(block_record["block_checksum"]),
+            "source_checksum": str(block_record["source_checksum"]),
+            "updated_at": str(block_record.get("updated_at", utc_now())),
+        }
+        self.write_markdown_manifest(record["project_id"])
+        _write_json_atomic(self.project_markdown_block_path(record["block_id"], record["project_id"]), record)
+        return record
+
+    def read_markdown_block(self, block_id: str, project_id: str | None = None) -> dict[str, Any]:
+        return _read_json(self.project_markdown_block_path(block_id, project_id))
+
+    def list_markdown_blocks(
+        self,
+        *,
+        project_id: str | None = None,
+        root_id: str | None = None,
+        source_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        block_dir = self.project_markdown_blocks_dir(project_id)
+        if not block_dir.exists():
+            return []
+        blocks = [_read_json(path) for path in sorted(block_dir.glob("*.json"))]
+        if root_id is not None:
+            blocks = [block for block in blocks if block["root_id"] == root_id]
+        if source_path is not None:
+            blocks = [block for block in blocks if block["source_path"] == source_path]
+        return blocks
+
+    def delete_markdown_block(self, block_id: str, project_id: str | None = None) -> None:
+        self.project_markdown_block_path(block_id, project_id).unlink(missing_ok=True)
+
+    def delete_blocks_for_file(
+        self,
+        root_id: str,
+        source_path: str,
+        *,
+        project_id: str | None = None,
+    ) -> list[str]:
+        block_ids = [
+            str(block["block_id"])
+            for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
+        ]
+        for block_id in block_ids:
+            self.delete_markdown_block(block_id, project_id=project_id)
+        return sorted(block_ids)
+
+    def replace_blocks_for_file(
+        self,
+        root_id: str,
+        source_path: str,
+        block_records: Iterable[Mapping[str, Any]],
+        *,
+        project_id: str | None = None,
+    ) -> list[str]:
+        existing_ids = {
+            str(block["block_id"])
+            for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
+        }
+        next_ids: list[str] = []
+        for block_record in block_records:
+            if str(block_record["root_id"]) != root_id:
+                raise ValueError("All block records must share the target root_id.")
+            if str(block_record["source_path"]) != source_path:
+                raise ValueError("All block records must share the target source_path.")
+            block = self.write_markdown_block(block_record)
+            next_ids.append(str(block["block_id"]))
+
+        for stale_block_id in sorted(existing_ids.difference(next_ids)):
+            self.delete_markdown_block(stale_block_id, project_id=project_id)
+        return next_ids
+
     def _build_note_record(
         self,
         *,
@@ -232,6 +415,14 @@ def generate_note_id() -> str:
     return uuid4().hex[:16]
 
 
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def sha256_path(value: str | Path) -> str:
+    return sha256_text(str(Path(value).expanduser().resolve()))
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -264,10 +455,13 @@ __all__ = [
     "DEFAULT_STORAGE_DIRNAME",
     "ENV_STORAGE_HOME",
     "GLOBAL_SCOPE",
+    "MARKDOWN_SOURCE_KIND",
     "MemoryStore",
     "NOTE_SOURCE_KIND",
     "PROJECT_SCOPE",
     "generate_note_id",
     "resolve_storage_root",
+    "sha256_path",
+    "sha256_text",
     "utc_now",
 ]
