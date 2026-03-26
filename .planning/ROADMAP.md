@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** Phase 2 completed; ready for Phase 3 discussion
+**Status:** Phase 3 completed; ready for Phase 4 discussion
 
 ## Overview
 
@@ -52,6 +52,8 @@
 ### Phase 3: Markdown Ingestion
 
 **Goal:** Convert Markdown knowledge into stable, indexed memory blocks with deterministic provenance and incremental refresh behavior.
+
+**Status:** Complete (2026-03-26)
 
 **Requirements:** `ING-01`, `ING-02`, `ING-03`
 
@@ -113,4 +115,4 @@
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
 
 ---
-*Last updated: 2026-03-25 after Phase 2 execution*
+*Last updated: 2026-03-26 after Phase 3 execution*

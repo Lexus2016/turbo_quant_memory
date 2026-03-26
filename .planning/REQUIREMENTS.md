@@ -21,9 +21,9 @@
 
 ### Ingestion
 
-- [ ] **ING-01**: User can register one or more Markdown directories for indexing. / Користувач може зареєструвати одну або кілька Markdown-директорій для індексації.
-- [ ] **ING-02**: Server splits Markdown into stable retrievable blocks using heading-aware chunking with fallback size limits. / Сервер ділить Markdown на стабільні retrievable-блоки через heading-aware chunking із fallback size limits.
-- [ ] **ING-03**: User can reindex only changed content instead of rebuilding the entire memory store every time. / Користувач може переіндексувати лише змінений контент, а не перебудовувати весь memory store щоразу.
+- [x] **ING-01**: User can register one or more Markdown directories for indexing. / Користувач може зареєструвати одну або кілька Markdown-директорій для індексації.
+- [x] **ING-02**: Server splits Markdown into stable retrievable blocks using heading-aware chunking with fallback size limits. / Сервер ділить Markdown на стабільні retrievable-блоки через heading-aware chunking із fallback size limits.
+- [x] **ING-03**: User can reindex only changed content instead of rebuilding the entire memory store every time. / Користувач може переіндексувати лише змінений контент, а не перебудовувати весь memory store щоразу.
 
 ### Retrieval
 
@@ -85,9 +85,9 @@
 | SCP-02 | Phase 2 | Complete |
 | SCP-03 | Phase 2 | Complete |
 | SCP-04 | Phase 2 | Complete |
-| ING-01 | Phase 3 | Pending |
-| ING-02 | Phase 3 | Pending |
-| ING-03 | Phase 3 | Pending |
+| ING-01 | Phase 3 | Complete |
+| ING-02 | Phase 3 | Complete |
+| ING-03 | Phase 3 | Complete |
 | RET-01 | Phase 4 | Pending |
 | RET-02 | Phase 4 | Pending |
 | SAFE-01 | Phase 4 | Pending |
@@ -106,4 +106,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after Phase 2 execution*
+*Last updated: 2026-03-26 after Phase 3 execution*
