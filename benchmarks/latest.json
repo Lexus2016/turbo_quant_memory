@@ -1,0 +1,432 @@
+{
+  "baseline_definition": {
+    "with_mcp_compact": "Use only the semantic_search JSON response.",
+    "with_mcp_guided": "Use semantic_search JSON plus hydrate on the top Markdown hit.",
+    "without_mcp": "Open the full source text of every unique Markdown file represented in the top-5 project search hits."
+  },
+  "corpus": {
+    "block_count": 1015,
+    "changed_files_on_full": 117,
+    "indexed_files": 117
+  },
+  "generated_at": "2026-03-26T16:07:01.091747+00:00",
+  "indexing": {
+    "full_index_ms": 17111.02,
+    "idle_incremental_ms": 2315.79,
+    "idle_incremental_payload": {
+      "block_count": 1015,
+      "changed_files": 0,
+      "deleted_files": 0,
+      "indexed_files": 117,
+      "mode": "incremental",
+      "registered_roots": [
+        {
+          "path": "/Users/admin/_Projects/turbo_quant_mcp_memory",
+          "root_id": "mdroot-b823fa76b43f03fe"
+        }
+      ],
+      "skipped_files": 117,
+      "status": "ok"
+    }
+  },
+  "project_root": "/Users/admin/_Projects/turbo_quant_mcp_memory",
+  "queries": [
+    {
+      "hydrate_latency_ms": 308.17,
+      "naive_full_files": {
+        "bytes": 44707,
+        "file_count": 5,
+        "files": [
+          {
+            "bytes": 5546,
+            "lines": 125,
+            "path": ".planning/ROADMAP.md",
+            "words": 782
+          },
+          {
+            "bytes": 5120,
+            "lines": 114,
+            "path": ".planning/phases/02-namespace-model/02-01-SUMMARY.md",
+            "words": 649
+          },
+          {
+            "bytes": 19108,
+            "lines": 247,
+            "path": ".planning/phases/02-namespace-model/02-RESEARCH.md",
+            "words": 2207
+          },
+          {
+            "bytes": 8616,
+            "lines": 238,
+            "path": "MEMORY_STRATEGY.md",
+            "words": 957
+          },
+          {
+            "bytes": 6317,
+            "lines": 157,
+            "path": "README.md",
+            "words": 669
+          }
+        ],
+        "lines": 881,
+        "words": 5264
+      },
+      "query": "namespace model project global hybrid",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 87.14,
+          "words_percent": 89.95
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 79.32,
+          "words_percent": 84.67
+        }
+      },
+      "search_latency_ms": 1744.37,
+      "semantic_search_payload": {
+        "bytes": 5748,
+        "lines": 135,
+        "words": 529
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 9244,
+        "lines": 199,
+        "words": 807
+      },
+      "top_hit": {
+        "confidence_state": "ambiguous",
+        "score": 0.758,
+        "source_path": "README.md",
+        "title": "Namespace Model"
+      }
+    },
+    {
+      "hydrate_latency_ms": 124.61,
+      "naive_full_files": {
+        "bytes": 21484,
+        "file_count": 4,
+        "files": [
+          {
+            "bytes": 989,
+            "lines": 32,
+            "path": ".planning/phases/05-hydration-and-write-back/05-01-SUMMARY.md",
+            "words": 111
+          },
+          {
+            "bytes": 8188,
+            "lines": 125,
+            "path": ".planning/phases/05-hydration-and-write-back/05-CONTEXT.md",
+            "words": 1015
+          },
+          {
+            "bytes": 3691,
+            "lines": 83,
+            "path": ".planning/phases/05-hydration-and-write-back/05-DISCUSSION-LOG.md",
+            "words": 539
+          },
+          {
+            "bytes": 8616,
+            "lines": 238,
+            "path": "MEMORY_STRATEGY.md",
+            "words": 957
+          }
+        ],
+        "lines": 478,
+        "words": 2622
+      },
+      "query": "hydrate bounded neighborhood related mode",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 68.02,
+          "words_percent": 74.79
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 52.69,
+          "words_percent": 63.04
+        }
+      },
+      "search_latency_ms": 58.02,
+      "semantic_search_payload": {
+        "bytes": 6870,
+        "lines": 138,
+        "words": 661
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 10165,
+        "lines": 185,
+        "words": 969
+      },
+      "top_hit": {
+        "confidence_state": "medium",
+        "score": 0.699,
+        "source_path": ".planning/phases/05-hydration-and-write-back/05-DISCUSSION-LOG.md",
+        "title": "First Hydrate Boundary"
+      }
+    },
+    {
+      "hydrate_latency_ms": 176.46,
+      "naive_full_files": {
+        "bytes": 31542,
+        "file_count": 3,
+        "files": [
+          {
+            "bytes": 7679,
+            "lines": 125,
+            "path": ".planning/phases/02-namespace-model/02-CONTEXT.md",
+            "words": 1016
+          },
+          {
+            "bytes": 4755,
+            "lines": 94,
+            "path": ".planning/phases/02-namespace-model/02-DISCUSSION-LOG.md",
+            "words": 696
+          },
+          {
+            "bytes": 19108,
+            "lines": 247,
+            "path": ".planning/phases/02-namespace-model/02-RESEARCH.md",
+            "words": 2207
+          }
+        ],
+        "lines": 466,
+        "words": 3919
+      },
+      "query": "current project resolution git remote overrides",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 78.33,
+          "words_percent": 82.44
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 66.3,
+          "words_percent": 73.85
+        }
+      },
+      "search_latency_ms": 433.4,
+      "semantic_search_payload": {
+        "bytes": 6835,
+        "lines": 140,
+        "words": 688
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 10631,
+        "lines": 206,
+        "words": 1025
+      },
+      "top_hit": {
+        "confidence_state": "medium",
+        "score": 0.655,
+        "source_path": ".planning/phases/02-namespace-model/02-CONTEXT.md",
+        "title": "Project Identity and Detection"
+      }
+    },
+    {
+      "hydrate_latency_ms": 152.62,
+      "naive_full_files": {
+        "bytes": 31781,
+        "file_count": 5,
+        "files": [
+          {
+            "bytes": 738,
+            "lines": 20,
+            "path": ".planning/phases/06-hardening-and-adoption/06-CONTEXT.md",
+            "words": 105
+          },
+          {
+            "bytes": 3766,
+            "lines": 71,
+            "path": ".planning/research/ARCHITECTURE.md",
+            "words": 449
+          },
+          {
+            "bytes": 3422,
+            "lines": 47,
+            "path": ".planning/research/PITFALLS.md",
+            "words": 393
+          },
+          {
+            "bytes": 6317,
+            "lines": 157,
+            "path": "README.md",
+            "words": 669
+          },
+          {
+            "bytes": 17538,
+            "lines": 364,
+            "path": "TECHNICAL_SPEC.md",
+            "words": 1980
+          }
+        ],
+        "lines": 659,
+        "words": 3596
+      },
+      "query": "storage stats freshness index status",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 80.52,
+          "words_percent": 84.82
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 68.52,
+          "words_percent": 76.2
+        }
+      },
+      "search_latency_ms": 69.11,
+      "semantic_search_payload": {
+        "bytes": 6191,
+        "lines": 140,
+        "words": 546
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 10005,
+        "lines": 205,
+        "words": 856
+      },
+      "top_hit": {
+        "confidence_state": "medium",
+        "score": 0.693,
+        "source_path": "TECHNICAL_SPEC.md",
+        "title": "7.5 Operations / Експлуатація"
+      }
+    },
+    {
+      "hydrate_latency_ms": 164.37,
+      "naive_full_files": {
+        "bytes": 23524,
+        "file_count": 3,
+        "files": [
+          {
+            "bytes": 4645,
+            "lines": 105,
+            "path": ".planning/phases/01-client-integration-foundation/01-02-SUMMARY.md",
+            "words": 611
+          },
+          {
+            "bytes": 13789,
+            "lines": 215,
+            "path": ".planning/phases/01-client-integration-foundation/01-RESEARCH.md",
+            "words": 1639
+          },
+          {
+            "bytes": 5090,
+            "lines": 177,
+            "path": "CLIENT_INTEGRATIONS.md",
+            "words": 570
+          }
+        ],
+        "lines": 497,
+        "words": 2820
+      },
+      "query": "Claude Code Codex Cursor OpenCode integrations",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 70.75,
+          "words_percent": 78.3
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 55.12,
+          "words_percent": 69.4
+        }
+      },
+      "search_latency_ms": 401.57,
+      "semantic_search_payload": {
+        "bytes": 6881,
+        "lines": 138,
+        "words": 612
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 10557,
+        "lines": 203,
+        "words": 863
+      },
+      "top_hit": {
+        "confidence_state": "ambiguous",
+        "score": 0.681,
+        "source_path": ".planning/phases/01-client-integration-foundation/01-RESEARCH.md",
+        "title": "Source Map"
+      }
+    },
+    {
+      "hydrate_latency_ms": 180.69,
+      "naive_full_files": {
+        "bytes": 49157,
+        "file_count": 5,
+        "files": [
+          {
+            "bytes": 5599,
+            "lines": 109,
+            "path": ".planning/phases/05-hydration-and-write-back/05-02-PLAN.md",
+            "words": 512
+          },
+          {
+            "bytes": 8188,
+            "lines": 125,
+            "path": ".planning/phases/05-hydration-and-write-back/05-CONTEXT.md",
+            "words": 1015
+          },
+          {
+            "bytes": 3691,
+            "lines": 83,
+            "path": ".planning/phases/05-hydration-and-write-back/05-DISCUSSION-LOG.md",
+            "words": 539
+          },
+          {
+            "bytes": 14141,
+            "lines": 266,
+            "path": ".planning/phases/05-hydration-and-write-back/05-RESEARCH.md",
+            "words": 1990
+          },
+          {
+            "bytes": 17538,
+            "lines": 364,
+            "path": "TECHNICAL_SPEC.md",
+            "words": 1980
+          }
+        ],
+        "lines": 947,
+        "words": 6036
+      },
+      "query": "remember note decision lesson handoff pattern",
+      "savings": {
+        "semantic_search_only": {
+          "bytes_percent": 85.61,
+          "words_percent": 89.17
+        },
+        "semantic_search_plus_hydrate": {
+          "bytes_percent": 76.83,
+          "words_percent": 82.72
+        }
+      },
+      "search_latency_ms": 558.01,
+      "semantic_search_payload": {
+        "bytes": 7073,
+        "lines": 141,
+        "words": 654
+      },
+      "semantic_search_plus_hydrate": {
+        "bytes": 11390,
+        "lines": 208,
+        "words": 1043
+      },
+      "top_hit": {
+        "confidence_state": "ambiguous",
+        "score": 0.718,
+        "source_path": ".planning/phases/05-hydration-and-write-back/05-RESEARCH.md",
+        "title": "Pattern 4: Typed Write-Back Should Be First-Class"
+      }
+    }
+  ],
+  "summary": {
+    "average_hydrate_latency_ms": 184.49,
+    "average_search_latency_ms": 544.08,
+    "average_semantic_search_only_bytes_saved_percent": 78.39,
+    "average_semantic_search_only_words_saved_percent": 83.25,
+    "average_semantic_search_plus_hydrate_bytes_saved_percent": 66.46,
+    "average_semantic_search_plus_hydrate_words_saved_percent": 74.98,
+    "median_hydrate_latency_ms": 170.42,
+    "median_search_latency_ms": 417.49,
+    "median_semantic_search_only_bytes_saved_percent": 79.42,
+    "median_semantic_search_plus_hydrate_bytes_saved_percent": 67.41,
+    "query_count": 6
+  }
+}

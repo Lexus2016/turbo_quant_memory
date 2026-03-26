@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready for Phase 5 planning
-stopped_at: Phase 5 context gathered
-last_updated: "2026-03-26T12:08:22.542Z"
+status: Ready for production validation
+stopped_at: Phase 6 completed
+last_updated: "2026-03-26T15:05:00.000Z"
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
+  completed_phases: 6
+  total_plans: 16
+  completed_plans: 16
 ---
 
 # Project State
@@ -19,20 +19,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** Agents can offload cold project context and recover only the minimum high-signal context needed to act correctly.
-**Current focus:** Phase 05 — hydration-and-write-back
+**Current focus:** Production validation and client rollout
 
 ## Current Position
 
-Phase: 05 (hydration-and-write-back) — READY FOR PLANNING
-Next: `$gsd-plan-phase 5`
+Milestone: v1.0 — COMPLETE
+Next: run production validation in the target client environments using `examples/clients/SMOKE_CHECKLIST.md`
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 12
+- Total plans completed: 16
 - Average duration: 4 min
-- Total execution time: 0.8 hours
+- Total execution time: 1.1 hours
 
 **By Phase:**
 
@@ -42,11 +42,13 @@ Next: `$gsd-plan-phase 5`
 | 02 | 3 | 4 min | 1 min |
 | 03 | 3 | 1 min | <1 min |
 | 04 | 3 | 33 min | 11 min |
+| 05 | 3 | 26 min | 9 min |
+| 06 | 1 | 8 min | 8 min |
 
 **Recent Trend:**
 
-- Last 3 plans: 04-01, 04-02, 04-03
-- Trend: Phase 5 context captured; ready to create execution plans
+- Last 3 plans: 05-02, 05-03, 06-01
+- Trend: v1 complete; ready for production validation
 
 | Phase 01-client-integration-foundation P01 | 356 | 3 tasks | 9 files |
 | Phase 01-client-integration-foundation P02 | 412 | 3 tasks | 7 files |
@@ -60,6 +62,10 @@ Next: `$gsd-plan-phase 5`
 | Phase 04 P01 | 7m | 3 tasks | 5 files |
 | Phase 04 P02 | 16m | 3 tasks | 6 files |
 | Phase 04 P03 | 10m | 3 tasks | 7 files |
+| Phase 05 P01 | 9m | 2 tasks | 4 files |
+| Phase 05 P02 | 9m | 2 tasks | 7 files |
+| Phase 05 P03 | 8m | 3 tasks | 7 files |
+| Phase 06 P01 | 8m | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -89,6 +95,11 @@ Recent decisions affecting current work:
 - [Phase 04]: Embedding runtime is injectable and tests use a deterministic fake embedder — Avoids model downloads in hermetic tests while runtime still defaults to all-MiniLM-L6-v2
 - [Phase 04]: semantic_search is now the only public retrieval tool — Removed search_memory from the live MCP surface to keep the retrieval contract unambiguous across Claude Code, Codex, Cursor, and OpenCode.
 - [Phase 04]: Balanced-card retrieval favours compact summaries over raw excerpts — semantic_search now returns compressed_summary, up to three key_points, and explicit warning states so agents get minimum-token context without losing provenance or hydration cues.
+- Phase 5: one universal `hydrate(item_id, scope, mode=...)` tool is now the canonical escalation path after `semantic_search(...)`
+- Phase 5: project notes now require fixed kinds `decision`, `lesson`, `handoff`, and `pattern`
+- Phase 5: typed notes remain searchable together with Markdown source blocks and surface `note_kind` in retrieval and hydration payloads
+- Phase 6: `server_info()` now exposes storage counts and freshness snapshots instead of adding a separate ops tool
+- Phase 6: the shared stdio smoke path now proves install -> index -> search -> hydrate -> typed note write-back end to end
 
 ### Pending Todos
 
@@ -100,6 +111,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T12:08:22.538Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-hydration-and-write-back/05-CONTEXT.md
+Last session: 2026-03-26T15:05:00.000Z
+Stopped at: Phase 6 completed
+Resume file: examples/clients/SMOKE_CHECKLIST.md

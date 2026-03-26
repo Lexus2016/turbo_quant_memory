@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** Phase 4 completed; ready for Phase 5 discussion
+**Status:** All v1 phases completed; ready for production validation
 
 ## Overview
 
@@ -85,6 +85,8 @@
 
 **Goal:** Recover fuller local context when compression is insufficient and persist new learnings for future sessions.
 
+**Status:** Complete (2026-03-26)
+
 **Requirements:** `RET-03`, `RET-04`, `MEM-01`, `MEM-02`
 
 **UI hint:** no
@@ -98,6 +100,8 @@
 ### Phase 6: Hardening and Adoption
 
 **Goal:** Make the system safe to adopt in day-to-day work through observability, verification, and operator-facing documentation.
+
+**Status:** Complete (2026-03-26)
 
 **Requirements:** `OPS-01`, `OPS-02`
 
@@ -117,4 +121,4 @@
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
 
 ---
-*Last updated: 2026-03-26 after Phase 4 execution*
+*Last updated: 2026-03-26 after Phase 6 execution*

@@ -2,8 +2,8 @@
   "mcpServers": {
     "tqmemory": {
       "type": "stdio",
-      "command": "uv",
-      "args": ["run", "turbo-memory-mcp", "serve"],
+      "command": "turbo-memory-mcp",
+      "args": ["serve"],
       "env": {}
     }
   }

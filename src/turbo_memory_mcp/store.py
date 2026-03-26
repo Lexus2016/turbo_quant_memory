@@ -19,6 +19,8 @@ PROJECT_SCOPE = "project"
 GLOBAL_SCOPE = "global"
 NOTE_SOURCE_KIND = "memory_note"
 MARKDOWN_SOURCE_KIND = "markdown"
+NOTE_KINDS = ("decision", "lesson", "handoff", "pattern")
+DEFAULT_NOTE_KIND = "lesson"
 
 
 class MemoryStore:
@@ -138,6 +140,7 @@ class MemoryStore:
         title: str,
         content: str,
         *,
+        note_kind: str | None = None,
         tags: Iterable[str] | None = None,
         source_refs: Iterable[str] | None = None,
         note_id: str | None = None,
@@ -148,6 +151,7 @@ class MemoryStore:
             scope=PROJECT_SCOPE,
             title=title,
             content=content,
+            note_kind=note_kind,
             tags=tags,
             source_refs=source_refs,
             note_id=note_id,
@@ -163,6 +167,7 @@ class MemoryStore:
         title: str,
         content: str,
         *,
+        note_kind: str | None = None,
         tags: Iterable[str] | None = None,
         source_refs: Iterable[str] | None = None,
         note_id: str | None = None,
@@ -175,6 +180,7 @@ class MemoryStore:
             scope=GLOBAL_SCOPE,
             title=title,
             content=content,
+            note_kind=note_kind,
             tags=tags,
             source_refs=source_refs,
             note_id=note_id,
@@ -188,10 +194,10 @@ class MemoryStore:
         return note
 
     def read_project_note(self, note_id: str, project_id: str | None = None) -> dict[str, Any]:
-        return _read_json(self.project_note_path(note_id, project_id))
+        return self._normalize_note_record(_read_json(self.project_note_path(note_id, project_id)))
 
     def read_global_note(self, note_id: str) -> dict[str, Any]:
-        return _read_json(self.global_note_path(note_id))
+        return self._normalize_note_record(_read_json(self.global_note_path(note_id)))
 
     def read_note(self, note_id: str, scope: str) -> dict[str, Any]:
         if scope == PROJECT_SCOPE:
@@ -210,7 +216,7 @@ class MemoryStore:
 
         if not note_dir.exists():
             return []
-        return [_read_json(path) for path in sorted(note_dir.glob("*.json"))]
+        return [self._normalize_note_record(_read_json(path)) for path in sorted(note_dir.glob("*.json"))]
 
     def note_source_path(self, note: Mapping[str, Any]) -> Path:
         note_id = str(note["note_id"])
@@ -231,6 +237,7 @@ class MemoryStore:
         return self.write_global_note(
             title=project_note["title"],
             content=project_note["content"],
+            note_kind=project_note["note_kind"],
             tags=project_note.get("tags", []),
             source_refs=project_note.get("source_refs", []),
             note_id=project_note["note_id"],
@@ -320,6 +327,20 @@ class MemoryStore:
     def read_markdown_block(self, block_id: str, project_id: str | None = None) -> dict[str, Any]:
         return _read_json(self.project_markdown_block_path(block_id, project_id))
 
+    def resolve_project_item(self, item_id: str, project_id: str | None = None) -> dict[str, Any]:
+        note_path = self.project_note_path(item_id, project_id)
+        block_path = self.project_markdown_block_path(item_id, project_id)
+        note_exists = note_path.exists()
+        block_exists = block_path.exists()
+
+        if note_exists and block_exists:
+            raise ValueError(f"Ambiguous project item_id: {item_id}")
+        if note_exists:
+            return self.read_project_note(item_id, project_id)
+        if block_exists:
+            return self.read_markdown_block(item_id, project_id)
+        raise FileNotFoundError(f"Project item not found: {item_id}")
+
     def list_markdown_blocks(
         self,
         *,
@@ -336,6 +357,39 @@ class MemoryStore:
         if source_path is not None:
             blocks = [block for block in blocks if block["source_path"] == source_path]
         return blocks
+
+    def read_markdown_neighborhood(
+        self,
+        block_id: str,
+        *,
+        before: int,
+        after: int,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        if before < 0 or after < 0:
+            raise ValueError("Markdown neighborhood windows must be non-negative.")
+
+        target = self.read_markdown_block(block_id, project_id)
+        source_blocks = sorted(
+            self.list_markdown_blocks(project_id=project_id, source_path=str(target["source_path"])),
+            key=lambda block: (int(block["chunk_index"]), str(block["block_id"])),
+        )
+        target_index = next(
+            (index for index, block in enumerate(source_blocks) if str(block["block_id"]) == str(block_id)),
+            None,
+        )
+        if target_index is None:
+            raise FileNotFoundError(f"Markdown neighborhood target not found: {block_id}")
+
+        return {
+            "item": target,
+            "neighbors_before": source_blocks[max(0, target_index - before) : target_index],
+            "neighbors_after": source_blocks[target_index + 1 : target_index + 1 + after],
+            "neighbor_window": {
+                "before": before,
+                "after": after,
+            },
+        }
 
     def delete_markdown_block(self, block_id: str, project_id: str | None = None) -> None:
         self.project_markdown_block_path(block_id, project_id).unlink(missing_ok=True)
@@ -386,6 +440,7 @@ class MemoryStore:
         scope: str,
         title: str,
         content: str,
+        note_kind: str | None,
         tags: Iterable[str] | None,
         source_refs: Iterable[str] | None,
         note_id: str | None,
@@ -402,6 +457,7 @@ class MemoryStore:
             "project_name": project_name or self.project.project_name,
             "title": title.strip(),
             "content": content.strip(),
+            "note_kind": normalize_note_kind(note_kind),
             "tags": list(tags or []),
             "source_refs": list(source_refs or []),
             "source_kind": NOTE_SOURCE_KIND,
@@ -411,6 +467,13 @@ class MemoryStore:
         if promoted_from:
             note["promoted_from"] = dict(promoted_from)
         return note
+
+    def _normalize_note_record(self, note: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(note)
+        payload["note_kind"] = normalize_note_kind(
+            payload.get("note_kind") or payload.get("kind"),
+        )
+        return payload
 
 
 def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -423,6 +486,17 @@ def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
 
 def generate_note_id() -> str:
     return uuid4().hex[:16]
+
+
+def normalize_note_kind(value: str | None) -> str:
+    if value is None or not str(value).strip():
+        return DEFAULT_NOTE_KIND
+
+    resolved = str(value).strip().lower()
+    if resolved not in NOTE_KINDS:
+        supported = ", ".join(NOTE_KINDS)
+        raise ValueError(f"Unsupported note kind: {value}. Expected one of: {supported}.")
+    return resolved
 
 
 def sha256_text(value: str) -> str:

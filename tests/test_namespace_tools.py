@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from turbo_memory_mcp.server import promote_note_impl, remember_note_impl, semantic_search_impl
+from turbo_memory_mcp.server import hydrate_impl, promote_note_impl, remember_note_impl, semantic_search_impl
 from unittest.mock import patch
 
 
@@ -45,6 +45,7 @@ def test_remember_note_defaults_to_project_scope(tmp_path: Path) -> None:
     payload = remember_note_impl(
         "Auth Context",
         "JWT refresh logic stays project-local until promoted.",
+        kind="decision",
         tags=["auth", "jwt"],
         environ=env,
     )
@@ -54,6 +55,7 @@ def test_remember_note_defaults_to_project_scope(tmp_path: Path) -> None:
     assert payload["item"]["scope"] == "project"
     assert payload["item"]["project_id"] == "project-alpha"
     assert payload["item"]["project_name"] == "Alpha Project"
+    assert payload["item"]["note_kind"] == "decision"
     assert Path(payload["item"]["source_path"]).exists()
 
 
@@ -61,7 +63,14 @@ def test_remember_note_rejects_direct_global_writes(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
 
     with pytest.raises(ValueError, match="Direct global writes are disabled"):
-        remember_note_impl("Global Note", "Should fail.", scope="global", environ=env)
+        remember_note_impl("Global Note", "Should fail.", kind="pattern", scope="global", environ=env)
+
+
+def test_remember_note_rejects_unknown_note_kind(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+
+    with pytest.raises(ValueError, match="remember_note requires kind"):
+        remember_note_impl("Bad Kind", "Should fail.", kind="memo", environ=env)
 
 
 def test_promote_note_preserves_promoted_from(tmp_path: Path) -> None:
@@ -69,6 +78,7 @@ def test_promote_note_preserves_promoted_from(tmp_path: Path) -> None:
     stored = remember_note_impl(
         "Reusable Pattern",
         "Promote only explicit reusable patterns.",
+        kind="pattern",
         tags=["pattern"],
         environ=env,
     )
@@ -78,6 +88,7 @@ def test_promote_note_preserves_promoted_from(tmp_path: Path) -> None:
     assert promoted["status"] == "ok"
     assert promoted["action"] == "promoted"
     assert promoted["item"]["scope"] == "global"
+    assert promoted["item"]["note_kind"] == "pattern"
     assert promoted["item"]["promoted_from"]["scope"] == "project"
     assert promoted["item"]["promoted_from"]["note_id"] == stored["item"]["item_id"]
 
@@ -87,6 +98,7 @@ def test_semantic_search_project_scope_returns_only_project_notes(tmp_path: Path
     stored = remember_note_impl(
         "Auth Flow",
         "Project auth flow uses JWT refresh rotation.",
+        kind="lesson",
         tags=["auth"],
         environ=env,
     )
@@ -99,6 +111,7 @@ def test_semantic_search_project_scope_returns_only_project_notes(tmp_path: Path
     assert payload["result_count"] == 1
     assert [item["scope"] for item in payload["items"]] == ["project"]
     assert payload["items"][0]["source_kind"] == "memory_note"
+    assert payload["items"][0]["note_kind"] == "lesson"
 
 
 def test_semantic_search_global_scope_returns_only_global_notes(tmp_path: Path) -> None:
@@ -106,6 +119,7 @@ def test_semantic_search_global_scope_returns_only_global_notes(tmp_path: Path) 
     stored = remember_note_impl(
         "Auth Flow",
         "Project auth flow uses JWT refresh rotation.",
+        kind="lesson",
         tags=["auth"],
         environ=env,
     )
@@ -125,6 +139,7 @@ def test_semantic_search_hybrid_prefers_project_hits_when_relevance_is_close(tmp
     stored = remember_note_impl(
         "Auth Flow",
         "JWT refresh login flow for the current repository.",
+        kind="handoff",
         tags=["auth", "login"],
         environ=env,
     )
@@ -137,3 +152,23 @@ def test_semantic_search_hybrid_prefers_project_hits_when_relevance_is_close(tmp
     assert payload["result_count"] == 2
     assert [item["scope"] for item in payload["items"][:2]] == ["project", "global"]
     assert payload["items"][1]["promoted_from"]["scope"] == "project"
+
+
+def test_hydrate_impl_returns_full_note_payload(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    stored = remember_note_impl(
+        "Release Handoff",
+        "Carry auth refresh caveats into production verification.",
+        kind="handoff",
+        tags=["deploy"],
+        environ=env,
+    )
+
+    payload = hydrate_impl(stored["item"]["item_id"], scope="project", mode="related", environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["source_kind"] == "memory_note"
+    assert payload["item"]["note_kind"] == "handoff"
+    assert payload["item"]["content"] == "Carry auth refresh caveats into production verification."
+    assert payload["neighbors_before"] == []
+    assert payload["neighbors_after"] == []

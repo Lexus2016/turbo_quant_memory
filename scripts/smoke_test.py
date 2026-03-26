@@ -23,6 +23,7 @@ EXPECTED_TOOL_NAMES = [
     "remember_note",
     "promote_note",
     "semantic_search",
+    "hydrate",
     "index_paths",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
@@ -104,8 +105,9 @@ async def run_smoke() -> list[str]:
                         "remember_note",
                         {
                             "title": "Smoke Note",
-                            "content": "Phase 4 namespace smoke checks project and global memory ordering.",
-                            "tags": ["smoke", "phase4", "namespace"],
+                            "content": "Phase 5 namespace smoke checks hydration and project/global memory ordering.",
+                            "kind": "pattern",
+                            "tags": ["smoke", "phase5", "namespace"],
                         },
                     )
                 )
@@ -119,6 +121,16 @@ async def run_smoke() -> list[str]:
                         },
                     )
                 )
+                markdown_hydrate = result_payload(
+                    await session.call_tool(
+                        "hydrate",
+                        {
+                            "item_id": project_search["items"][0]["item_id"],
+                            "scope": project_search["items"][0]["scope"],
+                            "mode": "default",
+                        },
+                    )
+                )
                 promoted = result_payload(
                     await session.call_tool("promote_note", {"note_id": remembered["item"]["item_id"]})
                 )
@@ -129,6 +141,16 @@ async def run_smoke() -> list[str]:
                             "query": "namespace smoke",
                             "scope": "hybrid",
                             "limit": 5,
+                        },
+                    )
+                )
+                note_hydrate = result_payload(
+                    await session.call_tool(
+                        "hydrate",
+                        {
+                            "item_id": remembered["item"]["item_id"],
+                            "scope": remembered["item"]["scope"],
+                            "mode": "related",
                         },
                     )
                 )
@@ -153,6 +175,7 @@ async def run_smoke() -> list[str]:
                         },
                     )
                 )
+                server_info_after = result_payload(await session.call_tool("server_info"))
 
     expect(health["status"] == "ok", f"health.status mismatch: {health}")
     expect(health["transport"] == "stdio", f"health.transport mismatch: {health}")
@@ -168,6 +191,7 @@ async def run_smoke() -> list[str]:
     )
     expect(server_info["current_project"] == expected_project, f"server_info.current_project mismatch: {server_info}")
     expect(server_info["query_modes"] == EXPECTED_SCOPES, f"server_info.query_modes mismatch: {server_info}")
+    expect(server_info["index_status"]["project"]["freshness"] == "empty", f"server_info initial status mismatch: {server_info}")
 
     scopes = [scope["name"] for scope in list_scopes["scopes"]]
     expect(scopes == EXPECTED_SCOPES, f"list_scopes mismatch: {list_scopes}")
@@ -175,7 +199,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "hybrid", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 8, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 9, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
@@ -185,9 +209,14 @@ async def run_smoke() -> list[str]:
         self_test["namespace_contract"]["index_modes"] == ["full", "incremental"],
         f"self_test.index_modes mismatch: {self_test}",
     )
+    expect(
+        self_test["namespace_contract"]["hydrate_modes"] == ["default", "related"],
+        f"self_test.hydrate_modes mismatch: {self_test}",
+    )
 
     expect(remembered["item"]["scope"] == "project", f"remember_note scope mismatch: {remembered}")
     expect(remembered["item"]["project_id"] == expected_project["project_id"], f"remember_note project mismatch: {remembered}")
+    expect(remembered["item"]["note_kind"] == "pattern", f"remember_note note_kind mismatch: {remembered}")
     expect(project_search["scope"] == "project", f"semantic_search project scope mismatch: {project_search}")
     expect(project_search["result_count"] >= 1, f"semantic_search project result_count mismatch: {project_search}")
     expect(
@@ -212,6 +241,21 @@ async def run_smoke() -> list[str]:
         "excerpt_preview" not in project_search["items"][0],
         f"semantic_search raw excerpt preview leak: {project_search}",
     )
+    expect(markdown_hydrate["status"] == "ok", f"hydrate markdown status mismatch: {markdown_hydrate}")
+    expect(markdown_hydrate["mode"] == "default", f"hydrate markdown mode mismatch: {markdown_hydrate}")
+    expect(markdown_hydrate["source_kind"] == "markdown", f"hydrate markdown source mismatch: {markdown_hydrate}")
+    expect(
+        markdown_hydrate["item"]["block_id"] == project_search["items"][0]["block_id"],
+        f"hydrate markdown block mismatch: {markdown_hydrate}",
+    )
+    expect(
+        "Auth refresh rotation" in markdown_hydrate["item"]["content"],
+        f"hydrate markdown content mismatch: {markdown_hydrate}",
+    )
+    expect(
+        markdown_hydrate["neighbor_window"] == {"before": 1, "after": 1},
+        f"hydrate markdown window mismatch: {markdown_hydrate}",
+    )
     expect(promoted["item"]["scope"] == "global", f"promote_note scope mismatch: {promoted}")
     expect(promoted["item"]["promoted_from"]["scope"] == "project", f"promote_note provenance mismatch: {promoted}")
     expect(hybrid_search["scope"] == "hybrid", f"semantic_search hybrid scope mismatch: {hybrid_search}")
@@ -225,12 +269,62 @@ async def run_smoke() -> list[str]:
         f"semantic_search hybrid note mismatch: {hybrid_search}",
     )
     expect(
+        hybrid_search["items"][0]["note_kind"] == "pattern",
+        f"semantic_search hybrid note_kind mismatch: {hybrid_search}",
+    )
+    expect(
         hybrid_search["items"][1]["promoted_from"]["scope"] == "project",
         f"semantic_search hybrid provenance mismatch: {hybrid_search}",
     )
     expect(
         "content_raw" not in hybrid_search["items"][0],
         f"semantic_search hybrid raw excerpt leak: {hybrid_search}",
+    )
+    expect(note_hydrate["status"] == "ok", f"hydrate note status mismatch: {note_hydrate}")
+    expect(note_hydrate["source_kind"] == "memory_note", f"hydrate note source mismatch: {note_hydrate}")
+    expect(note_hydrate["item"]["note_kind"] == "pattern", f"hydrate note kind mismatch: {note_hydrate}")
+    expect(
+        note_hydrate["item"]["content"] == "Phase 5 namespace smoke checks hydration and project/global memory ordering.",
+        f"hydrate note content mismatch: {note_hydrate}",
+    )
+    expect(note_hydrate["neighbors_before"] == [], f"hydrate note neighbors_before mismatch: {note_hydrate}")
+    expect(note_hydrate["neighbors_after"] == [], f"hydrate note neighbors_after mismatch: {note_hydrate}")
+    expect(
+        server_info_after["storage_stats"]["project"]["note_count"] == 1,
+        f"server_info project note_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["global"]["note_count"] == 1,
+        f"server_info global note_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["project"]["markdown_root_count"] == 1,
+        f"server_info markdown_root_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["project"]["markdown_file_count"] == 1,
+        f"server_info markdown_file_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["project"]["markdown_block_count"] >= 1,
+        f"server_info markdown_block_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["project"]["retrieval_row_count"]
+        == server_info_after["storage_stats"]["project"]["markdown_block_count"] + 1,
+        f"server_info retrieval_row_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["index_status"]["project"]["freshness"] == "fresh",
+        f"server_info project freshness mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["index_status"]["global"]["freshness"] == "fresh",
+        f"server_info global freshness mismatch: {server_info_after}",
+    )
+    expect(
+        bool(server_info_after["index_status"]["project"]["last_indexed_at"]),
+        f"server_info last_indexed_at mismatch: {server_info_after}",
     )
     expect(full_index["mode"] == "full", f"index_paths full.mode mismatch: {full_index}")
     expect(len(full_index["registered_roots"]) == 1, f"index_paths roots mismatch: {full_index}")
@@ -270,9 +364,12 @@ async def run_smoke() -> list[str]:
         f"PASS tool catalog: {', '.join(tool_names)}",
         f"PASS server_info: {server_info['current_project']['project_id']} @ {server_info['storage_root']}",
         f"PASS semantic_search project: {project_search['items'][0]['source_kind']} {project_search['items'][0]['block_id']}",
-        f"PASS remember_note: {remembered['item']['item_id']} in {remembered['item']['scope']}",
+        f"PASS remember_note: {remembered['item']['item_id']} in {remembered['item']['scope']} ({remembered['item']['note_kind']})",
+        f"PASS hydrate markdown: {markdown_hydrate['item']['block_id']} mode={markdown_hydrate['mode']}",
         f"PASS promote_note: {promoted['item']['item_id']} in {promoted['item']['scope']}",
         f"PASS semantic_search hybrid: {hybrid_search['items'][0]['scope']} before {hybrid_search['items'][1]['scope']}",
+        f"PASS hydrate note: {note_hydrate['item']['item_id']} mode={note_hydrate['mode']}",
+        f"PASS server_info stats: project_rows={server_info_after['storage_stats']['project']['retrieval_row_count']}",
         f"PASS index_paths full: {full_index['indexed_files']} files / {full_index['block_count']} blocks",
         f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
         f"PASS index_paths incremental changed: changed={changed_incremental['changed_files']} deleted={changed_incremental['deleted_files']}",

@@ -11,7 +11,7 @@ Assumed local command:
 Базова локальна команда:
 
 ```bash
-uv run turbo-memory-mcp serve
+turbo-memory-mcp serve
 ```
 
 ## 1. Claude Code
@@ -23,7 +23,7 @@ Verified pattern: official Claude Code docs support `claude mcp add ...`, `.mcp.
 ### Proposed command
 
 ```bash
-claude mcp add --transport stdio --scope project tqmemory -- uv run turbo-memory-mcp serve
+claude mcp add --transport stdio --scope project tqmemory -- turbo-memory-mcp serve
 ```
 
 ### Proposed shared config
@@ -32,8 +32,8 @@ claude mcp add --transport stdio --scope project tqmemory -- uv run turbo-memory
 {
   "mcpServers": {
     "tqmemory": {
-      "command": "uv",
-      "args": ["run", "turbo-memory-mcp", "serve"],
+      "command": "turbo-memory-mcp",
+      "args": ["serve"],
       "env": {}
     }
   }
@@ -49,7 +49,7 @@ Verified pattern: current OpenAI Codex docs support MCP configuration and `codex
 ### Proposed command
 
 ```bash
-codex mcp add tqmemory -- uv run turbo-memory-mcp serve
+codex mcp add tqmemory -- turbo-memory-mcp serve
 ```
 
 ### Proposed config direction
@@ -72,8 +72,8 @@ Verified pattern: official Cursor docs support project `.cursor/mcp.json` and us
 {
   "mcpServers": {
     "tqmemory": {
-      "command": "uv",
-      "args": ["run", "turbo-memory-mcp", "serve"],
+      "command": "turbo-memory-mcp",
+      "args": ["serve"],
       "env": {}
     }
   }
@@ -102,7 +102,7 @@ Verified pattern: official OpenCode docs support local and remote MCP definition
   "mcp": {
     "tqmemory": {
       "type": "local",
-      "command": ["uv", "run", "turbo-memory-mcp", "serve"],
+      "command": ["turbo-memory-mcp", "serve"],
       "enabled": true
     }
   }
@@ -121,8 +121,8 @@ Verified signal: a current Flutter MCP integration guide documents Antigravity c
 {
   "mcpServers": {
     "tqmemory": {
-      "command": "uv",
-      "args": ["run", "turbo-memory-mcp", "serve"],
+      "command": "turbo-memory-mcp",
+      "args": ["serve"],
       "env": {}
     }
   }
@@ -148,7 +148,7 @@ Use the same launch contract everywhere:
 Скрізь використовувати однаковий launch contract:
 
 ```bash
-uv run turbo-memory-mcp serve
+turbo-memory-mcp serve
 ```
 
 Use the same scope vocabulary everywhere:

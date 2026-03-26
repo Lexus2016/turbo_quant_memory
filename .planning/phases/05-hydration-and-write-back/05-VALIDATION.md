@@ -1,9 +1,9 @@
 ---
 phase: 5
 slug: hydration-and-write-back
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-03-26
 ---
 
@@ -38,14 +38,14 @@ created: 2026-03-26
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 05-01-01 | 01 | 1 | RET-03, RET-04 | unit | `uv run pytest -q tests/test_storage.py -k neighborhood` | ❌ W0 | ⬜ pending |
-| 05-01-02 | 01 | 1 | RET-03 | unit | `uv run pytest -q tests/test_hydration.py -k markdown` | ❌ W0 | ⬜ pending |
-| 05-01-03 | 01 | 1 | RET-04 | unit | `uv run pytest -q tests/test_hydration.py -k related_mode` | ❌ W0 | ⬜ pending |
-| 05-02-01 | 02 | 2 | MEM-01 | unit | `uv run pytest -q tests/test_namespace_tools.py -k note_kind` | ❌ W0 | ⬜ pending |
-| 05-02-02 | 02 | 2 | RET-03, MEM-01 | contract | `uv run pytest -q tests/test_namespace_tools.py tests/test_hydration.py -k hydrate` | ❌ W0 | ⬜ pending |
-| 05-02-03 | 02 | 2 | MEM-02 | contract | `uv run pytest -q tests/test_semantic_search.py -k note_kind` | ❌ W0 | ⬜ pending |
-| 05-03-01 | 03 | 3 | RET-03, RET-04, MEM-01, MEM-02 | contract | `uv run pytest -q tests/test_tools.py tests/test_smoke_contract.py` | ✅ | ⬜ pending |
-| 05-03-02 | 03 | 3 | RET-03, RET-04, MEM-01, MEM-02 | e2e stdio | `uv run python scripts/smoke_test.py` | ✅ | ⬜ pending |
+| 05-01-01 | 01 | 1 | RET-03, RET-04 | unit | `uv run pytest -q tests/test_storage.py -k neighborhood` | ✅ | ✅ green |
+| 05-01-02 | 01 | 1 | RET-03 | unit | `uv run pytest -q tests/test_hydration.py -k markdown` | ✅ | ✅ green |
+| 05-01-03 | 01 | 1 | RET-04 | unit | `uv run pytest -q tests/test_hydration.py -k related_mode` | ✅ | ✅ green |
+| 05-02-01 | 02 | 2 | MEM-01 | unit | `uv run pytest -q tests/test_namespace_tools.py -k note_kind` | ✅ | ✅ green |
+| 05-02-02 | 02 | 2 | RET-03, MEM-01 | contract | `uv run pytest -q tests/test_namespace_tools.py tests/test_hydration.py -k hydrate` | ✅ | ✅ green |
+| 05-02-03 | 02 | 2 | MEM-02 | contract | `uv run pytest -q tests/test_semantic_search.py -k note_kind` | ✅ | ✅ green |
+| 05-03-01 | 03 | 3 | RET-03, RET-04, MEM-01, MEM-02 | contract | `uv run pytest -q tests/test_tools.py tests/test_smoke_contract.py` | ✅ | ✅ green |
+| 05-03-02 | 03 | 3 | RET-03, RET-04, MEM-01, MEM-02 | e2e stdio | `uv run python scripts/smoke_test.py` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -53,13 +53,13 @@ created: 2026-03-26
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_hydration.py` — hydration behavior for Markdown blocks and notes
-- [ ] `tests/test_storage.py` — neighborhood lookup and typed note persistence helpers
-- [ ] `tests/test_namespace_tools.py` — typed write-back validation and live `hydrate(...)` wiring
-- [ ] `tests/test_semantic_search.py` — typed note recall remains searchable with Markdown
-- [ ] `tests/test_tools.py` — public tool catalog includes `hydrate`
-- [ ] `tests/test_smoke_contract.py` — hydration payload contract and note-kind envelope
-- [ ] `scripts/smoke_test.py` — real stdio hydration smoke path
+- [x] `tests/test_hydration.py` — hydration behavior for Markdown blocks and notes
+- [x] `tests/test_storage.py` — neighborhood lookup and typed note persistence helpers
+- [x] `tests/test_namespace_tools.py` — typed write-back validation and live `hydrate(...)` wiring
+- [x] `tests/test_semantic_search.py` — typed note recall remains searchable with Markdown
+- [x] `tests/test_tools.py` — public tool catalog includes `hydrate`
+- [x] `tests/test_smoke_contract.py` — hydration payload contract and note-kind envelope
+- [x] `scripts/smoke_test.py` — real stdio hydration smoke path
 
 *Existing infrastructure already covers pytest setup, MCP stdio harness, and repo-level smoke execution.*
 
@@ -77,11 +77,11 @@ created: 2026-03-26
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all missing references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 45s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all missing references
+- [x] No watch-mode flags
+- [x] Feedback latency < 45s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** complete

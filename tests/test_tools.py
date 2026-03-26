@@ -10,7 +10,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from turbo_memory_mcp.contracts import PHASE_4_TOOL_NAMES
+from turbo_memory_mcp.contracts import PHASE_5_TOOL_NAMES
 from turbo_memory_mcp.identity import resolve_project_identity
 from turbo_memory_mcp.server import build_current_project_payload
 from turbo_memory_mcp.store import resolve_storage_root
@@ -24,6 +24,7 @@ EXPECTED_TOOL_NAMES = [
     "remember_note",
     "promote_note",
     "semantic_search",
+    "hydrate",
     "index_paths",
 ]
 
@@ -65,7 +66,7 @@ def collect_server_contract() -> dict[str, Any]:
 def test_tool_catalog_is_exact() -> None:
     contract = collect_server_contract()
 
-    assert list(PHASE_4_TOOL_NAMES) == EXPECTED_TOOL_NAMES
+    assert list(PHASE_5_TOOL_NAMES) == EXPECTED_TOOL_NAMES
     assert contract["tool_names"] == EXPECTED_TOOL_NAMES
 
 
@@ -85,7 +86,15 @@ def test_server_info_payload_fields() -> None:
     assert payload["package_name"] == "turbo-memory-mcp"
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["install"]["primary"]["tool"] == "uv"
+    assert (
+        payload["install"]["primary"]["command"]
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
     assert payload["install"]["fallback"]["tool"] == "pip"
+    assert (
+        payload["install"]["fallback"]["command"]
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
@@ -98,6 +107,11 @@ def test_server_info_payload_fields() -> None:
     assert payload["query_modes"] == ["project", "global", "hybrid"]
     assert payload["storage_root"] == str(resolve_storage_root())
     assert payload["current_project"] == expected_project
+    assert payload["hydrate_modes"] == ["default", "related"]
+    assert set(payload["storage_stats"]) == {"project", "global"}
+    assert set(payload["index_status"]) == {"project", "global"}
+    assert payload["index_status"]["project"]["freshness"] in {"empty", "not_indexed", "fresh", "stale"}
+    assert payload["index_status"]["global"]["freshness"] in {"empty", "fresh", "stale"}
 
 
 def test_live_scope_contract_exposes_active_namespace_modes() -> None:
@@ -115,10 +129,18 @@ def test_self_test_summarises_namespace_contract() -> None:
     payload = collect_server_contract()["self_test"]
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 8
+    assert payload["tool_count"] == 9
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"
+    assert (
+        payload["install"]["primary"]["command"]
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
+    assert (
+        payload["install"]["fallback"]["command"]
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
@@ -130,3 +152,4 @@ def test_self_test_summarises_namespace_contract() -> None:
     assert payload["namespace_contract"]["default_query_mode"] == "hybrid"
     assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
     assert payload["namespace_contract"]["index_modes"] == ["full", "incremental"]
+    assert payload["namespace_contract"]["hydrate_modes"] == ["default", "related"]

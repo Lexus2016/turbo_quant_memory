@@ -155,6 +155,7 @@ def mirror_markdown_block(
         "project_id": project_id,
         "project_name": store.project.project_name,
         "source_kind": MARKDOWN_SOURCE_KIND,
+        "note_kind": None,
         "item_id": str(block["block_id"]),
         "block_id": str(block["block_id"]),
         "note_id": None,
@@ -171,13 +172,15 @@ def mirror_markdown_block(
 def mirror_note_record(store: MemoryStore, note: Mapping[str, Any]) -> dict[str, Any]:
     title = str(note["title"])
     content = str(note["content"])
+    note_kind = str(note["note_kind"])
     tags = [str(tag) for tag in note.get("tags", [])]
-    content_search = "\n".join(part for part in [title, " ".join(tags), content] if part)
+    content_search = "\n".join(part for part in [title, note_kind, " ".join(tags), content] if part)
     return {
         "scope": str(note["scope"]),
         "project_id": str(note["project_id"]),
         "project_name": str(note["project_name"]),
         "source_kind": NOTE_SOURCE_KIND,
+        "note_kind": note_kind,
         "item_id": str(note["note_id"]),
         "block_id": None,
         "note_id": str(note["note_id"]),
@@ -198,6 +201,7 @@ def _table_schema() -> pa.Schema:
             pa.field("project_id", pa.string()),
             pa.field("project_name", pa.string()),
             pa.field("source_kind", pa.string()),
+            pa.field("note_kind", pa.string()),
             pa.field("item_id", pa.string()),
             pa.field("block_id", pa.string()),
             pa.field("note_id", pa.string()),

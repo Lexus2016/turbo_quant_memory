@@ -29,13 +29,13 @@
 
 - [x] **RET-01**: Agent can run semantic search and receive the top relevant blocks with score, source path, and block ID. / Агент може виконати semantic search і отримати top-relevant блоки зі score, source path і block ID.
 - [x] **RET-02**: Agent can request a compressed context card for a block that removes low-signal noise while preserving the key meaning. / Агент може запросити compressed context card для блока, яка прибирає low-signal шум і зберігає ключовий зміст.
-- [ ] **RET-03**: Agent can hydrate a fuller block or source excerpt on demand when the compressed result is insufficient. / Агент може за потреби hydrate-нути повніший блок або source excerpt, коли стислого результату недостатньо.
-- [ ] **RET-04**: Agent can request related blocks around a result to recover local neighbourhood context. / Агент може запитати related blocks навколо результату, щоб відновити локальний neighbourhood context.
+- [x] **RET-03**: Agent can hydrate a fuller block or source excerpt on demand when the compressed result is insufficient. / Агент може за потреби hydrate-нути повніший блок або source excerpt, коли стислого результату недостатньо.
+- [x] **RET-04**: Agent can request related blocks around a result to recover local neighbourhood context. / Агент може запитати related blocks навколо результату, щоб відновити локальний neighbourhood context.
 
 ### Memory
 
-- [ ] **MEM-01**: Agent can write back an important decision, lesson, or reusable note into persistent memory. / Агент може записати назад у persistent memory важливе рішення, урок або reusable note.
-- [ ] **MEM-02**: Stored memory notes are indexed and searchable together with Markdown source content. / Збережені memory notes індексуються і шукаються разом із вихідним Markdown-контентом.
+- [x] **MEM-01**: Agent can write back an important decision, lesson, or reusable note into persistent memory. / Агент може записати назад у persistent memory важливе рішення, урок або reusable note.
+- [x] **MEM-02**: Stored memory notes are indexed and searchable together with Markdown source content. / Збережені memory notes індексуються і шукаються разом із вихідним Markdown-контентом.
 
 ### Safety
 
@@ -44,8 +44,8 @@
 
 ### Operations
 
-- [ ] **OPS-01**: User can inspect basic health, index freshness, and store statistics from the server. / Користувач може переглядати базовий health, freshness індексу і статистику store безпосередньо із сервера.
-- [ ] **OPS-02**: User has a documented smoke test that proves install, indexing, search, and hydration work end-to-end. / Користувач має задокументований smoke test, який підтверджує, що install, indexing, search і hydration працюють end-to-end.
+- [x] **OPS-01**: User can inspect basic health, index freshness, and store statistics from the server. / Користувач може переглядати базовий health, freshness індексу і статистику store безпосередньо із сервера.
+- [x] **OPS-02**: User has a documented smoke test that proves install, indexing, search, and hydration work end-to-end. / Користувач має задокументований smoke test, який підтверджує, що install, indexing, search і hydration працюють end-to-end.
 
 ## v2 Requirements
 
@@ -92,12 +92,12 @@
 | RET-02 | Phase 4 | Complete |
 | SAFE-01 | Phase 4 | Complete |
 | SAFE-02 | Phase 4 | Complete |
-| RET-03 | Phase 5 | Pending |
-| RET-04 | Phase 5 | Pending |
-| MEM-01 | Phase 5 | Pending |
-| MEM-02 | Phase 5 | Pending |
-| OPS-01 | Phase 6 | Pending |
-| OPS-02 | Phase 6 | Pending |
+| RET-03 | Phase 5 | Complete |
+| RET-04 | Phase 5 | Complete |
+| MEM-01 | Phase 5 | Complete |
+| MEM-02 | Phase 5 | Complete |
+| OPS-01 | Phase 6 | Complete |
+| OPS-02 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 21 total
@@ -106,4 +106,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-26 after Phase 4 execution*
+*Last updated: 2026-03-26 after Phase 6 execution*

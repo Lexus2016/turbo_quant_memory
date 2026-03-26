@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from turbo_memory_mcp.contracts import (
-    PHASE_4_TOOL_NAMES,
+    PHASE_5_TOOL_NAMES,
     SERVER_ID,
+    build_hydrated_markdown_item_payload,
+    build_hydrated_note_item_payload,
+    build_hydration_payload,
     build_indexing_payload,
     build_note_item_payload,
     build_semantic_item_payload,
@@ -22,30 +25,73 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     payload = build_server_info_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
+        storage_stats={
+            "project": {
+                "note_count": 1,
+                "markdown_root_count": 1,
+                "markdown_file_count": 2,
+                "markdown_block_count": 3,
+                "retrieval_row_count": 4,
+            },
+            "global": {
+                "note_count": 1,
+                "retrieval_row_count": 1,
+            },
+        },
+        index_status={
+            "project": {
+                "freshness": "fresh",
+                "last_indexed_at": "2026-03-26T10:10:00Z",
+                "last_note_update": "2026-03-26T10:11:00Z",
+            },
+            "global": {
+                "freshness": "fresh",
+                "last_note_update": "2026-03-26T10:12:00Z",
+            },
+        },
     )
 
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
+    assert (
+        payload["install"]["primary"]["command"]
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
+    assert (
+        payload["install"]["fallback"]["command"]
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
     assert payload["server_id"] == SERVER_ID
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
     assert payload["query_modes"] == ["project", "global", "hybrid"]
     assert payload["default_query_mode"] == "hybrid"
+    assert payload["storage_stats"]["project"]["markdown_block_count"] == 3
+    assert payload["index_status"]["project"]["freshness"] == "fresh"
 
 
-def test_self_test_matches_exported_phase_4_tools() -> None:
+def test_self_test_matches_exported_phase_5_tools() -> None:
     payload = build_self_test_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
     )
 
     assert payload["server_id"] == "tqmemory"
-    assert payload["tool_names"] == list(PHASE_4_TOOL_NAMES)
+    assert payload["tool_names"] == list(PHASE_5_TOOL_NAMES)
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
+    assert (
+        payload["install"]["primary"]["command"]
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
+    assert (
+        payload["install"]["fallback"]["command"]
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+    )
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
     assert payload["namespace_contract"]["default_write_scope"] == "project"
     assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
     assert payload["namespace_contract"]["index_modes"] == ["full", "incremental"]
+    assert payload["namespace_contract"]["hydrate_modes"] == ["default", "related"]
 
 
 def test_indexing_payload_exposes_incremental_contract_fields() -> None:
@@ -75,6 +121,7 @@ def test_note_item_payload_uses_compact_envelope_by_default() -> None:
             "note_id": "note-1",
             "title": "Auth Flow",
             "content": "JWT refresh flow",
+            "note_kind": "decision",
             "tags": ["auth"],
             "scope": "project",
             "project_id": "project-alpha",
@@ -92,6 +139,7 @@ def test_note_item_payload_uses_compact_envelope_by_default() -> None:
     assert payload["project_id"] == "project-alpha"
     assert payload["project_name"] == "Alpha Project"
     assert payload["item_id"] == "note-1"
+    assert payload["note_kind"] == "decision"
     assert payload["confidence"] == 0.91
     assert payload["can_hydrate"] is True
     assert "promoted_from" not in payload
@@ -141,6 +189,7 @@ def test_note_item_payload_includes_promoted_from_when_present() -> None:
             "note_id": "note-1",
             "title": "Reusable Pattern",
             "content": "Promoted note",
+            "note_kind": "pattern",
             "tags": ["pattern"],
             "scope": "global",
             "project_id": "project-alpha",
@@ -162,5 +211,72 @@ def test_note_item_payload_includes_promoted_from_when_present() -> None:
     )
 
     assert payload["scope"] == "global"
+    assert payload["note_kind"] == "pattern"
     assert payload["promoted_from"]["scope"] == "project"
     assert payload["promoted_from"]["note_id"] == "note-1"
+
+
+def test_hydrated_markdown_payload_exposes_bounded_neighbors() -> None:
+    item = build_hydrated_markdown_item_payload(
+        {
+            "scope": "project",
+            "project_id": "project-alpha",
+            "source_kind": "markdown",
+            "block_id": "mdblk-auth-1",
+            "source_path": "docs/auth.md",
+            "heading_path": ["Architecture", "Auth"],
+            "updated_at": "2026-03-26T10:10:00Z",
+            "content_raw": "Full hydrated auth content.",
+        },
+        project_name="Alpha Project",
+    )
+    payload = build_hydration_payload(
+        mode="default",
+        item=item,
+        neighbors_before=[
+            build_hydrated_markdown_item_payload(
+                {
+                    "scope": "project",
+                    "project_id": "project-alpha",
+                    "source_kind": "markdown",
+                    "block_id": "mdblk-auth-0",
+                    "source_path": "docs/auth.md",
+                    "heading_path": ["Architecture", "Intro"],
+                    "updated_at": "2026-03-26T10:09:00Z",
+                    "content_raw": "Neighbor before.",
+                },
+                project_name="Alpha Project",
+            )
+        ],
+        neighbors_after=[],
+        neighbor_window={"before": 1, "after": 1},
+    )
+
+    assert payload["mode"] == "default"
+    assert payload["source_kind"] == "markdown"
+    assert payload["item"]["block_id"] == "mdblk-auth-1"
+    assert payload["neighbors_before"][0]["block_id"] == "mdblk-auth-0"
+    assert payload["neighbor_window"] == {"before": 1, "after": 1}
+
+
+def test_hydrated_note_payload_preserves_note_kind_and_content() -> None:
+    item = build_hydrated_note_item_payload(
+        {
+            "scope": "project",
+            "project_id": "project-alpha",
+            "project_name": "Alpha Project",
+            "source_kind": "memory_note",
+            "note_id": "note-1",
+            "title": "Release Handoff",
+            "note_kind": "handoff",
+            "updated_at": "2026-03-26T10:15:00Z",
+            "content": "Validate the rollout carefully.",
+            "tags": ["deploy"],
+            "source_refs": ["README.md"],
+        },
+        source_path="/tmp/tqmemory/projects/project-alpha/notes/note-1.json",
+    )
+
+    assert item["item_id"] == "note-1"
+    assert item["note_kind"] == "handoff"
+    assert item["content"] == "Validate the rollout carefully."

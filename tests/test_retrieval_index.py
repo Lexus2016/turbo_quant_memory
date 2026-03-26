@@ -49,6 +49,7 @@ def test_sync_project_mirrors_auth_architecture_markdown_and_note_rows(tmp_path:
     store.write_project_note(
         "Auth Architecture",
         "Project auth summary for auth-architecture and docs/auth.md.",
+        note_kind="decision",
         tags=["auth", "architecture"],
         note_id="auth-architecture",
     )
@@ -77,6 +78,7 @@ def test_sync_project_mirrors_auth_architecture_markdown_and_note_rows(tmp_path:
     assert index.project_db_path().exists()
     assert index.count_rows("project") == 2
     assert {row["source_kind"] for row in rows} == {"markdown", "memory_note"}
+    assert {row["note_kind"] for row in rows} == {None, "decision"}
     assert {row["source_path"] for row in rows} == {
         "docs/auth.md",
         str(store.project_note_path("auth-architecture")),
@@ -91,6 +93,7 @@ def test_sync_global_prunes_stale_global_pattern_note_rows(tmp_path: Path) -> No
     stored = store.write_project_note(
         "Reusable Pattern",
         "Reusable cross-project pattern for global-pattern-note.",
+        note_kind="pattern",
         tags=["pattern"],
         note_id="global-pattern-note",
     )
@@ -104,5 +107,6 @@ def test_sync_global_prunes_stale_global_pattern_note_rows(tmp_path: Path) -> No
     assert len(first_rows) == 1
     assert first_rows[0]["note_id"] == "global-pattern-note"
     assert first_rows[0]["source_kind"] == "memory_note"
+    assert first_rows[0]["note_kind"] == "pattern"
     assert index.count_rows("global") == 0
     assert second_rows == []

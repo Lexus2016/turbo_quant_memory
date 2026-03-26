@@ -86,6 +86,7 @@ def test_semantic_search_project_scope_returns_markdown_first_balanced_card(tmp_
     remember_note_impl(
         "Auth Flow Note",
         "Project auth refresh rotation note for session cache.",
+        kind="lesson",
         tags=["auth", "session"],
         environ=env,
     )
@@ -108,6 +109,7 @@ def test_semantic_search_global_scope_preserves_promoted_from_provenance(tmp_pat
     stored = remember_note_impl(
         "Global Pattern",
         "Reusable session cache pattern for global memory.",
+        kind="pattern",
         tags=["session", "cache"],
         environ=env,
     )
@@ -118,6 +120,7 @@ def test_semantic_search_global_scope_preserves_promoted_from_provenance(tmp_pat
     assert payload["status"] == "ok"
     assert payload["scope"] == "global"
     assert payload["items"][0]["source_kind"] == "memory_note"
+    assert payload["items"][0]["note_kind"] == "pattern"
     assert payload["items"][0]["promoted_from"]["scope"] == "project"
     assert payload["items"][0]["title"] == "Global Pattern"
 
@@ -127,6 +130,7 @@ def test_semantic_search_hybrid_prefers_project_scope_when_relevance_is_close(tm
     stored = remember_note_impl(
         "Project Login Cache",
         "Project login auth refresh cache.",
+        kind="lesson",
         tags=["auth", "login"],
         environ=env,
     )

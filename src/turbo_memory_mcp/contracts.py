@@ -1,4 +1,4 @@
-"""Stable payload contracts for the Phase 4 MCP tool surface."""
+"""Stable payload contracts for the Phase 5 MCP tool surface."""
 
 from __future__ import annotations
 
@@ -10,26 +10,31 @@ PRODUCT_NAME = "Turbo Quant Memory for AI Agents"
 PACKAGE_NAME = "turbo-memory-mcp"
 SERVER_ID = "tqmemory"
 RUNTIME_COMMAND = "turbo-memory-mcp serve"
+REPOSITORY_URL = "https://github.com/Lexus2016/turbo_quant_memory"
 TRANSPORT = "stdio"
 DEFAULT_WRITE_SCOPE = "project"
 DEFAULT_QUERY_MODE = "hybrid"
 QUERY_MODES = ("project", "global", "hybrid")
 INDEX_MODES = ("full", "incremental")
+HYDRATE_MODES = ("default", "related")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "search_memory")
 PHASE_3_TOOL_NAMES = PHASE_2_TOOL_NAMES + ("index_paths",)
 PHASE_4_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "index_paths")
+PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "hydrate", "index_paths")
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
+    release_ref = f"v{__version__}"
+    git_install_ref = f"git+{REPOSITORY_URL}@{release_ref}"
     return {
         "primary": {
             "tool": "uv",
-            "command": f"uv run {RUNTIME_COMMAND}",
+            "command": f"uv tool install {git_install_ref}",
         },
         "fallback": {
             "tool": "pip",
-            "command": "python -m turbo_memory_mcp serve",
+            "command": f"python -m pip install {git_install_ref}",
         },
     }
 
@@ -59,6 +64,7 @@ def build_contract_snapshot(
         "default_query_mode": DEFAULT_QUERY_MODE,
         "query_modes": list(QUERY_MODES),
         "index_modes": list(INDEX_MODES),
+        "hydrate_modes": list(HYDRATE_MODES),
     }
     if storage_root is not None:
         payload["storage_root"] = storage_root
@@ -82,8 +88,15 @@ def build_server_info_payload(
     *,
     storage_root: str,
     current_project: Mapping[str, Any],
+    storage_stats: Mapping[str, Any] | None = None,
+    index_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    return build_contract_snapshot(storage_root=storage_root, current_project=current_project)
+    payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
+    if storage_stats is not None:
+        payload["storage_stats"] = dict(storage_stats)
+    if index_status is not None:
+        payload["index_status"] = dict(index_status)
+    return payload
 
 
 def build_scope_payload() -> dict[str, object]:
@@ -127,6 +140,7 @@ def build_note_item_payload(
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "title": note["title"],
+        "note_kind": note["note_kind"],
         "content_preview": content_preview,
         "tags": list(note.get("tags", [])),
         "scope": note["scope"],
@@ -208,9 +222,80 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
         payload["block_id"] = item["block_id"]
     if item.get("warning"):
         payload["warning"] = item["warning"]
+    if item.get("note_kind"):
+        payload["note_kind"] = item["note_kind"]
     if item.get("promoted_from"):
         payload["promoted_from"] = dict(item["promoted_from"])
     return payload
+
+
+def build_hydrated_markdown_item_payload(
+    block: Mapping[str, Any],
+    *,
+    project_name: str,
+) -> dict[str, object]:
+    heading_path = list(block.get("heading_path", []))
+    title = heading_path[-1] if heading_path else str(block["source_path"])
+    return {
+        "scope": block["scope"],
+        "project_id": block["project_id"],
+        "project_name": project_name,
+        "source_kind": block["source_kind"],
+        "item_id": block["block_id"],
+        "block_id": block["block_id"],
+        "source_path": block["source_path"],
+        "title": title,
+        "heading_path": heading_path,
+        "updated_at": block["updated_at"],
+        "content": block["content_raw"],
+    }
+
+
+def build_hydrated_note_item_payload(
+    note: Mapping[str, Any],
+    *,
+    source_path: str,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "scope": note["scope"],
+        "project_id": note["project_id"],
+        "project_name": note["project_name"],
+        "source_kind": note["source_kind"],
+        "item_id": note["note_id"],
+        "title": note["title"],
+        "note_kind": note["note_kind"],
+        "source_path": source_path,
+        "updated_at": note["updated_at"],
+        "content": note["content"],
+        "tags": list(note.get("tags", [])),
+        "source_refs": list(note.get("source_refs", [])),
+    }
+    if note.get("promoted_from"):
+        payload["promoted_from"] = dict(note["promoted_from"])
+    return payload
+
+
+def build_hydration_payload(
+    *,
+    mode: str,
+    item: Mapping[str, Any],
+    neighbors_before: list[Mapping[str, Any]],
+    neighbors_after: list[Mapping[str, Any]],
+    neighbor_window: Mapping[str, int],
+) -> dict[str, object]:
+    return {
+        "status": "ok",
+        "mode": mode,
+        "scope": item["scope"],
+        "source_kind": item["source_kind"],
+        "item": dict(item),
+        "neighbors_before": [dict(neighbor) for neighbor in neighbors_before],
+        "neighbors_after": [dict(neighbor) for neighbor in neighbors_after],
+        "neighbor_window": {
+            "before": int(neighbor_window["before"]),
+            "after": int(neighbor_window["after"]),
+        },
+    }
 
 
 def build_indexing_payload(
@@ -243,8 +328,8 @@ def build_self_test_payload(
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     return {
         "status": "ok",
-        "tool_count": len(PHASE_4_TOOL_NAMES),
-        "tool_names": list(PHASE_4_TOOL_NAMES),
+        "tool_count": len(PHASE_5_TOOL_NAMES),
+        "tool_names": list(PHASE_5_TOOL_NAMES),
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
         "runtime_command": payload["runtime_command"],
@@ -258,6 +343,7 @@ def build_self_test_payload(
             "default_query_mode": payload["default_query_mode"],
             "query_modes": payload["query_modes"],
             "index_modes": payload["index_modes"],
+            "hydrate_modes": payload["hydrate_modes"],
         },
     }
 
@@ -265,12 +351,14 @@ def build_self_test_payload(
 __all__ = [
     "DEFAULT_QUERY_MODE",
     "DEFAULT_WRITE_SCOPE",
+    "HYDRATE_MODES",
     "INDEX_MODES",
     "PACKAGE_NAME",
     "PHASE_1_TOOL_NAMES",
     "PHASE_2_TOOL_NAMES",
     "PHASE_3_TOOL_NAMES",
     "PHASE_4_TOOL_NAMES",
+    "PHASE_5_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
     "RUNTIME_COMMAND",
@@ -278,6 +366,9 @@ __all__ = [
     "TRANSPORT",
     "build_contract_snapshot",
     "build_health_payload",
+    "build_hydrated_markdown_item_payload",
+    "build_hydrated_note_item_payload",
+    "build_hydration_payload",
     "build_indexing_payload",
     "build_install_contract",
     "build_note_item_payload",

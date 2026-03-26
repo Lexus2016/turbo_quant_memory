@@ -132,17 +132,19 @@ This project does **not** directly quantize Claude tokens or Anthropic-hosted KV
 - Повертати сусідні блоки або обмежену секцію вихідного файлу.
 - Зберігати token discipline, вимагаючи явного виклику для більших payload.
 
-Phase 4 stops at balanced-card retrieval; explicit hydration lands in Phase 5.
+Phase 5 completes balanced-card retrieval with explicit hydration.
 
-Phase 4 зупиняється на balanced-card retrieval; явне hydration переходить у Phase 5.
+Phase 5 завершує balanced-card retrieval явним hydration.
 
 ### 7.4 Write-Back Memory / Запис нової пам'яті
 
 - Save decisions, findings, summaries, and reusable snippets.
+- Use fixed note kinds: `decision`, `lesson`, `handoff`, `pattern`.
 - Tag and timestamp notes.
 - Reindex saved notes automatically or on explicit refresh.
 
 - Зберігати рішення, висновки, summary і reusable snippets.
+- Використовувати фіксовані типи нотаток: `decision`, `lesson`, `handoff`, `pattern`.
 - Додавати теги та часові мітки.
 - Переіндексувати збережені notes автоматично або за явним refresh.
 
@@ -152,33 +154,33 @@ Phase 4 зупиняється на balanced-card retrieval; явне hydration 
 - Index freshness and counts
 - Smoke test instructions
 - Troubleshooting guidance
+- `server_info()` exposes storage stats and freshness snapshots
 
 - Health/status tool
 - Freshness індексу і лічильники
 - Інструкція smoke test
 - Troubleshooting guidance
+- `server_info()` показує storage stats і freshness-зрізи
 
 ## 8. MCP Tool Surface / Набір MCP-інструментів
 
-### Live Phase 4 tools / Живі інструменти Phase 4
+### Live Phase 5 tools / Живі інструменти Phase 5
 
 1. `index_paths(paths, mode="incremental"|"full")`
 2. `semantic_search(query, limit=5, scope=None)`
-3. `remember_note(title, content, tags=[], source=None)`
+3. `remember_note(title, content, kind, tags=[], source_refs=None, scope="project")`
 4. `promote_note(note_id)`
-5. `health()`
-6. `server_info()`
-7. `list_scopes()`
-8. `self_test()`
+5. `hydrate(item_id, scope, mode="default"|"related")`
+6. `health()`
+7. `server_info()`
+8. `list_scopes()`
+9. `self_test()`
 
-### Planned for Phase 5+ / Заплановано для Phase 5+
+### Planned for Phase 6+ / Заплановано для Phase 6+
 
 1. `get_compressed_block(block_id, style="brief"|"standard")`
-2. `hydrate_block(block_id, neighborhood=0)`
-3. `related_blocks(block_id, limit=5)`
-4. `reindex_status()`
-5. `memory_stats()`
-6. `delete_note(note_id)`
+2. `memory_stats()`
+3. `delete_note(note_id)`
 
 ## 9. Data Model / Модель даних
 
@@ -201,6 +203,7 @@ Phase 4 зупиняється на balanced-card retrieval; явне hydration 
 - `note_id`
 - `title`
 - `content`
+- `note_kind`
 - `summary`
 - `tags`
 - `session_id`
@@ -280,19 +283,19 @@ Phase 4 зупиняється на balanced-card retrieval; явне hydration 
 ### Deployment requirement / Вимога до розгортання
 
 - One recommended install path:
-  - `uv sync`
-  - `uv run turbo-memory-mcp`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+  - `turbo-memory-mcp serve`
 - One documented Claude Code connection path:
-  - `claude mcp add turbo-memory --scope project -- uv run turbo-memory-mcp`
+  - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`
   - or a `.mcp.json` example with stdio transport
 - Equivalent client examples must also exist for Codex, Cursor, OpenCode, and Antigravity.
 - Також мають існувати еквівалентні client examples для Codex, Cursor, OpenCode і Antigravity.
 
 - Один рекомендований шлях інсталяції:
-  - `uv sync`
-  - `uv run turbo-memory-mcp`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+  - `turbo-memory-mcp serve`
 - Один задокументований шлях підключення до Claude Code:
-  - `claude mcp add turbo-memory --scope project -- uv run turbo-memory-mcp`
+  - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`
   - або `.mcp.json` приклад зі stdio transport
 
 ## 15. Testing Strategy / Стратегія тестування
