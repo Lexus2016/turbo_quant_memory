@@ -4,7 +4,28 @@ from pathlib import Path
 
 import pytest
 
-from turbo_memory_mcp.server import promote_note_impl, remember_note_impl, search_memory_impl
+from turbo_memory_mcp.server import promote_note_impl, remember_note_impl, semantic_search_impl
+from unittest.mock import patch
+
+
+class KeywordEmbedder:
+    KEYWORDS = ("auth", "refresh", "login", "global", "project")
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            lowered = text.lower()
+            vector = [0.0] * 384
+            for index, keyword in enumerate(self.KEYWORDS):
+                vector[index] = 1.0 if keyword in lowered else 0.0
+            vectors.append(vector)
+        return vectors
+
+
+@pytest.fixture(autouse=True)
+def _fake_embedder() -> None:
+    with patch("turbo_memory_mcp.retrieval_index.build_default_embedder", return_value=KeywordEmbedder()):
+        yield
 
 
 def _test_env(tmp_path: Path) -> dict[str, str]:
@@ -61,7 +82,7 @@ def test_promote_note_preserves_promoted_from(tmp_path: Path) -> None:
     assert promoted["item"]["promoted_from"]["note_id"] == stored["item"]["item_id"]
 
 
-def test_search_memory_project_scope_returns_only_project_notes(tmp_path: Path) -> None:
+def test_semantic_search_project_scope_returns_only_project_notes(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
     stored = remember_note_impl(
         "Auth Flow",
@@ -71,15 +92,16 @@ def test_search_memory_project_scope_returns_only_project_notes(tmp_path: Path) 
     )
     promote_note_impl(stored["item"]["item_id"], environ=env)
 
-    payload = search_memory_impl("auth refresh", scope="project", environ=env)
+    payload = semantic_search_impl("auth refresh", scope="project", environ=env)
 
     assert payload["status"] == "ok"
     assert payload["scope"] == "project"
     assert payload["result_count"] == 1
     assert [item["scope"] for item in payload["items"]] == ["project"]
+    assert payload["items"][0]["source_kind"] == "memory_note"
 
 
-def test_search_memory_global_scope_returns_only_global_notes(tmp_path: Path) -> None:
+def test_semantic_search_global_scope_returns_only_global_notes(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
     stored = remember_note_impl(
         "Auth Flow",
@@ -89,15 +111,16 @@ def test_search_memory_global_scope_returns_only_global_notes(tmp_path: Path) ->
     )
     promote_note_impl(stored["item"]["item_id"], environ=env)
 
-    payload = search_memory_impl("auth refresh", scope="global", environ=env)
+    payload = semantic_search_impl("auth refresh", scope="global", environ=env)
 
     assert payload["status"] == "ok"
     assert payload["scope"] == "global"
     assert payload["result_count"] == 1
     assert [item["scope"] for item in payload["items"]] == ["global"]
+    assert payload["items"][0]["promoted_from"]["scope"] == "project"
 
 
-def test_search_memory_hybrid_prefers_project_hits_when_relevance_is_close(tmp_path: Path) -> None:
+def test_semantic_search_hybrid_prefers_project_hits_when_relevance_is_close(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
     stored = remember_note_impl(
         "Auth Flow",
@@ -107,7 +130,7 @@ def test_search_memory_hybrid_prefers_project_hits_when_relevance_is_close(tmp_p
     )
     promote_note_impl(stored["item"]["item_id"], environ=env)
 
-    payload = search_memory_impl("auth refresh login", scope="hybrid", limit=5, environ=env)
+    payload = semantic_search_impl("auth refresh login", scope="hybrid", limit=5, environ=env)
 
     assert payload["status"] == "ok"
     assert payload["scope"] == "hybrid"
