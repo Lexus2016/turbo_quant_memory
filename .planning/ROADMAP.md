@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** Phase 3 completed; ready for Phase 4 discussion
+**Status:** Phase 3 completed; Phase 4 planned
 
 ## Overview
 
@@ -68,6 +68,8 @@
 ### Phase 4: Compressed Retrieval
 
 **Goal:** Let agents retrieve compact high-signal memory results with clear provenance while avoiding default raw-file dumps.
+
+**Status:** Planned (2026-03-26)
 
 **Requirements:** `RET-01`, `RET-02`, `SAFE-01`, `SAFE-02`
 
