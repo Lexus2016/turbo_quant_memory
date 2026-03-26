@@ -54,11 +54,11 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert payload["server_id"] == SERVER_ID
     assert payload["current_project"] == SAMPLE_PROJECT
@@ -80,11 +80,11 @@ def test_self_test_matches_exported_phase_5_tools() -> None:
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"

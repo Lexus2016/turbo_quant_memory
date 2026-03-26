@@ -14,6 +14,13 @@
 - Prefer hybrid search with project bias when reading.
 - Require explicit promotion from project to global memory.
 - Every memory result must preserve provenance.
+- Before editing an existing area, search project memory first.
+- Use `hydrate` only when compact retrieval is not enough.
+- After important decisions, debugging outcomes, or handoffs, store one concise note.
+- After README, config, workflow, or architecture changes, refresh indexed docs.
+- When old knowledge is replaced, write the new note and deprecate the old one.
+- Do not keep smoke, temporary, or validation notes active.
+- Treat `.planning`, `.serena`, and generated benchmark artifacts as historical workflow context, not as primary user-facing memory.
 
 ## Documentation Policy
 

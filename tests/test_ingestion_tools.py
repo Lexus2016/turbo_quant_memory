@@ -76,3 +76,53 @@ def test_index_paths_incremental_rerun_skips_unchanged_and_cleans_deleted_files(
 
     assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["architecture/adr-001.md"]
     assert {block["source_path"] for block in store.list_markdown_blocks()} == {"architecture/adr-001.md"}
+
+
+def test_index_paths_skips_default_ignored_subdirectories_and_cleans_existing_noise(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    visible_doc = project_root / "README.md"
+    ignored_doc = project_root / ".planning" / "old-plan.md"
+    ignored_doc.parent.mkdir(parents=True)
+    visible_doc.write_text("# README\n\nVisible doc.", encoding="utf-8")
+    ignored_doc.write_text("# Old Plan\n\nShould not stay in active retrieval.", encoding="utf-8")
+
+    payload = index_paths_impl(paths=[str(project_root)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert payload["indexed_files"] == 1
+    assert payload["changed_files"] == 1
+    assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["README.md"]
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {"README.md"}
+
+    root_id = store.list_markdown_roots()[0]["root_id"]
+    store.write_markdown_file_manifest(
+        {
+            "root_id": root_id,
+            "source_path": ".planning/old-plan.md",
+            "file_key": "stale-plan",
+            "size": 10,
+            "mtime_ns": 1,
+            "source_checksum": "stale-checksum",
+            "block_ids": ["stale-block"],
+            "indexed_at": "2026-03-26T00:00:00Z",
+        }
+    )
+    store.write_markdown_block(
+        {
+            "block_id": "stale-block",
+            "root_id": root_id,
+            "source_path": ".planning/old-plan.md",
+            "heading_path": ["Old Plan"],
+            "chunk_index": 0,
+            "content_raw": "stale planning block",
+            "block_checksum": "stale-block-checksum",
+            "source_checksum": "stale-checksum",
+            "updated_at": "2026-03-26T00:00:00Z",
+        }
+    )
+
+    cleanup_payload = index_paths_impl(mode="incremental", cwd=project_root, environ=env)
+
+    assert cleanup_payload["deleted_files"] == 1
+    assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["README.md"]
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {"README.md"}

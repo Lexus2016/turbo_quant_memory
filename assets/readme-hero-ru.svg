@@ -29,7 +29,7 @@
       .pill { font: 600 21px 'Segoe UI', Arial, sans-serif; fill: #ecfbff; }
       .chip { font: 600 22px 'Segoe UI', Arial, sans-serif; fill: #eefaff; }
       .cardTitle { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #f5fbff; }
-      .cardText { font: 400 20px 'Segoe UI', Arial, sans-serif; fill: #cfe5f3; }
+      .cardText { font: 400 19px 'Segoe UI', Arial, sans-serif; fill: #cfe5f3; }
       .small { font: 600 18px 'Segoe UI', Arial, sans-serif; fill: #96e4ff; letter-spacing: 1.2px; text-transform: uppercase; }
     </style>
   </defs>
@@ -75,10 +75,17 @@
   <rect x="1010" y="404" rx="14" ry="14" width="104" height="36" fill="url(#accent)"/>
   <text x="1046" y="428" class="small" fill="#062032">Hybrid</text>
   <text x="1010" y="472" class="cardTitle">Сначала компактный retrieval</text>
-  <text x="1010" y="506" class="cardText">Ищите коротко. Раскрывайте глубже только при необходимости.</text>
+  <text x="1010" y="500" class="cardText">
+    <tspan x="1010" dy="0">Ищите коротко.</tspan>
+    <tspan x="1010" dy="25">Раскрывайте глубже только</tspan>
+    <tspan x="1010" dy="25">при необходимости.</tspan>
+  </text>
 
   <rect x="1010" y="584" rx="14" ry="14" width="106" height="36" fill="url(#accent)"/>
   <text x="1044" y="608" class="small" fill="#062032">Global</text>
   <text x="1010" y="652" class="cardTitle">Переиспользуемые знания</text>
-  <text x="1010" y="686" class="cardText">Продвигайте то, что должна помнить вся команда.</text>
+  <text x="1010" y="680" class="cardText">
+    <tspan x="1010" dy="0">Продвигайте то, что должна</tspan>
+    <tspan x="1010" dy="25">помнить вся команда.</tspan>
+  </text>
 </svg>

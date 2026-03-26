@@ -48,15 +48,15 @@ Turbo Quant Memory допомагає AI-агентам пам’ятати ва
 
 Поточний знімок вимірювань:
 
-- Розмір корпусу: 117 Markdown-файлів, 1015 індексованих блоків
-- Повна індексація: 17.11 с
-- Порожній incremental index: 2.32 с
-- Середня затримка `semantic_search`: 544.08 мс
-- Середня затримка `hydrate`: 184.49 мс
-- Середня економія по байтах для `semantic_search` без hydrate: 78.39%
-- Середня економія по байтах для `semantic_search + hydrate(top1)`: 66.46%
-- Середня економія по словах для `semantic_search` без hydrate: 83.25%
-- Середня економія по словах для `semantic_search + hydrate(top1)`: 74.98%
+- Розмір корпусу: 9 Markdown-файлів, 138 індексованих блоків
+- Повна індексація: 4.00 с
+- Порожній incremental index: 0.68 с
+- Середня затримка `semantic_search`: 75.14 мс
+- Середня затримка `hydrate`: 41.71 мс
+- Середня економія по байтах для `semantic_search` без hydrate: 78.02%
+- Середня економія по байтах для `semantic_search + hydrate(top1)`: 63.41%
+- Середня економія по словах для `semantic_search` без hydrate: 83.84%
+- Середня економія по словах для `semantic_search + hydrate(top1)`: 74.76%
 
 Що це означає на практиці:
 
@@ -77,14 +77,14 @@ Turbo Quant Memory допомагає AI-агентам пам’ятати ва
 Рекомендоване встановлення релізної версії з GitHub-тега:
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
 turbo-memory-mcp serve
 ```
 
 Резервний шлях через `pip`:
 
 ```bash
-python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0
+python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
 turbo-memory-mcp serve
 ```
 
@@ -200,6 +200,7 @@ Smoke-чекліст:
 - У новому репозиторії все одно корисно один раз попросити проіндексувати матеріали, щоб пам’ять мала що шукати.
 - Перед ризикованими змінами можна попросити агента спочатку перевірити пам’ять проєкту.
 - Після важливих рішень варто попросити агента зберегти їх, щоб наступні сесії не втратили цей контекст.
+- За замовчуванням індексація проєкту пропускає історичні та low-signal каталоги на кшталт `.planning`, `.serena` і згенерованих benchmark-звітів, щоб активний пошук лишався сфокусованим на живих документах і нотатках.
 
 Найпростіша ментальна модель така:
 

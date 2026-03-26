@@ -1,9 +1,9 @@
 # Benchmark Results
 
-- Generated at: `2026-03-26T18:27:56.329205+00:00`
-- Corpus: `117` Markdown files, `1030` indexed blocks
-- Full index: `34478.92` ms
-- Idle incremental: `4669.3` ms
+- Generated at: `2026-03-26T18:49:53.978307+00:00`
+- Corpus: `9` Markdown files, `138` indexed blocks
+- Full index: `4004.26` ms
+- Idle incremental: `677.8` ms
 
 ![Benchmark summary](summary-en.svg)
 
@@ -11,19 +11,19 @@
 
 | Strategy | Average byte savings | Median byte savings | Average word savings |
 |---|---:|---:|---:|
-| `semantic_search` only | 78.77% | 80.94% | 83.72% |
-| `semantic_search` + `hydrate(top1)` | 66.79% | 70.1% | 75.28% |
+| `semantic_search` only | 78.02% | 78.51% | 83.84% |
+| `semantic_search` + `hydrate(top1)` | 63.41% | 61.78% | 74.76% |
 
 ## Query Breakdown
 
 | Query | Top hit | Full files bytes | Search bytes | Search+hydrate bytes | Search savings | Guided savings |
 |---|---|---:|---:|---:|---:|---:|
-| `namespace model project global hybrid` | `Phase 2: Namespace Model` | 43145 | 5872 | 10400 | 86.39% | 75.9% |
-| `hydrate bounded neighborhood related mode` | `First Hydrate Boundary` | 21484 | 6870 | 10165 | 68.02% | 52.69% |
-| `current project resolution git remote overrides` | `Project Identity and Detection` | 31542 | 6835 | 10631 | 78.33% | 66.3% |
-| `storage stats freshness index status` | `7.5 Operations / Експлуатація` | 39605 | 6520 | 10336 | 83.54% | 73.9% |
-| `Claude Code Codex Cursor OpenCode integrations` | `Source Map` | 23524 | 6881 | 10557 | 70.75% | 55.12% |
-| `remember note decision lesson handoff pattern` | `Pattern 4: Typed Write-Back Should Be First-Class` | 49157 | 7073 | 11390 | 85.61% | 76.83% |
+| `namespace model project global hybrid` | `2. Active Namespaces / Активні namespace` | 23474 | 6209 | 11335 | 73.55% | 51.71% |
+| `hydrate bounded neighborhood related mode` | `9.5 Hydration Strategy / Стратегія hydration` | 36130 | 6716 | 10796 | 81.41% | 70.12% |
+| `current project resolution git remote overrides` | `3. Current Project Identity / Ідентичність поточного проєкту` | 23474 | 6736 | 9592 | 71.3% | 59.14% |
+| `storage stats freshness index status` | `7.5 Operations / Експлуатація` | 42906 | 6507 | 10319 | 84.83% | 75.95% |
+| `Claude Code Codex Cursor OpenCode integrations` | `Підключення клієнта` | 30615 | 6508 | 11845 | 78.74% | 61.31% |
+| `remember note decision lesson handoff pattern` | `7.4 Write-Back Memory / Запис нової пам'яті` | 29842 | 6481 | 11261 | 78.28% | 62.26% |
 
 ## Method
 

@@ -89,12 +89,12 @@ def test_server_info_payload_fields() -> None:
     assert payload["install"]["primary"]["tool"] == "uv"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert payload["install"]["fallback"]["tool"] == "pip"
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
@@ -136,11 +136,11 @@ def test_self_test_summarises_namespace_contract() -> None:
     assert payload["package_name"] == "turbo-memory-mcp"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1"
     )
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",

@@ -11,6 +11,24 @@ from .markdown_parser import build_block_id, parse_markdown_blocks
 from .store import MemoryStore, sha256_path, sha256_text, utc_now
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+DEFAULT_IGNORED_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".omc",
+        ".planning",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".serena",
+        ".mypy_cache",
+        ".venv",
+        "__pycache__",
+        "benchmarks",
+        "build",
+        "dist",
+        "node_modules",
+        "venv",
+    }
+)
 
 
 def index_paths(
@@ -48,7 +66,7 @@ def index_paths(
         }
         seen_source_paths: set[str] = set()
 
-        for file_path in sorted(path for path in root_path.rglob("*.md") if path.is_file()):
+        for file_path in _iter_markdown_files(root_path):
             indexed_files += 1
             source_path = file_path.relative_to(root_path).as_posix()
             seen_source_paths.add(source_path)
@@ -195,7 +213,20 @@ def _slugify(value: str) -> str:
     return slug or "markdown"
 
 
+def _iter_markdown_files(root_path: Path) -> list[Path]:
+    files: list[Path] = []
+    for file_path in root_path.rglob("*.md"):
+        if not file_path.is_file():
+            continue
+        relative_parts = file_path.relative_to(root_path).parts[:-1]
+        if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):
+            continue
+        files.append(file_path)
+    return sorted(files)
+
+
 __all__ = [
+    "DEFAULT_IGNORED_DIR_NAMES",
     "build_file_key",
     "build_root_id",
     "index_paths",

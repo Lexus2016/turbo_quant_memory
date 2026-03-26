@@ -37,28 +37,28 @@
   <rect x="970" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
 
   <text x="95" y="215" class="statLabel">Корпус</text>
-  <text x="95" y="255" class="statValue">117 файлов · 1030 блоков</text>
+  <text x="95" y="255" class="statValue">9 файлов · 138 блоков</text>
 
   <text x="395" y="215" class="statLabel">Полная индексация</text>
-  <text x="395" y="255" class="statValue">34.48 с</text>
+  <text x="395" y="255" class="statValue">4.0 с</text>
 
   <text x="695" y="215" class="statLabel">Средний поиск</text>
-  <text x="695" y="255" class="statValue">252.37 мс</text>
+  <text x="695" y="255" class="statValue">75.14 мс</text>
 
   <text x="995" y="215" class="statLabel">Средний hydrate</text>
-  <text x="995" y="255" class="statValue">140.17 мс</text>
+  <text x="995" y="255" class="statValue">41.71 мс</text>
 
   <text x="70" y="380" class="barLabel">Только поиск</text>
   <text x="70" y="415" class="barMeta">средняя экономия по байтам</text>
   <rect x="70" y="445" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
-  <rect x="70" y="445" rx="24" ry="24" width="835.0" height="56" fill="url(#bar1)"/>
-  <text x="1215" y="482" class="percent">78.77%</text>
-  <text x="70" y="532" class="barMeta">средняя экономия по словам: 83.72%</text>
+  <rect x="70" y="445" rx="24" ry="24" width="827.0" height="56" fill="url(#bar1)"/>
+  <text x="1215" y="482" class="percent">78.02%</text>
+  <text x="70" y="532" class="barMeta">средняя экономия по словам: 83.84%</text>
 
   <text x="70" y="610" class="barLabel">Поиск + hydrate</text>
   <text x="70" y="645" class="barMeta">средняя экономия по байтам</text>
   <rect x="70" y="665" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
-  <rect x="70" y="665" rx="24" ry="24" width="708.0" height="56" fill="url(#bar2)"/>
-  <text x="1215" y="702" class="percent">66.79%</text>
-  <text x="70" y="752" class="barMeta">средняя экономия по словам: 75.28%</text>
+  <rect x="70" y="665" rx="24" ry="24" width="672.1" height="56" fill="url(#bar2)"/>
+  <text x="1215" y="702" class="percent">63.41%</text>
+  <text x="70" y="752" class="barMeta">средняя экономия по словам: 74.76%</text>
 </svg>

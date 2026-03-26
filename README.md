@@ -48,15 +48,15 @@ The repository includes a real benchmark run in [benchmarks/latest.md](benchmark
 
 Current benchmark snapshot:
 
-- Corpus size: 117 Markdown files, 1015 indexed blocks
-- Full index time: 17.11 s
-- Idle incremental time: 2.32 s
-- Average `semantic_search` latency: 544.08 ms
-- Average `hydrate` latency: 184.49 ms
-- Average byte savings with `semantic_search` only: 78.39%
-- Average byte savings with `semantic_search + hydrate(top1)`: 66.46%
-- Average word savings with `semantic_search` only: 83.25%
-- Average word savings with `semantic_search + hydrate(top1)`: 74.98%
+- Corpus size: 9 Markdown files, 138 indexed blocks
+- Full index time: 4.00 s
+- Idle incremental time: 0.68 s
+- Average `semantic_search` latency: 75.14 ms
+- Average `hydrate` latency: 41.71 ms
+- Average byte savings with `semantic_search` only: 78.02%
+- Average byte savings with `semantic_search + hydrate(top1)`: 63.41%
+- Average word savings with `semantic_search` only: 83.84%
+- Average word savings with `semantic_search + hydrate(top1)`: 74.76%
 
 What those numbers mean:
 
@@ -77,14 +77,14 @@ These are real measurements for this repository and this implementation. They ar
 Recommended release install from GitHub tag:
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
 turbo-memory-mcp serve
 ```
 
 `pip` fallback:
 
 ```bash
-python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0
+python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
 turbo-memory-mcp serve
 ```
 
@@ -200,6 +200,7 @@ Use project memory before you answer. Search for earlier decisions about caching
 - On a new repository, it is still useful to ask for an initial index so the memory has something to search.
 - Before risky edits, you can ask the agent to check project memory first.
 - After important decisions, ask the agent to save them so future sessions do not lose them.
+- By default, project indexing skips historical and low-signal folders such as `.planning`, `.serena`, and generated benchmark reports, so active retrieval stays focused on live docs and notes.
 
 In practice, the easiest mental model is this:
 

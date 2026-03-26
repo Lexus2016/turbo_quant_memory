@@ -164,17 +164,18 @@ Phase 5 завершує balanced-card retrieval явним hydration.
 
 ## 8. MCP Tool Surface / Набір MCP-інструментів
 
-### Live Phase 5 tools / Живі інструменти Phase 5
+### Live v1 tools / Живі v1-інструменти
 
 1. `index_paths(paths, mode="incremental"|"full")`
 2. `semantic_search(query, limit=5, scope=None)`
 3. `remember_note(title, content, kind, tags=[], source_refs=None, scope="project")`
 4. `promote_note(note_id)`
-5. `hydrate(item_id, scope, mode="default"|"related")`
-6. `health()`
-7. `server_info()`
-8. `list_scopes()`
-9. `self_test()`
+5. `deprecate_note(note_id, scope="project"|"global", replacement_note_id=None, replacement_scope=None, reason=None)`
+6. `hydrate(item_id, scope, mode="default"|"related")`
+7. `health()`
+8. `server_info()`
+9. `list_scopes()`
+10. `self_test()`
 
 ### Planned for Phase 6+ / Заплановано для Phase 6+
 
@@ -277,13 +278,14 @@ Phase 5 завершує balanced-card retrieval явним hydration.
 - Зберігати межі джерела.
 - Трактувати retrieved memory як tool data, а не як авторитет.
 - Уникати прихованих зовнішніх мережевих залежностей для core flow.
+- Не індексувати історичні low-signal каталоги на кшталт `.planning`, `.serena` і generated benchmark artifacts у стандартному project-root ingestion flow.
 
 ## 14. Deployment and Integration / Розгортання та інтеграція
 
 ### Deployment requirement / Вимога до розгортання
 
 - One recommended install path:
-  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
   - `turbo-memory-mcp serve`
 - One documented Claude Code connection path:
   - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`
@@ -292,7 +294,7 @@ Phase 5 завершує balanced-card retrieval явним hydration.
 - Також мають існувати еквівалентні client examples для Codex, Cursor, OpenCode і Antigravity.
 
 - Один рекомендований шлях інсталяції:
-  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
   - `turbo-memory-mcp serve`
 - Один задокументований шлях підключення до Claude Code:
   - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`
