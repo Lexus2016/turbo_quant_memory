@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready for Phase 4 execution
-stopped_at: Phase 4 plans created
-last_updated: "2026-03-26T08:10:13Z"
+status: Ready to execute
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-26T08:47:13.451Z"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 12
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-25)
 
 ## Current Position
 
-Phase: 03 (markdown-ingestion) — COMPLETED
-Next: Phase 04 (compressed-retrieval) — PLANNED
+Phase: 04 (compressed-retrieval) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Next: Phase 04 (compressed-retrieval) — PLANNED
 | Phase 03-markdown-ingestion P01 | 369 | 3 tasks | 2 files |
 | Phase 03-markdown-ingestion P02 | 335 | 3 tasks | 4 files |
 | Phase 03-markdown-ingestion P03 | 420 | 3 tasks | 7 files |
+| Phase 04 P01 | 7m | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,8 @@ Recent decisions affecting current work:
 - Phase 4: canonical retrieval tool becomes `semantic_search(...)`; `search_memory(...)` should not remain as a public compatibility alias
 - Phase 4: default retrieval payload is a balanced card with `compressed_summary` plus at most `2-3` `key_points`, without raw excerpts by default
 - Phase 4: retrieval ranks Markdown source blocks ahead of memory notes within each scope and returns cautious results with explicit warnings on low confidence or ambiguity
+- [Phase 04]: Retrieval index stays a derived mirror under project/global storage instead of becoming a second source of truth — Preserves the local filesystem model and keeps Phase 4 additive to existing JSON persistence
+- [Phase 04]: Embedding runtime is injectable and tests use a deterministic fake embedder — Avoids model downloads in hermetic tests while runtime still defaults to all-MiniLM-L6-v2
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T08:10:13Z
-Stopped at: Phase 4 plans created
-Resume file: .planning/phases/04-compressed-retrieval/04-01-PLAN.md
+Last session: 2026-03-26T08:47:13.447Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: .planning/phases/04-compressed-retrieval/04-02-PLAN.md
