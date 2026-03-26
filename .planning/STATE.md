@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready for Phase 4 discussion
-stopped_at: Phase 3 execution complete
-last_updated: "2026-03-26T07:07:42Z"
+status: Ready for Phase 4 planning
+stopped_at: Phase 4 context captured
+last_updated: "2026-03-26T07:35:38Z"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-25)
 ## Current Position
 
 Phase: 03 (markdown-ingestion) — COMPLETED
-Next: Phase 04 (compressed-retrieval) — READY FOR DISCUSSION
+Next: Phase 04 (compressed-retrieval) — READY FOR PLANNING
 
 ## Performance Metrics
 
@@ -45,7 +45,7 @@ Next: Phase 04 (compressed-retrieval) — READY FOR DISCUSSION
 **Recent Trend:**
 
 - Last 3 plans: 03-01, 03-02, 03-03
-- Trend: Phase 3 completed; ready to start compressed retrieval work
+- Trend: Phase 4 decisions captured; ready to plan compressed retrieval work
 
 | Phase 01-client-integration-foundation P01 | 356 | 3 tasks | 9 files |
 | Phase 01-client-integration-foundation P02 | 412 | 3 tasks | 7 files |
@@ -78,6 +78,9 @@ Recent decisions affecting current work:
 - Phase 3: Markdown roots persist under `projects/<project_id>/markdown/{roots,files,blocks}` without changing the Phase 2 note/global layout
 - Phase 3: Markdown chunking uses `markdown-it-py`, a synthetic `__preamble__`, and location-based block ids separated from content checksums
 - Phase 3: `index_paths` supports `full` and `incremental` modes, reuses registered roots, skips untouched files, and removes deleted-file artifacts
+- Phase 4: canonical retrieval tool becomes `semantic_search(...)`; `search_memory(...)` should not remain as a public compatibility alias
+- Phase 4: default retrieval payload is a balanced card with `compressed_summary` plus at most `2-3` `key_points`, without raw excerpts by default
+- Phase 4: retrieval ranks Markdown source blocks ahead of memory notes within each scope and returns cautious results with explicit warnings on low confidence or ambiguity
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T07:07:42Z
-Stopped at: Phase 3 execution complete
-Resume file: .planning/phases/03-markdown-ingestion/03-03-SUMMARY.md
+Last session: 2026-03-26T07:35:38Z
+Stopped at: Phase 4 context captured
+Resume file: .planning/phases/04-compressed-retrieval/04-CONTEXT.md
