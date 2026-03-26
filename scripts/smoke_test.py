@@ -22,7 +22,7 @@ EXPECTED_TOOL_NAMES = [
     "self_test",
     "remember_note",
     "promote_note",
-    "search_memory",
+    "semantic_search",
     "index_paths",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
@@ -55,8 +55,14 @@ async def run_smoke() -> list[str]:
         architecture_file = markdown_root / "architecture.md"
         overview_file = markdown_root / "overview.md"
         markdown_root.mkdir(parents=True, exist_ok=True)
-        architecture_file.write_text("# Architecture\n\nInitial architecture notes.\n", encoding="utf-8")
-        overview_file.write_text("# Overview\n\nInitial overview notes.\n", encoding="utf-8")
+        architecture_file.write_text(
+            "# Architecture\n\n"
+            "## Auth\n\n"
+            "- Auth refresh rotation keeps session cache stable for project login flows.\n"
+            "- Markdown-first retrieval should outrank notes when both hits are close.\n",
+            encoding="utf-8",
+        )
+        overview_file.write_text("# Overview\n\nGeneral project overview notes.\n", encoding="utf-8")
         resolved_storage_root = storage_root.resolve()
         server_env = {
             **os.environ,
@@ -84,13 +90,32 @@ async def run_smoke() -> list[str]:
                 server_info = result_payload(await session.call_tool("server_info"))
                 list_scopes = result_payload(await session.call_tool("list_scopes"))
                 self_test = result_payload(await session.call_tool("self_test"))
+                full_index = result_payload(
+                    await session.call_tool(
+                        "index_paths",
+                        {
+                            "paths": [str(markdown_root)],
+                            "mode": "full",
+                        },
+                    )
+                )
                 remembered = result_payload(
                     await session.call_tool(
                         "remember_note",
                         {
                             "title": "Smoke Note",
-                            "content": "Phase 2 namespace smoke checks project and global memory.",
-                            "tags": ["smoke", "phase2"],
+                            "content": "Phase 4 namespace smoke checks project and global memory ordering.",
+                            "tags": ["smoke", "phase4", "namespace"],
+                        },
+                    )
+                )
+                project_search = result_payload(
+                    await session.call_tool(
+                        "semantic_search",
+                        {
+                            "query": "auth refresh rotation session cache",
+                            "scope": "project",
+                            "limit": 5,
                         },
                     )
                 )
@@ -99,20 +124,11 @@ async def run_smoke() -> list[str]:
                 )
                 hybrid_search = result_payload(
                     await session.call_tool(
-                        "search_memory",
+                        "semantic_search",
                         {
                             "query": "namespace smoke",
                             "scope": "hybrid",
                             "limit": 5,
-                        },
-                    )
-                )
-                full_index = result_payload(
-                    await session.call_tool(
-                        "index_paths",
-                        {
-                            "paths": [str(markdown_root)],
-                            "mode": "full",
                         },
                     )
                 )
@@ -172,13 +188,49 @@ async def run_smoke() -> list[str]:
 
     expect(remembered["item"]["scope"] == "project", f"remember_note scope mismatch: {remembered}")
     expect(remembered["item"]["project_id"] == expected_project["project_id"], f"remember_note project mismatch: {remembered}")
+    expect(project_search["scope"] == "project", f"semantic_search project scope mismatch: {project_search}")
+    expect(project_search["result_count"] >= 1, f"semantic_search project result_count mismatch: {project_search}")
+    expect(
+        project_search["items"][0]["source_kind"] == "markdown",
+        f"semantic_search markdown-first mismatch: {project_search}",
+    )
+    expect(project_search["items"][0]["block_id"], f"semantic_search block_id missing: {project_search}")
+    expect(
+        bool(project_search["items"][0]["compressed_summary"]),
+        f"semantic_search compressed_summary missing: {project_search}",
+    )
+    expect(
+        1 <= len(project_search["items"][0]["key_points"]) <= 3,
+        f"semantic_search key_points mismatch: {project_search}",
+    )
+    expect(
+        project_search["items"][0]["confidence_state"] in {"high", "medium", "low", "ambiguous"},
+        f"semantic_search confidence_state mismatch: {project_search}",
+    )
+    expect("content_raw" not in project_search["items"][0], f"semantic_search raw excerpt leak: {project_search}")
+    expect(
+        "excerpt_preview" not in project_search["items"][0],
+        f"semantic_search raw excerpt preview leak: {project_search}",
+    )
     expect(promoted["item"]["scope"] == "global", f"promote_note scope mismatch: {promoted}")
     expect(promoted["item"]["promoted_from"]["scope"] == "project", f"promote_note provenance mismatch: {promoted}")
-    expect(hybrid_search["scope"] == "hybrid", f"search_memory scope mismatch: {hybrid_search}")
-    expect(hybrid_search["result_count"] >= 2, f"search_memory result_count mismatch: {hybrid_search}")
+    expect(hybrid_search["scope"] == "hybrid", f"semantic_search hybrid scope mismatch: {hybrid_search}")
+    expect(hybrid_search["result_count"] >= 2, f"semantic_search hybrid result_count mismatch: {hybrid_search}")
     expect(
         [item["scope"] for item in hybrid_search["items"][:2]] == ["project", "global"],
-        f"search_memory ordering mismatch: {hybrid_search}",
+        f"semantic_search project/global ordering mismatch: {hybrid_search}",
+    )
+    expect(
+        hybrid_search["items"][0]["source_kind"] == "memory_note",
+        f"semantic_search hybrid note mismatch: {hybrid_search}",
+    )
+    expect(
+        hybrid_search["items"][1]["promoted_from"]["scope"] == "project",
+        f"semantic_search hybrid provenance mismatch: {hybrid_search}",
+    )
+    expect(
+        "content_raw" not in hybrid_search["items"][0],
+        f"semantic_search hybrid raw excerpt leak: {hybrid_search}",
     )
     expect(full_index["mode"] == "full", f"index_paths full.mode mismatch: {full_index}")
     expect(len(full_index["registered_roots"]) == 1, f"index_paths roots mismatch: {full_index}")
@@ -217,9 +269,10 @@ async def run_smoke() -> list[str]:
     return [
         f"PASS tool catalog: {', '.join(tool_names)}",
         f"PASS server_info: {server_info['current_project']['project_id']} @ {server_info['storage_root']}",
+        f"PASS semantic_search project: {project_search['items'][0]['source_kind']} {project_search['items'][0]['block_id']}",
         f"PASS remember_note: {remembered['item']['item_id']} in {remembered['item']['scope']}",
         f"PASS promote_note: {promoted['item']['item_id']} in {promoted['item']['scope']}",
-        f"PASS search_memory: {hybrid_search['items'][0]['scope']} before {hybrid_search['items'][1]['scope']}",
+        f"PASS semantic_search hybrid: {hybrid_search['items'][0]['scope']} before {hybrid_search['items'][1]['scope']}",
         f"PASS index_paths full: {full_index['indexed_files']} files / {full_index['block_count']} blocks",
         f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
         f"PASS index_paths incremental changed: changed={changed_incremental['changed_files']} deleted={changed_incremental['deleted_files']}",

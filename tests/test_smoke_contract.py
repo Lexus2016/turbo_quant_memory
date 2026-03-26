@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from turbo_memory_mcp.contracts import (
-    PHASE_3_TOOL_NAMES,
+    PHASE_4_TOOL_NAMES,
     SERVER_ID,
     build_indexing_payload,
     build_note_item_payload,
+    build_semantic_item_payload,
     build_self_test_payload,
     build_server_info_payload,
 )
@@ -31,14 +32,14 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     assert payload["default_query_mode"] == "hybrid"
 
 
-def test_self_test_matches_exported_phase_3_tools() -> None:
+def test_self_test_matches_exported_phase_4_tools() -> None:
     payload = build_self_test_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
     )
 
     assert payload["server_id"] == "tqmemory"
-    assert payload["tool_names"] == list(PHASE_3_TOOL_NAMES)
+    assert payload["tool_names"] == list(PHASE_4_TOOL_NAMES)
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
@@ -94,6 +95,44 @@ def test_note_item_payload_uses_compact_envelope_by_default() -> None:
     assert payload["confidence"] == 0.91
     assert payload["can_hydrate"] is True
     assert "promoted_from" not in payload
+
+
+def test_semantic_item_payload_uses_balanced_card_contract() -> None:
+    payload = build_semantic_item_payload(
+        {
+            "scope": "project",
+            "project_id": "project-alpha",
+            "project_name": "Alpha Project",
+            "source_kind": "markdown",
+            "item_id": "block-auth-rotation",
+            "block_id": "block-auth-rotation",
+            "source_path": "docs/auth.md",
+            "title": "Auth",
+            "heading_path": ["Architecture", "Auth"],
+            "updated_at": "2026-03-26T10:10:00Z",
+            "score": 0.934,
+            "confidence": 0.934,
+            "confidence_state": "high",
+            "compressed_summary": "Auth: Refresh rotation keeps the session cache stable.",
+            "key_points": [
+                "Refresh rotation keeps the session cache stable.",
+                "The block lives under Architecture/Auth.",
+            ],
+            "can_hydrate": True,
+        }
+    )
+
+    assert payload["scope"] == "project"
+    assert payload["project_id"] == "project-alpha"
+    assert payload["source_kind"] == "markdown"
+    assert payload["block_id"] == "block-auth-rotation"
+    assert payload["score"] == 0.934
+    assert payload["confidence_state"] == "high"
+    assert payload["compressed_summary"].startswith("Auth:")
+    assert len(payload["key_points"]) == 2
+    assert "content_raw" not in payload
+    assert "content_search" not in payload
+    assert "excerpt_preview" not in payload
 
 
 def test_note_item_payload_includes_promoted_from_when_present() -> None:
