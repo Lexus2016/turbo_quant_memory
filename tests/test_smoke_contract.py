@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from turbo_memory_mcp.contracts import (
-    PHASE_2_TOOL_NAMES,
+    PHASE_3_TOOL_NAMES,
     SERVER_ID,
+    build_indexing_payload,
     build_note_item_payload,
     build_self_test_payload,
     build_server_info_payload,
@@ -30,19 +31,41 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     assert payload["default_query_mode"] == "hybrid"
 
 
-def test_self_test_matches_exported_phase_2_tools() -> None:
+def test_self_test_matches_exported_phase_3_tools() -> None:
     payload = build_self_test_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
     )
 
     assert payload["server_id"] == "tqmemory"
-    assert payload["tool_names"] == list(PHASE_2_TOOL_NAMES)
+    assert payload["tool_names"] == list(PHASE_3_TOOL_NAMES)
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
     assert payload["namespace_contract"]["default_write_scope"] == "project"
     assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
+    assert payload["namespace_contract"]["index_modes"] == ["full", "incremental"]
+
+
+def test_indexing_payload_exposes_incremental_contract_fields() -> None:
+    payload = build_indexing_payload(
+        mode="incremental",
+        registered_roots=[{"root_id": "mdroot-123", "path": "/tmp/docs"}],
+        indexed_files=2,
+        changed_files=1,
+        skipped_files=1,
+        deleted_files=0,
+        block_count=3,
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "incremental"
+    assert payload["registered_roots"] == [{"root_id": "mdroot-123", "path": "/tmp/docs"}]
+    assert payload["indexed_files"] == 2
+    assert payload["changed_files"] == 1
+    assert payload["skipped_files"] == 1
+    assert payload["deleted_files"] == 0
+    assert payload["block_count"] == 3
 
 
 def test_note_item_payload_uses_compact_envelope_by_default() -> None:

@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from turbo_memory_mcp.server import build_runtime_context, index_paths_impl
+
+
+def _test_env(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    env = {
+        "TQMEMORY_HOME": str(tmp_path / "memory-home"),
+        "TQMEMORY_PROJECT_ROOT": str(project_root),
+        "TQMEMORY_PROJECT_ID": "project-alpha",
+        "TQMEMORY_PROJECT_NAME": "Alpha Project",
+    }
+    return project_root, env
+
+
+def test_index_paths_registers_roots_and_writes_block_records(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs_a = project_root / "docs-a"
+    docs_b = project_root / "docs-b"
+    docs_a.mkdir()
+    docs_b.mkdir()
+    (docs_a / "architecture.md").write_text("# Architecture\n\nA section.", encoding="utf-8")
+    (docs_b / "overview.md").write_text("# Overview\n\nB section.", encoding="utf-8")
+
+    payload = index_paths_impl(paths=[str(docs_a), str(docs_b)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "full"
+    assert len(payload["registered_roots"]) == 2
+    assert payload["indexed_files"] == 2
+    assert payload["changed_files"] == 2
+    assert payload["deleted_files"] == 0
+    assert payload["block_count"] >= 2
+    assert len(store.list_markdown_roots()) == 2
+    assert len(store.list_markdown_blocks()) >= 2
+
+
+def test_index_paths_incremental_rerun_skips_unchanged_and_cleans_deleted_files(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    architecture_dir = docs / "architecture"
+    architecture_dir.mkdir(parents=True)
+    adr_file = architecture_dir / "adr-001.md"
+    overview_file = docs / "overview.md"
+    adr_file.write_text("# Architecture\n\nOld text.", encoding="utf-8")
+    overview_file.write_text("# Overview\n\nKeep me until delete.", encoding="utf-8")
+
+    full_payload = index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    skipped_payload = index_paths_impl(mode="incremental", cwd=project_root, environ=env)
+
+    adr_file.write_text("# Architecture\n\nNew text after edit.", encoding="utf-8")
+    overview_file.unlink()
+    changed_payload = index_paths_impl(mode="incremental", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert full_payload["changed_files"] == 2
+    assert full_payload["indexed_files"] == 2
+
+    assert skipped_payload["mode"] == "incremental"
+    assert len(skipped_payload["registered_roots"]) == 1
+    assert skipped_payload["indexed_files"] == 2
+    assert skipped_payload["changed_files"] == 0
+    assert skipped_payload["skipped_files"] == 2
+    assert skipped_payload["deleted_files"] == 0
+
+    assert changed_payload["mode"] == "incremental"
+    assert changed_payload["indexed_files"] == 1
+    assert changed_payload["changed_files"] == 1
+    assert changed_payload["deleted_files"] == 1
+    assert changed_payload["block_count"] >= 1
+
+    assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["architecture/adr-001.md"]
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {"architecture/adr-001.md"}

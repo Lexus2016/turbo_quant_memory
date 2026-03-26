@@ -23,6 +23,7 @@ EXPECTED_TOOL_NAMES = [
     "remember_note",
     "promote_note",
     "search_memory",
+    "index_paths",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
 
@@ -50,6 +51,12 @@ def expect(condition: bool, message: str) -> None:
 async def run_smoke() -> list[str]:
     with TemporaryDirectory(prefix="tqmemory-smoke-") as temp_dir:
         storage_root = Path(temp_dir) / "memory-home"
+        markdown_root = Path(temp_dir) / "markdown-docs"
+        architecture_file = markdown_root / "architecture.md"
+        overview_file = markdown_root / "overview.md"
+        markdown_root.mkdir(parents=True, exist_ok=True)
+        architecture_file.write_text("# Architecture\n\nInitial architecture notes.\n", encoding="utf-8")
+        overview_file.write_text("# Overview\n\nInitial overview notes.\n", encoding="utf-8")
         resolved_storage_root = storage_root.resolve()
         server_env = {
             **os.environ,
@@ -100,6 +107,36 @@ async def run_smoke() -> list[str]:
                         },
                     )
                 )
+                full_index = result_payload(
+                    await session.call_tool(
+                        "index_paths",
+                        {
+                            "paths": [str(markdown_root)],
+                            "mode": "full",
+                        },
+                    )
+                )
+                idle_incremental = result_payload(
+                    await session.call_tool(
+                        "index_paths",
+                        {
+                            "mode": "incremental",
+                        },
+                    )
+                )
+                architecture_file.write_text(
+                    "# Architecture\n\nUpdated architecture notes after edit.\n",
+                    encoding="utf-8",
+                )
+                overview_file.unlink()
+                changed_incremental = result_payload(
+                    await session.call_tool(
+                        "index_paths",
+                        {
+                            "mode": "incremental",
+                        },
+                    )
+                )
 
     expect(health["status"] == "ok", f"health.status mismatch: {health}")
     expect(health["transport"] == "stdio", f"health.transport mismatch: {health}")
@@ -122,11 +159,15 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "hybrid", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 7, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 8, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
         f"self_test.namespace_contract mismatch: {self_test}",
+    )
+    expect(
+        self_test["namespace_contract"]["index_modes"] == ["full", "incremental"],
+        f"self_test.index_modes mismatch: {self_test}",
     )
 
     expect(remembered["item"]["scope"] == "project", f"remember_note scope mismatch: {remembered}")
@@ -139,6 +180,39 @@ async def run_smoke() -> list[str]:
         [item["scope"] for item in hybrid_search["items"][:2]] == ["project", "global"],
         f"search_memory ordering mismatch: {hybrid_search}",
     )
+    expect(full_index["mode"] == "full", f"index_paths full.mode mismatch: {full_index}")
+    expect(len(full_index["registered_roots"]) == 1, f"index_paths roots mismatch: {full_index}")
+    expect(full_index["indexed_files"] == 2, f"index_paths indexed_files mismatch: {full_index}")
+    expect(full_index["changed_files"] == 2, f"index_paths changed_files mismatch: {full_index}")
+    expect(full_index["deleted_files"] == 0, f"index_paths deleted_files mismatch: {full_index}")
+    expect(full_index["block_count"] >= 2, f"index_paths block_count mismatch: {full_index}")
+
+    expect(idle_incremental["mode"] == "incremental", f"idle incremental mode mismatch: {idle_incremental}")
+    expect(idle_incremental["indexed_files"] == 2, f"idle incremental indexed_files mismatch: {idle_incremental}")
+    expect(idle_incremental["changed_files"] == 0, f"idle incremental changed mismatch: {idle_incremental}")
+    expect(idle_incremental["skipped_files"] == 2, f"idle incremental skipped mismatch: {idle_incremental}")
+    expect(idle_incremental["deleted_files"] == 0, f"idle incremental deleted mismatch: {idle_incremental}")
+
+    expect(
+        changed_incremental["mode"] == "incremental",
+        f"changed incremental mode mismatch: {changed_incremental}",
+    )
+    expect(
+        changed_incremental["indexed_files"] == 1,
+        f"changed incremental indexed_files mismatch: {changed_incremental}",
+    )
+    expect(
+        changed_incremental["changed_files"] == 1,
+        f"changed incremental changed_files mismatch: {changed_incremental}",
+    )
+    expect(
+        changed_incremental["deleted_files"] == 1,
+        f"changed incremental deleted_files mismatch: {changed_incremental}",
+    )
+    expect(
+        changed_incremental["block_count"] >= 1,
+        f"changed incremental block_count mismatch: {changed_incremental}",
+    )
 
     return [
         f"PASS tool catalog: {', '.join(tool_names)}",
@@ -146,6 +220,9 @@ async def run_smoke() -> list[str]:
         f"PASS remember_note: {remembered['item']['item_id']} in {remembered['item']['scope']}",
         f"PASS promote_note: {promoted['item']['item_id']} in {promoted['item']['scope']}",
         f"PASS search_memory: {hybrid_search['items'][0]['scope']} before {hybrid_search['items'][1]['scope']}",
+        f"PASS index_paths full: {full_index['indexed_files']} files / {full_index['block_count']} blocks",
+        f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
+        f"PASS index_paths incremental changed: changed={changed_incremental['changed_files']} deleted={changed_incremental['deleted_files']}",
     ]
 
 

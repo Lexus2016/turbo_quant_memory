@@ -10,7 +10,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from turbo_memory_mcp.contracts import PHASE_2_TOOL_NAMES
+from turbo_memory_mcp.contracts import PHASE_3_TOOL_NAMES
 from turbo_memory_mcp.identity import resolve_project_identity
 from turbo_memory_mcp.server import build_current_project_payload
 from turbo_memory_mcp.store import resolve_storage_root
@@ -24,6 +24,7 @@ EXPECTED_TOOL_NAMES = [
     "remember_note",
     "promote_note",
     "search_memory",
+    "index_paths",
 ]
 
 
@@ -64,7 +65,7 @@ def collect_server_contract() -> dict[str, Any]:
 def test_tool_catalog_is_exact() -> None:
     contract = collect_server_contract()
 
-    assert list(PHASE_2_TOOL_NAMES) == EXPECTED_TOOL_NAMES
+    assert list(PHASE_3_TOOL_NAMES) == EXPECTED_TOOL_NAMES
     assert contract["tool_names"] == EXPECTED_TOOL_NAMES
 
 
@@ -114,7 +115,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     payload = collect_server_contract()["self_test"]
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 7
+    assert payload["tool_count"] == 8
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"
@@ -128,3 +129,4 @@ def test_self_test_summarises_namespace_contract() -> None:
     assert payload["namespace_contract"]["default_write_scope"] == "project"
     assert payload["namespace_contract"]["default_query_mode"] == "hybrid"
     assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
+    assert payload["namespace_contract"]["index_modes"] == ["full", "incremental"]
