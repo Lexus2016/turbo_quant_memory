@@ -70,6 +70,9 @@ class MemoryStore:
     def project_markdown_block_path(self, block_id: str, project_id: str | None = None) -> Path:
         return self.project_markdown_blocks_dir(project_id) / f"{block_id}.json"
 
+    def project_retrieval_dir(self, project_id: str | None = None) -> Path:
+        return self.project_dir(project_id) / "retrieval"
+
     def global_dir(self) -> Path:
         return self.storage_root / "global"
 
@@ -82,6 +85,9 @@ class MemoryStore:
     def global_note_path(self, note_id: str) -> Path:
         return self.global_notes_dir() / f"{note_id}.json"
 
+    def global_retrieval_dir(self) -> Path:
+        return self.global_dir() / "retrieval"
+
     def ensure_layout(self) -> None:
         self.project_notes_dir().mkdir(parents=True, exist_ok=True)
         self.global_notes_dir().mkdir(parents=True, exist_ok=True)
@@ -90,6 +96,10 @@ class MemoryStore:
         self.project_markdown_roots_dir(project_id).mkdir(parents=True, exist_ok=True)
         self.project_markdown_files_dir(project_id).mkdir(parents=True, exist_ok=True)
         self.project_markdown_blocks_dir(project_id).mkdir(parents=True, exist_ok=True)
+
+    def ensure_retrieval_layout(self, project_id: str | None = None) -> None:
+        self.project_retrieval_dir(project_id).mkdir(parents=True, exist_ok=True)
+        self.global_retrieval_dir().mkdir(parents=True, exist_ok=True)
 
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
