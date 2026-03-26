@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-03-26T08:47:13.451Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-26T09:24:22.370Z"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-25)
 ## Current Position
 
 Phase: 04 (compressed-retrieval) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Plan: 2 of 3
 | Phase 03-markdown-ingestion P02 | 335 | 3 tasks | 4 files |
 | Phase 03-markdown-ingestion P03 | 420 | 3 tasks | 7 files |
 | Phase 04 P01 | 7m | 3 tasks | 5 files |
+| Phase 04 P02 | 16m | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - Phase 4: retrieval ranks Markdown source blocks ahead of memory notes within each scope and returns cautious results with explicit warnings on low confidence or ambiguity
 - [Phase 04]: Retrieval index stays a derived mirror under project/global storage instead of becoming a second source of truth — Preserves the local filesystem model and keeps Phase 4 additive to existing JSON persistence
 - [Phase 04]: Embedding runtime is injectable and tests use a deterministic fake embedder — Avoids model downloads in hermetic tests while runtime still defaults to all-MiniLM-L6-v2
+- [Phase 04]: semantic_search is now the only public retrieval tool — Removed search_memory from the live MCP surface to keep the retrieval contract unambiguous across Claude Code, Codex, Cursor, and OpenCode.
+- [Phase 04]: Balanced-card retrieval favours compact summaries over raw excerpts — semantic_search now returns compressed_summary, up to three key_points, and explicit warning states so agents get minimum-token context without losing provenance or hydration cues.
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T08:47:13.447Z
-Stopped at: Completed 04-01-PLAN.md
-Resume file: .planning/phases/04-compressed-retrieval/04-02-PLAN.md
+Last session: 2026-03-26T09:24:22.365Z
+Stopped at: Completed 04-02-PLAN.md
+Resume file: .planning/phases/04-compressed-retrieval/04-03-PLAN.md
