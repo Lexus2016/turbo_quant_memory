@@ -1,11 +1,9 @@
-"""Phase 3 stdio MCP server for Turbo Quant Memory."""
+"""Phase 4 stdio MCP server for Turbo Quant Memory."""
 
 from __future__ import annotations
 
-import re
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -14,10 +12,7 @@ except ImportError:  # pragma: no cover - compatibility for current stable SDK
 
 from .contracts import (
     DEFAULT_QUERY_MODE,
-    DEFAULT_WRITE_SCOPE,
-    PHASE_1_TOOL_NAMES,
-    PHASE_2_TOOL_NAMES,
-    PHASE_3_TOOL_NAMES,
+    PHASE_4_TOOL_NAMES,
     PRODUCT_NAME,
     QUERY_MODES,
     SERVER_ID,
@@ -25,17 +20,13 @@ from .contracts import (
     build_note_item_payload,
     build_note_write_payload,
     build_scope_payload,
-    build_search_payload,
     build_self_test_payload,
     build_server_info_payload,
 )
 from .identity import ProjectIdentity, resolve_project_identity
 from .ingestion import index_paths
+from .retrieval import semantic_search, sync_global_retrieval, sync_project_retrieval
 from .store import GLOBAL_SCOPE, MemoryStore, PROJECT_SCOPE, resolve_storage_root
-
-HYBRID_PROJECT_BIAS = 0.15
-MAX_SEARCH_LIMIT = 20
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 def build_server() -> MCPServer:
@@ -43,7 +34,7 @@ def build_server() -> MCPServer:
         SERVER_ID,
         instructions=(
             "Use remember_note(..., scope=\"project\") to store project notes, "
-            "promote reusable knowledge into global scope, search "
+            "promote reusable knowledge into global scope, retrieve compact "
             "project/global/hybrid memory, and index Markdown roots "
             "through index_paths(...)."
         ),
@@ -82,12 +73,12 @@ def build_server() -> MCPServer:
         return promote_note_impl(note_id)
 
     @mcp.tool()
-    def search_memory(
+    def semantic_search(
         query: str,
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 5,
     ) -> dict[str, object]:
-        return search_memory_impl(query, scope=scope, limit=limit)
+        return semantic_search_impl(query, scope=scope, limit=limit)
 
     @mcp.tool()
     def index_paths(
@@ -149,6 +140,7 @@ def remember_note_impl(
 
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     note = store.write_project_note(title, content, tags=tags, source_refs=source_refs)
+    sync_project_retrieval(store)
     return build_note_write_payload(
         note,
         source_path=str(store.note_source_path(note)),
@@ -169,6 +161,7 @@ def promote_note_impl(
 
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     note = store.promote_note(resolved_note_id)
+    sync_global_retrieval(store)
     return build_note_write_payload(
         note,
         source_path=str(store.note_source_path(note)),
@@ -177,7 +170,7 @@ def promote_note_impl(
     )
 
 
-def search_memory_impl(
+def semantic_search_impl(
     query: str,
     *,
     scope: str = DEFAULT_QUERY_MODE,
@@ -185,28 +178,8 @@ def search_memory_impl(
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
-    query_text = query.strip()
-    if not query_text:
-        raise ValueError("search_memory requires a non-empty query.")
-
-    resolved_scope = _normalize_scope(scope)
-    if resolved_scope not in QUERY_MODES:
-        raise ValueError(f"Unsupported query scope: {scope}")
-
     _, store = build_runtime_context(cwd=cwd, environ=environ)
-    normalized_limit = _normalize_limit(limit)
-    ranked_notes = _rank_notes(store, query_text, resolved_scope)
-    items = [
-        build_note_item_payload(
-            ranked["note"],
-            source_path=str(store.note_source_path(ranked["note"])),
-            confidence=ranked["confidence"],
-            can_hydrate=True,
-            content_preview=build_content_preview(ranked["note"]["content"]),
-        )
-        for ranked in ranked_notes[:normalized_limit]
-    ]
-    return build_search_payload(query=query_text, scope=resolved_scope, items=items)
+    return semantic_search(store, query, scope=scope, limit=limit)
 
 
 def index_paths_impl(
@@ -218,7 +191,9 @@ def index_paths_impl(
 ) -> dict[str, object]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     runtime_cwd = Path(cwd).expanduser().resolve() if cwd is not None else store.project.project_root
-    return index_paths(store, paths=paths, mode=mode, cwd=runtime_cwd)
+    payload = index_paths(store, paths=paths, mode=mode, cwd=runtime_cwd)
+    sync_project_retrieval(store)
+    return payload
 
 
 def build_runtime_context(
@@ -247,99 +222,13 @@ def build_content_preview(content: str, limit: int = 160) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
-def _rank_notes(store: MemoryStore, query: str, scope: str) -> list[dict[str, Any]]:
-    query_terms = tuple(dict.fromkeys(_tokenize(query)))
-    query_text = query.lower()
-
-    ranked: list[dict[str, Any]] = []
-    for note in _notes_for_scope(store, scope):
-        confidence = _score_note(note, query_terms, query_text)
-        if confidence <= 0:
-            continue
-        project_preference = 0 if note["scope"] == PROJECT_SCOPE else 1
-        effective_score = confidence
-        if scope == DEFAULT_QUERY_MODE and note["scope"] == PROJECT_SCOPE:
-            effective_score += HYBRID_PROJECT_BIAS
-        ranked.append(
-            {
-                "note": note,
-                "confidence": min(confidence, 1.0),
-                "effective_score": effective_score,
-                "project_preference": project_preference,
-                "updated_epoch": _updated_epoch(note["updated_at"]),
-                "item_identity": str(note["note_id"]),
-            }
-        )
-
-    ranked.sort(
-        key=lambda item: (
-            -item["effective_score"],
-            item["project_preference"],
-            -item["updated_epoch"],
-            item["item_identity"],
-        )
-    )
-    return ranked
-
-
-def _notes_for_scope(store: MemoryStore, scope: str) -> list[dict[str, Any]]:
-    if scope == PROJECT_SCOPE:
-        return store.list_notes(PROJECT_SCOPE)
-    if scope == GLOBAL_SCOPE:
-        return store.list_notes(GLOBAL_SCOPE)
-    return [*store.list_notes(PROJECT_SCOPE), *store.list_notes(GLOBAL_SCOPE)]
-
-
-def _score_note(note: Mapping[str, Any], query_terms: tuple[str, ...], query_text: str) -> float:
-    if not query_terms:
-        return 0.0
-
-    title = str(note.get("title", ""))
-    content = str(note.get("content", ""))
-    tags = " ".join(str(tag) for tag in note.get("tags", []))
-    full_text = f"{title} {content} {tags}".lower()
-    note_tokens = set(_tokenize(full_text))
-    title_tokens = set(_tokenize(title.lower()))
-    tag_tokens = set(_tokenize(tags.lower()))
-
-    overlap = sum(1 for term in query_terms if term in note_tokens)
-    title_overlap = sum(1 for term in query_terms if term in title_tokens)
-    tag_overlap = sum(1 for term in query_terms if term in tag_tokens)
-    phrase_bonus = 0.2 if query_text in full_text else 0.0
-
-    if overlap == 0 and phrase_bonus == 0:
-        return 0.0
-
-    denominator = max(len(query_terms), 1)
-    base_score = overlap / denominator
-    title_bonus = 0.2 * (title_overlap / denominator)
-    tag_bonus = 0.1 * (tag_overlap / denominator)
-    return min(base_score + title_bonus + tag_bonus + phrase_bonus, 1.0)
-
-
-def _updated_epoch(value: str) -> float:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-
-
-def _tokenize(value: str) -> list[str]:
-    return [match.group(0).lower() for match in _TOKEN_RE.finditer(value)]
-
-
-def _normalize_limit(limit: int) -> int:
-    return max(1, min(int(limit), MAX_SEARCH_LIMIT))
-
-
 def _normalize_scope(scope: str) -> str:
     return scope.strip().lower()
 
 
 __all__ = [
-    "HYBRID_PROJECT_BIAS",
-    "MAX_SEARCH_LIMIT",
     "MCPServer",
-    "PHASE_1_TOOL_NAMES",
-    "PHASE_2_TOOL_NAMES",
-    "PHASE_3_TOOL_NAMES",
+    "PHASE_4_TOOL_NAMES",
     "PRODUCT_NAME",
     "SERVER_ID",
     "build_server",
@@ -350,7 +239,7 @@ __all__ = [
     "promote_note_impl",
     "remember_note_impl",
     "run_stdio_server",
-    "search_memory_impl",
+    "semantic_search_impl",
     "self_test_impl",
     "server_info_impl",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
@@ -24,6 +25,11 @@ class TextEmbedder(Protocol):
 
 
 def build_default_embedder() -> SentenceTransformer:
+    return _load_default_embedder()
+
+
+@lru_cache(maxsize=1)
+def _load_default_embedder() -> SentenceTransformer:
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 
@@ -58,6 +64,14 @@ class RetrievalIndex:
     def sync_global(self) -> list[dict[str, Any]]:
         rows = self._build_note_rows(GLOBAL_SCOPE)
         return self._overwrite_scope_table(self.global_db_path(), rows)
+
+    def search(self, query: str, scope: str, *, limit: int, project_id: str | None = None) -> list[dict[str, Any]]:
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return []
+
+        query_vector = self._embed_texts([query])[0]
+        return [dict(row) for row in table.search(query_vector).metric("cosine").limit(limit).to_list()]
 
     def count_rows(self, scope: str, project_id: str | None = None) -> int:
         table = self._open_scope_table(scope, project_id=project_id)

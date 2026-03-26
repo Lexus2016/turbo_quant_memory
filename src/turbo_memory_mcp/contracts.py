@@ -1,4 +1,4 @@
-"""Stable payload contracts for the Phase 3 MCP tool surface."""
+"""Stable payload contracts for the Phase 4 MCP tool surface."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ INDEX_MODES = ("full", "incremental")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "search_memory")
 PHASE_3_TOOL_NAMES = PHASE_2_TOOL_NAMES + ("index_paths",)
+PHASE_4_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "index_paths")
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
@@ -168,14 +169,48 @@ def build_search_payload(
     query: str,
     scope: str,
     items: list[dict[str, object]],
+    confidence_state: str | None = None,
+    warning: str | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "status": "ok",
         "query": query,
         "scope": scope,
         "result_count": len(items),
         "items": items,
     }
+    if confidence_state is not None:
+        payload["confidence_state"] = confidence_state
+    if warning is not None:
+        payload["warning"] = warning
+    return payload
+
+
+def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "scope": item["scope"],
+        "project_id": item["project_id"],
+        "project_name": item["project_name"],
+        "source_kind": item["source_kind"],
+        "item_id": item["item_id"],
+        "source_path": item["source_path"],
+        "title": item["title"],
+        "heading_path": list(item.get("heading_path", [])),
+        "updated_at": item["updated_at"],
+        "score": round(float(item["score"]), 3),
+        "confidence": round(float(item["confidence"]), 3),
+        "confidence_state": item["confidence_state"],
+        "compressed_summary": item["compressed_summary"],
+        "key_points": list(item.get("key_points", [])),
+        "can_hydrate": bool(item["can_hydrate"]),
+    }
+    if item.get("block_id"):
+        payload["block_id"] = item["block_id"]
+    if item.get("warning"):
+        payload["warning"] = item["warning"]
+    if item.get("promoted_from"):
+        payload["promoted_from"] = dict(item["promoted_from"])
+    return payload
 
 
 def build_indexing_payload(
@@ -208,8 +243,8 @@ def build_self_test_payload(
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     return {
         "status": "ok",
-        "tool_count": len(PHASE_3_TOOL_NAMES),
-        "tool_names": list(PHASE_3_TOOL_NAMES),
+        "tool_count": len(PHASE_4_TOOL_NAMES),
+        "tool_names": list(PHASE_4_TOOL_NAMES),
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
         "runtime_command": payload["runtime_command"],
@@ -235,6 +270,7 @@ __all__ = [
     "PHASE_1_TOOL_NAMES",
     "PHASE_2_TOOL_NAMES",
     "PHASE_3_TOOL_NAMES",
+    "PHASE_4_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
     "RUNTIME_COMMAND",
@@ -248,6 +284,7 @@ __all__ = [
     "build_note_write_payload",
     "build_scope_payload",
     "build_search_payload",
+    "build_semantic_item_payload",
     "build_self_test_payload",
     "build_server_info_payload",
     "build_supported_client_tiers",
