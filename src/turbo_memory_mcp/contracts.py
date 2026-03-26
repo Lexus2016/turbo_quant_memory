@@ -1,4 +1,4 @@
-"""Stable payload contracts for the Phase 2 MCP tool surface."""
+"""Stable payload contracts for the Phase 3 MCP tool surface."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ TRANSPORT = "stdio"
 DEFAULT_WRITE_SCOPE = "project"
 DEFAULT_QUERY_MODE = "hybrid"
 QUERY_MODES = ("project", "global", "hybrid")
+INDEX_MODES = ("full", "incremental")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "search_memory")
+PHASE_3_TOOL_NAMES = PHASE_2_TOOL_NAMES + ("index_paths",)
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
@@ -55,6 +57,7 @@ def build_contract_snapshot(
         "default_write_scope": DEFAULT_WRITE_SCOPE,
         "default_query_mode": DEFAULT_QUERY_MODE,
         "query_modes": list(QUERY_MODES),
+        "index_modes": list(INDEX_MODES),
     }
     if storage_root is not None:
         payload["storage_root"] = storage_root
@@ -175,6 +178,28 @@ def build_search_payload(
     }
 
 
+def build_indexing_payload(
+    *,
+    mode: str,
+    registered_roots: list[Mapping[str, str]],
+    indexed_files: int,
+    changed_files: int,
+    skipped_files: int,
+    deleted_files: int,
+    block_count: int,
+) -> dict[str, object]:
+    return {
+        "status": "ok",
+        "mode": mode,
+        "registered_roots": [dict(root) for root in registered_roots],
+        "indexed_files": indexed_files,
+        "changed_files": changed_files,
+        "skipped_files": skipped_files,
+        "deleted_files": deleted_files,
+        "block_count": block_count,
+    }
+
+
 def build_self_test_payload(
     *,
     storage_root: str,
@@ -183,8 +208,8 @@ def build_self_test_payload(
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     return {
         "status": "ok",
-        "tool_count": len(PHASE_2_TOOL_NAMES),
-        "tool_names": list(PHASE_2_TOOL_NAMES),
+        "tool_count": len(PHASE_3_TOOL_NAMES),
+        "tool_names": list(PHASE_3_TOOL_NAMES),
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
         "runtime_command": payload["runtime_command"],
@@ -197,6 +222,7 @@ def build_self_test_payload(
             "default_write_scope": payload["default_write_scope"],
             "default_query_mode": payload["default_query_mode"],
             "query_modes": payload["query_modes"],
+            "index_modes": payload["index_modes"],
         },
     }
 
@@ -204,9 +230,11 @@ def build_self_test_payload(
 __all__ = [
     "DEFAULT_QUERY_MODE",
     "DEFAULT_WRITE_SCOPE",
+    "INDEX_MODES",
     "PACKAGE_NAME",
     "PHASE_1_TOOL_NAMES",
     "PHASE_2_TOOL_NAMES",
+    "PHASE_3_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
     "RUNTIME_COMMAND",
@@ -214,6 +242,7 @@ __all__ = [
     "TRANSPORT",
     "build_contract_snapshot",
     "build_health_payload",
+    "build_indexing_payload",
     "build_install_contract",
     "build_note_item_payload",
     "build_note_write_payload",

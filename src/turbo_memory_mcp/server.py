@@ -1,4 +1,4 @@
-"""Phase 2 stdio MCP server for Turbo Quant Memory."""
+"""Phase 3 stdio MCP server for Turbo Quant Memory."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from .contracts import (
     DEFAULT_WRITE_SCOPE,
     PHASE_1_TOOL_NAMES,
     PHASE_2_TOOL_NAMES,
+    PHASE_3_TOOL_NAMES,
     PRODUCT_NAME,
     QUERY_MODES,
     SERVER_ID,
@@ -29,6 +30,7 @@ from .contracts import (
     build_server_info_payload,
 )
 from .identity import ProjectIdentity, resolve_project_identity
+from .ingestion import index_paths
 from .store import GLOBAL_SCOPE, MemoryStore, PROJECT_SCOPE, resolve_storage_root
 
 HYBRID_PROJECT_BIAS = 0.15
@@ -41,8 +43,9 @@ def build_server() -> MCPServer:
         SERVER_ID,
         instructions=(
             "Use remember_note(..., scope=\"project\") to store project notes, "
-            "promote reusable knowledge into global scope, and search "
-            "project/global/hybrid memory."
+            "promote reusable knowledge into global scope, search "
+            "project/global/hybrid memory, and index Markdown roots "
+            "through index_paths(...)."
         ),
         json_response=True,
         log_level="ERROR",
@@ -85,6 +88,13 @@ def build_server() -> MCPServer:
         limit: int = 5,
     ) -> dict[str, object]:
         return search_memory_impl(query, scope=scope, limit=limit)
+
+    @mcp.tool()
+    def index_paths(
+        paths: list[str] | None = None,
+        mode: str = "incremental",
+    ) -> dict[str, object]:
+        return index_paths_impl(paths=paths, mode=mode)
 
     return mcp
 
@@ -131,7 +141,7 @@ def remember_note_impl(
     if resolved_scope == GLOBAL_SCOPE:
         raise ValueError("Direct global writes are disabled; write to project scope and use promote_note.")
     if resolved_scope != PROJECT_SCOPE:
-        raise ValueError(f"remember_note only supports scope='{PROJECT_SCOPE}' in Phase 2.")
+        raise ValueError(f"remember_note only supports scope='{PROJECT_SCOPE}' in this server.")
     if not title.strip():
         raise ValueError("remember_note requires a non-empty title.")
     if not content.strip():
@@ -197,6 +207,18 @@ def search_memory_impl(
         for ranked in ranked_notes[:normalized_limit]
     ]
     return build_search_payload(query=query_text, scope=resolved_scope, items=items)
+
+
+def index_paths_impl(
+    paths: list[str] | None = None,
+    *,
+    mode: str = "incremental",
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    runtime_cwd = Path(cwd).expanduser().resolve() if cwd is not None else store.project.project_root
+    return index_paths(store, paths=paths, mode=mode, cwd=runtime_cwd)
 
 
 def build_runtime_context(
@@ -317,12 +339,14 @@ __all__ = [
     "MCPServer",
     "PHASE_1_TOOL_NAMES",
     "PHASE_2_TOOL_NAMES",
+    "PHASE_3_TOOL_NAMES",
     "PRODUCT_NAME",
     "SERVER_ID",
     "build_server",
     "build_runtime_context",
     "build_current_project_payload",
     "build_content_preview",
+    "index_paths_impl",
     "promote_note_impl",
     "remember_note_impl",
     "run_stdio_server",
