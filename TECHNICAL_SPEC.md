@@ -86,25 +86,41 @@ This project does **not** directly quantize Claude tokens or Anthropic-hosted KV
 
 ### 7.2 Retrieval / Пошук і повернення контексту
 
-- Semantic search by free-text query.
-- Return result cards with:
-  - block ID
+- Semantic search by free-text query through `semantic_search(...)`.
+- Return balanced result cards with:
+  - `scope`
+  - `project_id`
+  - `project_name`
+  - `source_kind`
+  - `item_id`
+  - `block_id` when the hit comes from Markdown
   - file path
-  - title or heading
+  - title or heading path
   - relevance score
-  - compressed summary
+  - confidence and `confidence_state`
+  - `compressed_summary`
+  - up to `2-3` `key_points`
   - explicit source provenance
-- Allow neighborhood expansion around the winning block.
+- Keep raw excerpts out of the default Phase 4 payload.
+- Surface explicit warnings for low-confidence or ambiguous retrievals.
 
-- Semantic search за довільним текстовим запитом.
-- Повернення result cards з:
-  - block ID
+- Semantic search за довільним текстовим запитом через `semantic_search(...)`.
+- Повернення balanced result cards з:
+  - `scope`
+  - `project_id`
+  - `project_name`
+  - `source_kind`
+  - `item_id`
+  - `block_id`, коли hit походить з Markdown
   - шляхом до файлу
-  - title або heading
+  - title або heading path
   - relevance score
-  - compressed summary
+  - confidence і `confidence_state`
+  - `compressed_summary`
+  - максимум `2-3` `key_points`
   - явним provenance до джерела
-- Дозволити розширення сусідніх блоків навколо виграшного блока.
+- Не повертати raw excerpts у дефолтному payload Phase 4.
+- Явно сигналізувати про low-confidence або неоднозначні retrieval-и.
 
 ### 7.3 Hydration / Відновлення повнішого контексту
 
@@ -115,6 +131,10 @@ This project does **not** directly quantize Claude tokens or Anthropic-hosted KV
 - Повертати повніший excerpt блока, коли стислої відповіді недостатньо.
 - Повертати сусідні блоки або обмежену секцію вихідного файлу.
 - Зберігати token discipline, вимагаючи явного виклику для більших payload.
+
+Phase 4 stops at balanced-card retrieval; explicit hydration lands in Phase 5.
+
+Phase 4 зупиняється на balanced-card retrieval; явне hydration переходить у Phase 5.
 
 ### 7.4 Write-Back Memory / Запис нової пам'яті
 
@@ -140,20 +160,25 @@ This project does **not** directly quantize Claude tokens or Anthropic-hosted KV
 
 ## 8. MCP Tool Surface / Набір MCP-інструментів
 
-### Required tools / Обов'язкові інструменти
+### Live Phase 4 tools / Живі інструменти Phase 4
 
 1. `index_paths(paths, mode="incremental"|"full")`
 2. `semantic_search(query, limit=5, scope=None)`
-3. `get_compressed_block(block_id, style="brief"|"standard")`
-4. `hydrate_block(block_id, neighborhood=0)`
-5. `remember_note(title, content, tags=[], source=None)`
-6. `memory_stats()`
+3. `remember_note(title, content, tags=[], source=None)`
+4. `promote_note(note_id)`
+5. `health()`
+6. `server_info()`
+7. `list_scopes()`
+8. `self_test()`
 
-### Optional tools for v1.1 / Необов'язкові інструменти для v1.1
+### Planned for Phase 5+ / Заплановано для Phase 5+
 
-1. `related_blocks(block_id, limit=5)`
-2. `reindex_status()`
-3. `delete_note(note_id)`
+1. `get_compressed_block(block_id, style="brief"|"standard")`
+2. `hydrate_block(block_id, neighborhood=0)`
+3. `related_blocks(block_id, limit=5)`
+4. `reindex_status()`
+5. `memory_stats()`
+6. `delete_note(note_id)`
 
 ## 9. Data Model / Модель даних
 

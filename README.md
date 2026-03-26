@@ -41,7 +41,7 @@ uv run pytest -q
 - Canonical runtime / Канонічний runtime: `uv run turbo-memory-mcp serve`
 - `pip` fallback / `pip` fallback: `python -m turbo_memory_mcp serve`
 - Transport / Транспорт: `stdio`
-- Tool catalog / Каталог інструментів: `health`, `server_info`, `list_scopes`, `self_test`, `remember_note`, `promote_note`, `search_memory`
+- Tool catalog / Каталог інструментів: `health`, `server_info`, `list_scopes`, `self_test`, `remember_note`, `promote_note`, `semantic_search`, `index_paths`
 - Storage root / Корінь сховища: `~/.turbo-quant-memory/`
 - Query modes / Режими запиту: `project`, `global`, `hybrid`
 - Default write scope / Дефолтний scope запису: `project`
@@ -95,7 +95,7 @@ UK: Безпечний write/query loop такий:
 
 1. `remember_note(..., scope="project")`
 2. `promote_note(note_id)` when the note is truly reusable
-3. `search_memory(query, scope="hybrid")` for default recall
+3. `semantic_search(query, scope="hybrid")` for default recall
 
 EN: Direct public writes to `global` are intentionally rejected.
 
@@ -103,36 +103,52 @@ UK: Прямі публічні записи в `global` навмисно заб
 
 ## Result Envelope
 
-EN: Search and write results return compact item cards with provenance:
+EN: Phase 4 retrieval returns balanced cards with provenance-first fields:
 
-UK: Результати пошуку і запису повертають компактні item cards з provenance:
+UK: У Phase 4 retrieval повертає balanced cards з provenance-first полями:
 
 - `scope`
 - `project_id`
 - `project_name`
 - `source_kind`
 - `item_id`
+- `block_id` when relevant / коли релевантно
 - `source_path`
+- `title`
+- `heading_path`
 - `updated_at`
+- `score`
 - `confidence`
+- `confidence_state`
+- `compressed_summary`
+- `key_points`
 - `can_hydrate`
 - `promoted_from` when relevant / коли релевантно
 
-EN: The default payload also includes lightweight `title`, `content_preview`, and `tags` so agents can act without hydrating full source immediately.
+EN: `semantic_search(...)` covers both indexed Markdown blocks and persistent notes. Default responses do not include raw excerpts, `content_raw`, or whole-file dumps; fuller hydration is deferred to Phase 5.
 
-UK: У дефолтному payload також є легкі `title`, `content_preview` і `tags`, щоб агент міг діяти без негайного hydration повного джерела.
+UK: `semantic_search(...)` працює і по проіндексованих Markdown-блоках, і по persistent notes. Дефолтні відповіді не містять raw excerpts, `content_raw` або дампів цілих файлів; повніше hydration відкладено до Phase 5.
+
+EN: Hybrid ranking keeps a strong `project` bias, and within each scope close matches prefer Markdown source blocks over memory notes.
+
+UK: Hybrid ranking зберігає сильний `project` bias, а всередині кожного scope близькі матчі віддають пріоритет Markdown source-блокам над memory notes.
+
+EN: Low-confidence or ambiguous retrievals return cautious results with explicit warnings so the agent can decide whether hydration is needed.
+
+UK: Low-confidence або неоднозначні retrieval-и повертаються з явними warning-полями, щоб агент міг вирішити, чи потрібне hydration.
 
 ## Smoke Path
 
-EN: The repo smoke script validates the real namespace contract over MCP stdio:
+EN: The repo smoke script validates the real Phase 4 contract over MCP stdio:
 
-UK: Repo smoke script перевіряє реальний namespace contract поверх MCP stdio:
+UK: Repo smoke script перевіряє реальний контракт Phase 4 поверх MCP stdio:
 
-1. connect and list the 7 tools;
+1. connect and list the 8 tools;
 2. inspect `server_info.current_project` and `storage_root`;
-3. write a project note with `remember_note`;
-4. promote it into `global`;
-5. query it through `search_memory(scope="hybrid")` and confirm the `project` hit comes first.
+3. index a small Markdown root with `index_paths(mode="full")`;
+4. write and promote a project note with `remember_note` and `promote_note`;
+5. call `semantic_search(scope="project")` and confirm the top hit is a Markdown balanced card;
+6. call `semantic_search(scope="hybrid")` and confirm the `project` note appears before the promoted `global` note.
 
 ## Supported Clients
 

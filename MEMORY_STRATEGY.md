@@ -115,9 +115,9 @@ This keeps `global` curated and prevents cross-project contamination.
 
 ## 6. Default Search Behaviour / Дефолтна поведінка пошуку
 
-`search_memory` supports:
+`semantic_search` supports:
 
-`search_memory` підтримує:
+`semantic_search` підтримує:
 
 - `project`
 - `global`
@@ -129,40 +129,57 @@ This keeps `global` curated and prevents cross-project contamination.
 
 1. merge project and global candidates
 2. apply a strong project bonus
-3. tie-break by project preference, then newer `updated_at`, then stable item identity
+3. inside each scope, prefer Markdown blocks over memory notes when matches are close
+4. final tie-break by project preference, then newer `updated_at`, then stable item identity
 
 1. злити project і global candidates
 2. застосувати сильний project bonus
-3. tie-break: спочатку project preference, потім новіший `updated_at`, потім стабільний item identity
+3. всередині кожного scope віддавати перевагу Markdown-блокам над memory notes, коли матчі близькі
+4. фінальний tie-break: спочатку project preference, потім новіший `updated_at`, потім стабільний item identity
+
+`semantic_search` searches both indexed Markdown blocks and persistent memory notes.
+
+`semantic_search` шукає і по проіндексованих Markdown-блоках, і по persistent memory notes.
 
 ## 7. Result Envelope / Формат результату
 
-Every returned item includes compact provenance fields:
+Every returned semantic result includes compact provenance fields:
 
-Кожен повернений item містить компактні provenance-поля:
+Кожен повернений semantic-result містить компактні provenance-поля:
 
 - `scope`
 - `project_id`
 - `project_name`
 - `source_kind`
 - `item_id`
+- `block_id` when relevant / коли релевантно
 - `source_path`
+- `title`
+- `heading_path`
 - `updated_at`
+- `score`
 - `confidence`
+- `confidence_state`
+- `compressed_summary`
+- `key_points`
 - `can_hydrate`
 - `promoted_from` when relevant / коли релевантно
 
-The payload also includes lightweight usability fields:
+Default retrieval does **not** include raw excerpts or whole-file dumps. That boundary keeps token volume low and leaves fuller hydration to Phase 5.
 
-Payload також містить легкі usability-поля:
+Дефолтний retrieval **не** містить raw excerpts або дампів цілих файлів. Ця межа тримає token volume низьким і залишає повніше hydration для Phase 5.
 
-- `title`
-- `content_preview`
-- `tags`
+Balanced cards add lightweight usability fields:
 
-This keeps trust high without paying for heavy debug metadata on every result.
+Balanced cards додають легкі usability-поля:
 
-Це тримає trust високим без оплати важких debug metadata у кожному результаті.
+- `compressed_summary`
+- максимум `2-3` `key_points`
+- warning when `confidence_state` is `low` or `ambiguous`
+
+This keeps trust high without paying for heavy debug metadata or raw excerpts on every result.
+
+Це тримає trust високим без оплати важких debug metadata або raw excerpts у кожному результаті.
 
 ## 8. Promotion Provenance / Provenance промоції
 
