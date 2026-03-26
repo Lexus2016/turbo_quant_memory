@@ -4,7 +4,15 @@ import json
 from pathlib import Path
 
 from turbo_memory_mcp.identity import ProjectIdentity
-from turbo_memory_mcp.store import GLOBAL_SCOPE, MemoryStore, PROJECT_SCOPE, resolve_storage_root
+from turbo_memory_mcp.store import (
+    ACTIVE_NOTE_STATUS,
+    ARCHIVED_NOTE_STATUS,
+    GLOBAL_SCOPE,
+    MemoryStore,
+    PROJECT_SCOPE,
+    SUPERSEDED_NOTE_STATUS,
+    resolve_storage_root,
+)
 
 
 def _project_identity(project_root: Path) -> ProjectIdentity:
@@ -83,6 +91,56 @@ def test_promotion_preserves_provenance_and_global_partition(tmp_path: Path) -> 
         "projects/proj1234567890abc/notes/note-promote.json"
     )
     assert [note["note_id"] for note in store.list_notes(GLOBAL_SCOPE)] == ["note-promote"]
+
+
+def test_deprecate_note_archives_record_without_deleting_history(tmp_path: Path) -> None:
+    store = MemoryStore(_project_identity(tmp_path / "repo"), storage_root=tmp_path / "central-store")
+    stored = store.write_project_note(
+        "Old Install Flow",
+        "Use uv run turbo-memory-mcp serve.",
+        note_kind="lesson",
+        note_id="note-old-install",
+    )
+
+    archived = store.deprecate_note(stored["note_id"], scope=PROJECT_SCOPE, reason="Replaced by packaged install flow.")
+
+    archived_payload = json.loads(store.project_note_path("note-old-install").read_text(encoding="utf-8"))
+    assert archived["note_status"] == ARCHIVED_NOTE_STATUS
+    assert archived_payload["note_status"] == ARCHIVED_NOTE_STATUS
+    assert archived_payload["deprecation_reason"] == "Replaced by packaged install flow."
+    assert store.read_project_note("note-old-install")["note_status"] == ARCHIVED_NOTE_STATUS
+    assert store.list_notes(PROJECT_SCOPE) == []
+    assert store.list_notes(PROJECT_SCOPE, include_inactive=True)[0]["note_status"] == ARCHIVED_NOTE_STATUS
+
+
+def test_deprecate_note_can_mark_note_as_superseded(tmp_path: Path) -> None:
+    store = MemoryStore(_project_identity(tmp_path / "repo"), storage_root=tmp_path / "central-store")
+    old_note = store.write_project_note(
+        "Old Install Flow",
+        "Use uv run turbo-memory-mcp serve.",
+        note_kind="lesson",
+        note_id="note-old-install",
+    )
+    replacement = store.write_project_note(
+        "Current Install Flow",
+        "Use turbo-memory-mcp serve after package install.",
+        note_kind="lesson",
+        note_id="note-new-install",
+    )
+
+    superseded = store.deprecate_note(
+        old_note["note_id"],
+        scope=PROJECT_SCOPE,
+        replacement_note_id=replacement["note_id"],
+        reason="Superseded by package-first runtime contract.",
+    )
+
+    assert superseded["note_status"] == SUPERSEDED_NOTE_STATUS
+    assert superseded["superseded_by"]["note_id"] == replacement["note_id"]
+    active_notes = store.list_notes(PROJECT_SCOPE)
+    assert [note["note_id"] for note in active_notes] == ["note-new-install"]
+    inactive_notes = store.list_notes(PROJECT_SCOPE, include_inactive=True)
+    assert {note["note_status"] for note in inactive_notes} == {SUPERSEDED_NOTE_STATUS, ACTIVE_NOTE_STATUS}
 
 
 def test_markdown_neighborhood_returns_bounded_before_and_after_slices(tmp_path: Path) -> None:

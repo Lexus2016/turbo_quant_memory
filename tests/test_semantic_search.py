@@ -5,7 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from turbo_memory_mcp.server import build_runtime_context, remember_note_impl, promote_note_impl, semantic_search_impl
+from turbo_memory_mcp.server import (
+    build_runtime_context,
+    deprecate_note_impl,
+    remember_note_impl,
+    promote_note_impl,
+    semantic_search_impl,
+)
 from turbo_memory_mcp.store import sha256_text
 
 
@@ -21,6 +27,9 @@ class KeywordEmbedder:
         "login",
         "project",
         "global",
+        "install",
+        "package",
+        "runtime",
     )
 
     def encode(self, texts: list[str]) -> list[list[float]]:
@@ -167,3 +176,33 @@ def test_semantic_search_marks_ambiguous_token_results_with_warning(tmp_path: Pa
     assert payload["confidence_state"] == "ambiguous"
     assert "hydrate before acting" in payload["warning"]
     assert payload["items"][0]["confidence_state"] == "ambiguous"
+
+
+def test_semantic_search_ignores_archived_notes(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    archived = remember_note_impl(
+        "Old Runtime",
+        "Use uv run turbo-memory-mcp serve.",
+        kind="lesson",
+        tags=["runtime"],
+        environ=env,
+    )
+    remember_note_impl(
+        "Current Runtime",
+        "Use turbo-memory-mcp serve after installation.",
+        kind="lesson",
+        tags=["runtime"],
+        environ=env,
+    )
+    deprecate_note_impl(
+        archived["item"]["item_id"],
+        scope="project",
+        reason="Deprecated dev-only runtime contract.",
+        environ=env,
+    )
+
+    payload = semantic_search_impl("runtime install serve", scope="project", limit=5, environ=env)
+
+    assert payload["result_count"] == 1
+    assert payload["items"][0]["title"] == "Current Runtime"
+    assert payload["items"][0]["note_status"] == "active"

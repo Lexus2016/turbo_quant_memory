@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Turbo Quant Memory для AI-агентів</title>
+  <desc id="desc">Титульний банер, який пояснює, що Turbo Quant Memory — це шар пам’яті для AI-агентів розробки, який зменшує повторне завантаження контексту і зберігає знання проєкту.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="55%" stop-color="#0b2840"/>
+      <stop offset="100%" stop-color="#0d4d63"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#153958"/>
+      <stop offset="100%" stop-color="#10283c"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#53d6ff"/>
+      <stop offset="100%" stop-color="#8bffb0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="28" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .title { font: 700 74px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }
+      .subtitle { font: 600 34px 'Segoe UI', Arial, sans-serif; fill: #9fe9ff; }
+      .body { font: 400 27px 'Segoe UI', Arial, sans-serif; fill: #d6e7f2; }
+      .pill { font: 600 21px 'Segoe UI', Arial, sans-serif; fill: #ecfbff; }
+      .chip { font: 600 22px 'Segoe UI', Arial, sans-serif; fill: #eefaff; }
+      .cardTitle { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #f5fbff; }
+      .cardText { font: 400 20px 'Segoe UI', Arial, sans-serif; fill: #cfe5f3; }
+      .small { font: 600 18px 'Segoe UI', Arial, sans-serif; fill: #96e4ff; letter-spacing: 1.2px; text-transform: uppercase; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1340" cy="160" r="180" fill="#1ee3cf" opacity="0.12" filter="url(#glow)"/>
+  <circle cx="220" cy="770" r="210" fill="#46b8ff" opacity="0.12" filter="url(#glow)"/>
+  <circle cx="1460" cy="760" r="120" fill="#97ffbe" opacity="0.1" filter="url(#glow)"/>
+
+  <rect x="110" y="90" rx="26" ry="26" width="430" height="56" fill="#11344a" opacity="0.95"/>
+  <text x="140" y="126" class="pill">Пам’ять стає частиною інфраструктури</text>
+
+  <text x="110" y="240" class="small">Для щоденної роботи з AI</text>
+  <text x="110" y="330" class="title">Turbo Quant Memory</text>
+  <text x="110" y="390" class="subtitle">Шар пам’яті для AI-агентів розробки</text>
+
+  <text x="110" y="480" class="body">
+    <tspan x="110" dy="0">Не збирайте контекст наново в кожній сесії.</tspan>
+    <tspan x="110" dy="40">Тримайте знання проєкту поруч, спочатку</tspan>
+    <tspan x="110" dy="40">повертайте потрібний фрагмент, а повний</tspan>
+    <tspan x="110" dy="40">контекст відкривайте лише за потреби.</tspan>
+  </text>
+
+  <rect x="110" y="650" rx="22" ry="22" width="255" height="60" fill="#12334a"/>
+  <rect x="385" y="650" rx="22" ry="22" width="400" height="60" fill="#12334a"/>
+  <rect x="110" y="730" rx="22" ry="22" width="340" height="60" fill="#12334a"/>
+  <text x="145" y="688" class="chip">Пам’ять проєкту</text>
+  <text x="420" y="688" class="chip">Менше контексту за замовчуванням</text>
+  <text x="145" y="768" class="chip">Повний контекст за запитом</text>
+
+  <text x="110" y="840" class="body">Claude Code  •  Codex  •  Cursor  •  OpenCode  •  MCP-клієнти</text>
+
+  <rect x="935" y="130" rx="34" ry="34" width="525" height="640" fill="url(#panel)" opacity="0.98"/>
+  <rect x="980" y="195" rx="28" ry="28" width="435" height="150" fill="#0f4260"/>
+  <rect x="980" y="375" rx="28" ry="28" width="435" height="150" fill="#124964"/>
+  <rect x="980" y="555" rx="28" ry="28" width="435" height="150" fill="#10506a"/>
+
+  <rect x="1010" y="224" rx="14" ry="14" width="110" height="36" fill="url(#accent)"/>
+  <text x="1040" y="248" class="small" fill="#062032">Project</text>
+  <text x="1010" y="292" class="cardTitle">Пам’ять проєкту</text>
+  <text x="1010" y="326" class="cardText">Рішення, уроки, передачі контексту, патерни.</text>
+
+  <rect x="1010" y="404" rx="14" ry="14" width="104" height="36" fill="url(#accent)"/>
+  <text x="1046" y="428" class="small" fill="#062032">Hybrid</text>
+  <text x="1010" y="472" class="cardTitle">Спочатку компактний retrieval</text>
+  <text x="1010" y="506" class="cardText">Шукайте коротко. Заглиблюйтесь тільки за потреби.</text>
+
+  <rect x="1010" y="584" rx="14" ry="14" width="106" height="36" fill="url(#accent)"/>
+  <text x="1044" y="608" class="small" fill="#062032">Global</text>
+  <text x="1010" y="652" class="cardTitle">Повторно вживані знання</text>
+  <text x="1010" y="686" class="cardText">Промотуйте те, що має пам’ятати вся команда.</text>
+</svg>

@@ -283,7 +283,7 @@ Phase 5 завершує balanced-card retrieval явним hydration.
 ### Deployment requirement / Вимога до розгортання
 
 - One recommended install path:
-  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
   - `turbo-memory-mcp serve`
 - One documented Claude Code connection path:
   - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`
@@ -292,7 +292,7 @@ Phase 5 завершує balanced-card retrieval явним hydration.
 - Також мають існувати еквівалентні client examples для Codex, Cursor, OpenCode і Antigravity.
 
 - Один рекомендований шлях інсталяції:
-  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+  - `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
   - `turbo-memory-mcp serve`
 - Один задокументований шлях підключення до Claude Code:
   - `claude mcp add tqmemory --scope project -- turbo-memory-mcp serve`

@@ -54,11 +54,11 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
     )
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
     )
     assert payload["server_id"] == SERVER_ID
     assert payload["current_project"] == SAMPLE_PROJECT
@@ -80,11 +80,11 @@ def test_self_test_matches_exported_phase_5_tools() -> None:
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert (
         payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
     )
     assert (
         payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0"
+        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0"
     )
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
@@ -140,6 +140,7 @@ def test_note_item_payload_uses_compact_envelope_by_default() -> None:
     assert payload["project_name"] == "Alpha Project"
     assert payload["item_id"] == "note-1"
     assert payload["note_kind"] == "decision"
+    assert payload["note_status"] == "active"
     assert payload["confidence"] == 0.91
     assert payload["can_hydrate"] is True
     assert "promoted_from" not in payload
@@ -212,6 +213,7 @@ def test_note_item_payload_includes_promoted_from_when_present() -> None:
 
     assert payload["scope"] == "global"
     assert payload["note_kind"] == "pattern"
+    assert payload["note_status"] == "active"
     assert payload["promoted_from"]["scope"] == "project"
     assert payload["promoted_from"]["note_id"] == "note-1"
 
@@ -279,4 +281,5 @@ def test_hydrated_note_payload_preserves_note_kind_and_content() -> None:
 
     assert item["item_id"] == "note-1"
     assert item["note_kind"] == "handoff"
+    assert item["note_status"] == "active"
     assert item["content"] == "Validate the rollout carefully."

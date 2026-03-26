@@ -15,6 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_DIR = PROJECT_ROOT / "benchmarks"
 BENCHMARK_JSON = BENCHMARK_DIR / "latest.json"
 BENCHMARK_MD = BENCHMARK_DIR / "latest.md"
+BENCHMARK_SVG_EN = BENCHMARK_DIR / "summary-en.svg"
+BENCHMARK_SVG_RU = BENCHMARK_DIR / "summary-ru.svg"
+BENCHMARK_SVG_UK = BENCHMARK_DIR / "summary-uk.svg"
 QUERY_SET = [
     "namespace model project global hybrid",
     "hydrate bounded neighborhood related mode",
@@ -234,6 +237,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Full index: `{report['indexing']['full_index_ms']}` ms",
         f"- Idle incremental: `{report['indexing']['idle_incremental_ms']}` ms",
         "",
+        "![Benchmark summary](summary-en.svg)",
+        "",
         "## Aggregate Savings",
         "",
         "| Strategy | Average byte savings | Median byte savings | Average word savings |",
@@ -284,13 +289,145 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_svg(report: dict[str, Any], *, language: str) -> str:
+    summary = report["summary"]
+    corpus = report["corpus"]
+    indexing = report["indexing"]
+
+    copy = {
+        "en": {
+            "title": "Benchmark Snapshot",
+            "subtitle": "Real repository measurements",
+            "corpus": "Corpus",
+            "index": "Full index",
+            "search": "Avg search",
+            "hydrate": "Avg hydrate",
+            "compact": "Search only",
+            "guided": "Search + hydrate",
+            "bytes_saved": "average byte savings",
+            "word_saved": "average word savings",
+            "files_blocks": f"{corpus['indexed_files']} files · {corpus['block_count']} blocks",
+            "index_value": f"{round(indexing['full_index_ms'] / 1000, 2)} s",
+            "search_value": f"{summary['average_search_latency_ms']} ms",
+            "hydrate_value": f"{summary['average_hydrate_latency_ms']} ms",
+        },
+        "ru": {
+            "title": "Снимок benchmark",
+            "subtitle": "Реальные измерения репозитория",
+            "corpus": "Корпус",
+            "index": "Полная индексация",
+            "search": "Средний поиск",
+            "hydrate": "Средний hydrate",
+            "compact": "Только поиск",
+            "guided": "Поиск + hydrate",
+            "bytes_saved": "средняя экономия по байтам",
+            "word_saved": "средняя экономия по словам",
+            "files_blocks": f"{corpus['indexed_files']} файлов · {corpus['block_count']} блоков",
+            "index_value": f"{round(indexing['full_index_ms'] / 1000, 2)} с",
+            "search_value": f"{summary['average_search_latency_ms']} мс",
+            "hydrate_value": f"{summary['average_hydrate_latency_ms']} мс",
+        },
+        "uk": {
+            "title": "Знімок benchmark",
+            "subtitle": "Реальні вимірювання репозиторію",
+            "corpus": "Корпус",
+            "index": "Повна індексація",
+            "search": "Середній пошук",
+            "hydrate": "Середній hydrate",
+            "compact": "Лише пошук",
+            "guided": "Пошук + hydrate",
+            "bytes_saved": "середня економія по байтах",
+            "word_saved": "середня економія по словах",
+            "files_blocks": f"{corpus['indexed_files']} файлів · {corpus['block_count']} блоків",
+            "index_value": f"{round(indexing['full_index_ms'] / 1000, 2)} с",
+            "search_value": f"{summary['average_search_latency_ms']} мс",
+            "hydrate_value": f"{summary['average_hydrate_latency_ms']} мс",
+        },
+    }[language]
+
+    compact_width = round(summary["average_semantic_search_only_bytes_saved_percent"] * 10.6, 1)
+    guided_width = round(summary["average_semantic_search_plus_hydrate_bytes_saved_percent"] * 10.6, 1)
+
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+  <title id="title">{copy['title']}</title>
+  <desc id="desc">{copy['subtitle']}</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="55%" stop-color="#0b2840"/>
+      <stop offset="100%" stop-color="#0d4d63"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#53d6ff"/>
+      <stop offset="100%" stop-color="#85ffb3"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#55b8ff"/>
+      <stop offset="100%" stop-color="#4fe4e4"/>
+    </linearGradient>
+    <style>
+      .title {{ font: 700 56px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }}
+      .subtitle {{ font: 500 24px 'Segoe UI', Arial, sans-serif; fill: #a4ebff; }}
+      .statLabel {{ font: 600 20px 'Segoe UI', Arial, sans-serif; fill: #9fe7ff; }}
+      .statValue {{ font: 700 38px 'Segoe UI', Arial, sans-serif; fill: #f8fcff; }}
+      .barLabel {{ font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #f4fbff; }}
+      .barMeta {{ font: 500 19px 'Segoe UI', Arial, sans-serif; fill: #cbe2f0; }}
+      .percent {{ font: 700 34px 'Segoe UI', Arial, sans-serif; fill: #faffff; }}
+    </style>
+  </defs>
+
+  <rect width="1400" height="820" rx="32" ry="32" fill="url(#bg)"/>
+
+  <text x="70" y="90" class="title">{copy['title']}</text>
+  <text x="70" y="126" class="subtitle">{copy['subtitle']}</text>
+
+  <rect x="70" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
+  <rect x="370" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
+  <rect x="670" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
+  <rect x="970" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
+
+  <text x="95" y="215" class="statLabel">{copy['corpus']}</text>
+  <text x="95" y="255" class="statValue">{copy['files_blocks']}</text>
+
+  <text x="395" y="215" class="statLabel">{copy['index']}</text>
+  <text x="395" y="255" class="statValue">{copy['index_value']}</text>
+
+  <text x="695" y="215" class="statLabel">{copy['search']}</text>
+  <text x="695" y="255" class="statValue">{copy['search_value']}</text>
+
+  <text x="995" y="215" class="statLabel">{copy['hydrate']}</text>
+  <text x="995" y="255" class="statValue">{copy['hydrate_value']}</text>
+
+  <text x="70" y="380" class="barLabel">{copy['compact']}</text>
+  <text x="70" y="415" class="barMeta">{copy['bytes_saved']}</text>
+  <rect x="70" y="445" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
+  <rect x="70" y="445" rx="24" ry="24" width="{compact_width}" height="56" fill="url(#bar1)"/>
+  <text x="1215" y="482" class="percent">{summary['average_semantic_search_only_bytes_saved_percent']}%</text>
+  <text x="70" y="532" class="barMeta">{copy['word_saved']}: {summary['average_semantic_search_only_words_saved_percent']}%</text>
+
+  <text x="70" y="610" class="barLabel">{copy['guided']}</text>
+  <text x="70" y="645" class="barMeta">{copy['bytes_saved']}</text>
+  <rect x="70" y="665" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
+  <rect x="70" y="665" rx="24" ry="24" width="{guided_width}" height="56" fill="url(#bar2)"/>
+  <text x="1215" y="702" class="percent">{summary['average_semantic_search_plus_hydrate_bytes_saved_percent']}%</text>
+  <text x="70" y="752" class="barMeta">{copy['word_saved']}: {summary['average_semantic_search_plus_hydrate_words_saved_percent']}%</text>
+</svg>
+"""
+
+
 def main() -> int:
     report = run_benchmark()
     BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
     BENCHMARK_JSON.write_text(_json_text(report) + "\n", encoding="utf-8")
     BENCHMARK_MD.write_text(render_markdown(report), encoding="utf-8")
+    BENCHMARK_SVG_EN.write_text(render_svg(report, language="en"), encoding="utf-8")
+    BENCHMARK_SVG_RU.write_text(render_svg(report, language="ru"), encoding="utf-8")
+    BENCHMARK_SVG_UK.write_text(render_svg(report, language="uk"), encoding="utf-8")
     print(f"Wrote {BENCHMARK_JSON}")
     print(f"Wrote {BENCHMARK_MD}")
+    print(f"Wrote {BENCHMARK_SVG_EN}")
+    print(f"Wrote {BENCHMARK_SVG_RU}")
+    print(f"Wrote {BENCHMARK_SVG_UK}")
     print(_json_text(report["summary"]))
     return 0
 

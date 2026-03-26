@@ -21,6 +21,14 @@ NOTE_SOURCE_KIND = "memory_note"
 MARKDOWN_SOURCE_KIND = "markdown"
 NOTE_KINDS = ("decision", "lesson", "handoff", "pattern")
 DEFAULT_NOTE_KIND = "lesson"
+ACTIVE_NOTE_STATUS = "active"
+ARCHIVED_NOTE_STATUS = "archived"
+SUPERSEDED_NOTE_STATUS = "superseded"
+NOTE_STATUSES = (
+    ACTIVE_NOTE_STATUS,
+    ARCHIVED_NOTE_STATUS,
+    SUPERSEDED_NOTE_STATUS,
+)
 
 
 class MemoryStore:
@@ -206,7 +214,7 @@ class MemoryStore:
             return self.read_global_note(note_id)
         raise ValueError(f"Unsupported scope: {scope}")
 
-    def list_notes(self, scope: str) -> list[dict[str, Any]]:
+    def list_notes(self, scope: str, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         if scope == PROJECT_SCOPE:
             note_dir = self.project_notes_dir()
         elif scope == GLOBAL_SCOPE:
@@ -216,7 +224,10 @@ class MemoryStore:
 
         if not note_dir.exists():
             return []
-        return [self._normalize_note_record(_read_json(path)) for path in sorted(note_dir.glob("*.json"))]
+        notes = [self._normalize_note_record(_read_json(path)) for path in sorted(note_dir.glob("*.json"))]
+        if include_inactive:
+            return notes
+        return [note for note in notes if note["note_status"] == ACTIVE_NOTE_STATUS]
 
     def note_source_path(self, note: Mapping[str, Any]) -> Path:
         note_id = str(note["note_id"])
@@ -227,6 +238,8 @@ class MemoryStore:
 
     def promote_note(self, note_id: str) -> dict[str, Any]:
         project_note = self.read_project_note(note_id)
+        if project_note["note_status"] != ACTIVE_NOTE_STATUS:
+            raise ValueError("Only active project notes can be promoted.")
         promoted_from = {
             "scope": PROJECT_SCOPE,
             "project_id": project_note["project_id"],
@@ -246,6 +259,59 @@ class MemoryStore:
             project_name=project_note["project_name"],
             promoted_from=promoted_from,
         )
+
+    def deprecate_note(
+        self,
+        note_id: str,
+        *,
+        scope: str,
+        replacement_note_id: str | None = None,
+        replacement_scope: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        note = self.read_note(note_id, scope)
+        if note["note_status"] != ACTIVE_NOTE_STATUS:
+            raise ValueError("Only active notes can be deprecated.")
+
+        replacement_reference: dict[str, Any] | None = None
+        next_status = ARCHIVED_NOTE_STATUS
+        resolved_reason = (reason or "").strip() or None
+
+        if replacement_note_id is not None:
+            resolved_replacement_id = replacement_note_id.strip()
+            if not resolved_replacement_id:
+                raise ValueError("replacement_note_id must be non-empty when provided.")
+            resolved_replacement_scope = (replacement_scope or scope).strip().lower()
+            replacement_note = self.read_note(resolved_replacement_id, resolved_replacement_scope)
+            if replacement_note["note_status"] != ACTIVE_NOTE_STATUS:
+                raise ValueError("Replacement note must be active.")
+            if note["note_id"] == replacement_note["note_id"] and scope == resolved_replacement_scope:
+                raise ValueError("A note cannot supersede itself.")
+            replacement_reference = {
+                "scope": replacement_note["scope"],
+                "project_id": replacement_note["project_id"],
+                "project_name": replacement_note["project_name"],
+                "note_id": replacement_note["note_id"],
+                "title": replacement_note["title"],
+                "source_path": str(self.note_source_path(replacement_note)),
+            }
+            next_status = SUPERSEDED_NOTE_STATUS
+
+        updated_note = dict(note)
+        updated_note["note_status"] = next_status
+        updated_note["deprecated_at"] = utc_now()
+        updated_note["updated_at"] = updated_note["deprecated_at"]
+        if resolved_reason is not None:
+            updated_note["deprecation_reason"] = resolved_reason
+        else:
+            updated_note.pop("deprecation_reason", None)
+        if replacement_reference is not None:
+            updated_note["superseded_by"] = replacement_reference
+        else:
+            updated_note.pop("superseded_by", None)
+
+        self._write_note_record(updated_note)
+        return self._normalize_note_record(updated_note)
 
     def write_markdown_root(self, root_record: Mapping[str, Any]) -> dict[str, Any]:
         record = {
@@ -461,6 +527,7 @@ class MemoryStore:
             "tags": list(tags or []),
             "source_refs": list(source_refs or []),
             "source_kind": NOTE_SOURCE_KIND,
+            "note_status": ACTIVE_NOTE_STATUS,
             "created_at": resolved_created_at,
             "updated_at": utc_now(),
         }
@@ -473,7 +540,18 @@ class MemoryStore:
         payload["note_kind"] = normalize_note_kind(
             payload.get("note_kind") or payload.get("kind"),
         )
+        payload["note_status"] = normalize_note_status(payload.get("note_status"))
         return payload
+
+    def _write_note_record(self, note: Mapping[str, Any]) -> None:
+        scope = str(note["scope"])
+        if scope == GLOBAL_SCOPE:
+            self.write_global_manifest()
+            _write_json_atomic(self.global_note_path(str(note["note_id"])), note)
+            return
+
+        self.write_project_manifest()
+        _write_json_atomic(self.project_note_path(str(note["note_id"]), str(note["project_id"])), note)
 
 
 def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -496,6 +574,17 @@ def normalize_note_kind(value: str | None) -> str:
     if resolved not in NOTE_KINDS:
         supported = ", ".join(NOTE_KINDS)
         raise ValueError(f"Unsupported note kind: {value}. Expected one of: {supported}.")
+    return resolved
+
+
+def normalize_note_status(value: str | None) -> str:
+    if value is None or not str(value).strip():
+        return ACTIVE_NOTE_STATUS
+
+    resolved = str(value).strip().lower()
+    if resolved not in NOTE_STATUSES:
+        supported = ", ".join(NOTE_STATUSES)
+        raise ValueError(f"Unsupported note status: {value}. Expected one of: {supported}.")
     return resolved
 
 
@@ -537,13 +626,18 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
 
 __all__ = [
     "DEFAULT_STORAGE_DIRNAME",
+    "ACTIVE_NOTE_STATUS",
+    "ARCHIVED_NOTE_STATUS",
     "ENV_STORAGE_HOME",
     "GLOBAL_SCOPE",
     "MARKDOWN_SOURCE_KIND",
     "MemoryStore",
     "NOTE_SOURCE_KIND",
+    "NOTE_STATUSES",
+    "SUPERSEDED_NOTE_STATUS",
     "PROJECT_SCOPE",
     "generate_note_id",
+    "normalize_note_status",
     "resolve_storage_root",
     "sha256_path",
     "sha256_text",

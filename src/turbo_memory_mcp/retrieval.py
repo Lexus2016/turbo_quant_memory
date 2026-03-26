@@ -177,6 +177,7 @@ def _decorate_candidate(
     if candidate["source_kind"] == NOTE_SOURCE_KIND:
         note = store.read_note(str(candidate["note_id"]), str(candidate["scope"]))
         payload["note_kind"] = note["note_kind"]
+        payload["note_status"] = note["note_status"]
         if note.get("promoted_from"):
             payload["promoted_from"] = dict(note["promoted_from"])
 

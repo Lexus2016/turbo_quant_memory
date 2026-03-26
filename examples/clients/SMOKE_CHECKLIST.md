@@ -6,12 +6,12 @@ Install the packaged CLI before wiring the MCP server into a client:
 
 Спочатку встановіть packaged CLI, а вже потім підключайте MCP-сервер до клієнта:
 
-1. Primary / Основний шлях: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
-2. Fallback / Резервний шлях: `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+1. Primary / Основний шлях: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
+2. Fallback / Резервний шлях: `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
 
 Pinned release install / Інсталяція з release tag:
 
-- `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.1.0`
+- `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.0`
 
 Run contract after install / Команда запуску після інсталяції:
 
@@ -49,7 +49,7 @@ Pass signals / Сигнали успіху:
 - Load / Підключення: place the fixture contents into project `.mcp.json` or run `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve`
 - Confirm / Підтвердження: start Claude Code in this repo and confirm `tqmemory` is visible in MCP status for the project
 - Prompt / Промпт: `Run server_info, then remember_note with kind="pattern", promote it, run index_paths on the repo, call semantic_search(scope="hybrid"), and hydrate a Markdown hit. Print the JSON responses.`
-- Pass signal / Сигнал успіху: `self_test.tool_count = 9`, `server_info.current_project` exists, and the hydration-enabled retrieval flow succeeds end-to-end
+- Pass signal / Сигнал успіху: `self_test.tool_count = 10`, `server_info.current_project` exists, and the hydration-enabled retrieval flow succeeds end-to-end
 
 ## Codex
 
@@ -60,7 +60,7 @@ Pass signals / Сигнали успіху:
 - Confirm / Підтвердження: launch `codex`, open `/mcp`, verify `tqmemory` appears as a configured MCP server, and confirm `server_info.current_project.project_root` points to the target repository
 - Prompt / Промпт: `Use the tqmemory MCP server only. Run self_test, then server_info, then remember_note(title="Codex Smoke Note", content="Phase 5 namespace smoke", kind="pattern", tags=["smoke"]), promote_note(note_id), index_paths(paths=["."], mode="incremental"), semantic_search(query="namespace smoke", scope="hybrid"), and hydrate a Markdown hit with scope="project" and mode="default". Print the JSON responses.`
 - CLI smoke command / Команда CLI smoke: `codex exec --dangerously-bypass-approvals-and-sandbox -C <repo-root> -c 'mcp_servers.tqmemory.command="turbo-memory-mcp"' -c 'mcp_servers.tqmemory.args=["serve"]' '<prompt above>'`
-- Pass signal / Сигнал успіху: `tool_count = 9`, `server_info.current_project` exists, `server_info.index_status.project.freshness = "fresh"`, and the shared hydration flow passes
+- Pass signal / Сигнал успіху: `tool_count = 10`, `server_info.current_project` exists, `server_info.index_status.project.freshness = "fresh"`, and the shared hydration flow passes
 
 ## Cursor
 
@@ -69,7 +69,7 @@ Pass signals / Сигнали успіху:
 - Load / Підключення: place the fixture contents into `.cursor/mcp.json` for project scope or `~/.cursor/mcp.json` for user scope
 - Confirm / Підтвердження: restart Cursor or run `agent mcp list` and verify `tqmemory` is connected through `stdio`
 - Prompt / Промпт: `Run self_test, then execute the shared Phase 5 hydration validation flow from tqmemory and print the JSON responses.`
-- Pass signal / Сигнал успіху: Cursor shows `tqmemory` as connected, `tool_count = 9`, and `hybrid` returns the project hit first
+- Pass signal / Сигнал успіху: Cursor shows `tqmemory` as connected, `tool_count = 10`, and `hybrid` returns the project hit first
 
 ## OpenCode
 
@@ -78,7 +78,7 @@ Pass signals / Сигнали успіху:
 - Load / Підключення: merge the `mcp.tqmemory` object from the fixture into your OpenCode config and restart OpenCode
 - Confirm / Підтвердження: verify `tqmemory` appears in the MCP tools list and is enabled on startup
 - Prompt / Промпт: `Use tqmemory, run self_test, then execute the shared Phase 5 hydration validation flow and print the JSON responses.`
-- Pass signal / Сигнал успіху: OpenCode exposes `tqmemory` tools, `tool_count = 9`, and the project/global/hybrid flow completes
+- Pass signal / Сигнал успіху: OpenCode exposes `tqmemory` tools, `tool_count = 10`, and the project/global/hybrid flow completes
 
 ## Antigravity
 
@@ -87,4 +87,4 @@ Pass signals / Сигнали успіху:
 - Load / Підключення: open the Agent side panel, go to MCP server management, choose custom MCP import, and paste the raw JSON from `examples/clients/antigravity.mcp.json`
 - Confirm / Підтвердження: verify the UI recognizes `tqmemory` as a custom MCP target before starting an agent session
 - Prompt / Промпт: `Run self_test from tqmemory, then try the shared Phase 5 hydration validation flow and print the JSON responses.`
-- Pass signal / Сигнал успіху: the server is recognized, `tool_count = 9`, and the hydration-aware retrieval flow works; this remains a documented compatibility target, not equal proof to Tier 1
+- Pass signal / Сигнал успіху: the server is recognized, `tool_count = 10`, and the hydration-aware retrieval flow works; this remains a documented compatibility target, not equal proof to Tier 1

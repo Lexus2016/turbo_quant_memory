@@ -4,12 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from turbo_memory_mcp.server import hydrate_impl, promote_note_impl, remember_note_impl, semantic_search_impl
+from turbo_memory_mcp.server import (
+    deprecate_note_impl,
+    hydrate_impl,
+    promote_note_impl,
+    remember_note_impl,
+    semantic_search_impl,
+)
 from unittest.mock import patch
 
 
 class KeywordEmbedder:
-    KEYWORDS = ("auth", "refresh", "login", "global", "project")
+    KEYWORDS = ("auth", "refresh", "login", "global", "project", "install", "package", "runtime")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
@@ -169,6 +175,40 @@ def test_hydrate_impl_returns_full_note_payload(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["source_kind"] == "memory_note"
     assert payload["item"]["note_kind"] == "handoff"
+    assert payload["item"]["note_status"] == "active"
     assert payload["item"]["content"] == "Carry auth refresh caveats into production verification."
     assert payload["neighbors_before"] == []
     assert payload["neighbors_after"] == []
+
+
+def test_deprecate_note_impl_supersedes_old_note_and_hides_it_from_search(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    old_note = remember_note_impl(
+        "Install Flow",
+        "Use uv run turbo-memory-mcp serve.",
+        kind="lesson",
+        tags=["install"],
+        environ=env,
+    )
+    replacement = remember_note_impl(
+        "Install Flow",
+        "Use turbo-memory-mcp serve after installing the package.",
+        kind="lesson",
+        tags=["install"],
+        environ=env,
+    )
+
+    payload = deprecate_note_impl(
+        old_note["item"]["item_id"],
+        scope="project",
+        replacement_note_id=replacement["item"]["item_id"],
+        reason="Packaged install contract replaced the dev runtime.",
+        environ=env,
+    )
+    search = semantic_search_impl("install package runtime", scope="project", limit=5, environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["action"] == "superseded"
+    assert payload["item"]["note_status"] == "superseded"
+    assert payload["item"]["superseded_by"]["note_id"] == replacement["item"]["item_id"]
+    assert [item["item_id"] for item in search["items"]] == [replacement["item"]["item_id"]]

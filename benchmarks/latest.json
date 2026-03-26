@@ -5,16 +5,16 @@
     "without_mcp": "Open the full source text of every unique Markdown file represented in the top-5 project search hits."
   },
   "corpus": {
-    "block_count": 1015,
+    "block_count": 1030,
     "changed_files_on_full": 117,
     "indexed_files": 117
   },
-  "generated_at": "2026-03-26T16:07:01.091747+00:00",
+  "generated_at": "2026-03-26T18:27:56.329205+00:00",
   "indexing": {
-    "full_index_ms": 17111.02,
-    "idle_incremental_ms": 2315.79,
+    "full_index_ms": 34478.92,
+    "idle_incremental_ms": 4669.3,
     "idle_incremental_payload": {
-      "block_count": 1015,
+      "block_count": 1030,
       "changed_files": 0,
       "deleted_files": 0,
       "indexed_files": 117,
@@ -32,9 +32,9 @@
   "project_root": "/Users/admin/_Projects/turbo_quant_mcp_memory",
   "queries": [
     {
-      "hydrate_latency_ms": 308.17,
+      "hydrate_latency_ms": 155.8,
       "naive_full_files": {
-        "bytes": 44707,
+        "bytes": 43145,
         "file_count": 5,
         "files": [
           {
@@ -50,6 +50,12 @@
             "words": 649
           },
           {
+            "bytes": 4755,
+            "lines": 94,
+            "path": ".planning/phases/02-namespace-model/02-DISCUSSION-LOG.md",
+            "words": 696
+          },
+          {
             "bytes": 19108,
             "lines": 247,
             "path": ".planning/phases/02-namespace-model/02-RESEARCH.md",
@@ -60,48 +66,42 @@
             "lines": 238,
             "path": "MEMORY_STRATEGY.md",
             "words": 957
-          },
-          {
-            "bytes": 6317,
-            "lines": 157,
-            "path": "README.md",
-            "words": 669
           }
         ],
-        "lines": 881,
-        "words": 5264
+        "lines": 818,
+        "words": 5291
       },
       "query": "namespace model project global hybrid",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 87.14,
-          "words_percent": 89.95
+          "bytes_percent": 86.39,
+          "words_percent": 89.72
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 79.32,
-          "words_percent": 84.67
+          "bytes_percent": 75.9,
+          "words_percent": 81.08
         }
       },
-      "search_latency_ms": 1744.37,
+      "search_latency_ms": 123.95,
       "semantic_search_payload": {
-        "bytes": 5748,
-        "lines": 135,
-        "words": 529
+        "bytes": 5872,
+        "lines": 134,
+        "words": 544
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 9244,
-        "lines": 199,
-        "words": 807
+        "bytes": 10400,
+        "lines": 200,
+        "words": 1001
       },
       "top_hit": {
         "confidence_state": "ambiguous",
-        "score": 0.758,
-        "source_path": "README.md",
-        "title": "Namespace Model"
+        "score": 0.749,
+        "source_path": ".planning/ROADMAP.md",
+        "title": "Phase 2: Namespace Model"
       }
     },
     {
-      "hydrate_latency_ms": 124.61,
+      "hydrate_latency_ms": 136.88,
       "naive_full_files": {
         "bytes": 21484,
         "file_count": 4,
@@ -145,7 +145,7 @@
           "words_percent": 63.04
         }
       },
-      "search_latency_ms": 58.02,
+      "search_latency_ms": 261.53,
       "semantic_search_payload": {
         "bytes": 6870,
         "lines": 138,
@@ -164,7 +164,7 @@
       }
     },
     {
-      "hydrate_latency_ms": 176.46,
+      "hydrate_latency_ms": 140.46,
       "naive_full_files": {
         "bytes": 31542,
         "file_count": 3,
@@ -202,7 +202,7 @@
           "words_percent": 73.85
         }
       },
-      "search_latency_ms": 433.4,
+      "search_latency_ms": 286.34,
       "semantic_search_payload": {
         "bytes": 6835,
         "lines": 140,
@@ -221,11 +221,17 @@
       }
     },
     {
-      "hydrate_latency_ms": 152.62,
+      "hydrate_latency_ms": 138.23,
       "naive_full_files": {
-        "bytes": 31781,
+        "bytes": 39605,
         "file_count": 5,
         "files": [
+          {
+            "bytes": 14141,
+            "lines": 266,
+            "path": ".planning/phases/05-hydration-and-write-back/05-RESEARCH.md",
+            "words": 1990
+          },
           {
             "bytes": 738,
             "lines": 20,
@@ -245,42 +251,36 @@
             "words": 393
           },
           {
-            "bytes": 6317,
-            "lines": 157,
-            "path": "README.md",
-            "words": 669
-          },
-          {
             "bytes": 17538,
             "lines": 364,
             "path": "TECHNICAL_SPEC.md",
             "words": 1980
           }
         ],
-        "lines": 659,
-        "words": 3596
+        "lines": 768,
+        "words": 4917
       },
       "query": "storage stats freshness index status",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 80.52,
-          "words_percent": 84.82
+          "bytes_percent": 83.54,
+          "words_percent": 87.88
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 68.52,
-          "words_percent": 76.2
+          "bytes_percent": 73.9,
+          "words_percent": 81.57
         }
       },
-      "search_latency_ms": 69.11,
+      "search_latency_ms": 259.98,
       "semantic_search_payload": {
-        "bytes": 6191,
-        "lines": 140,
-        "words": 546
+        "bytes": 6520,
+        "lines": 141,
+        "words": 596
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 10005,
-        "lines": 205,
-        "words": 856
+        "bytes": 10336,
+        "lines": 206,
+        "words": 906
       },
       "top_hit": {
         "confidence_state": "medium",
@@ -290,7 +290,7 @@
       }
     },
     {
-      "hydrate_latency_ms": 164.37,
+      "hydrate_latency_ms": 135.28,
       "naive_full_files": {
         "bytes": 23524,
         "file_count": 3,
@@ -328,7 +328,7 @@
           "words_percent": 69.4
         }
       },
-      "search_latency_ms": 401.57,
+      "search_latency_ms": 287.87,
       "semantic_search_payload": {
         "bytes": 6881,
         "lines": 138,
@@ -347,7 +347,7 @@
       }
     },
     {
-      "hydrate_latency_ms": 180.69,
+      "hydrate_latency_ms": 134.36,
       "naive_full_files": {
         "bytes": 49157,
         "file_count": 5,
@@ -397,7 +397,7 @@
           "words_percent": 82.72
         }
       },
-      "search_latency_ms": 558.01,
+      "search_latency_ms": 294.56,
       "semantic_search_payload": {
         "bytes": 7073,
         "lines": 141,
@@ -417,16 +417,16 @@
     }
   ],
   "summary": {
-    "average_hydrate_latency_ms": 184.49,
-    "average_search_latency_ms": 544.08,
-    "average_semantic_search_only_bytes_saved_percent": 78.39,
-    "average_semantic_search_only_words_saved_percent": 83.25,
-    "average_semantic_search_plus_hydrate_bytes_saved_percent": 66.46,
-    "average_semantic_search_plus_hydrate_words_saved_percent": 74.98,
-    "median_hydrate_latency_ms": 170.42,
-    "median_search_latency_ms": 417.49,
-    "median_semantic_search_only_bytes_saved_percent": 79.42,
-    "median_semantic_search_plus_hydrate_bytes_saved_percent": 67.41,
+    "average_hydrate_latency_ms": 140.17,
+    "average_search_latency_ms": 252.37,
+    "average_semantic_search_only_bytes_saved_percent": 78.77,
+    "average_semantic_search_only_words_saved_percent": 83.72,
+    "average_semantic_search_plus_hydrate_bytes_saved_percent": 66.79,
+    "average_semantic_search_plus_hydrate_words_saved_percent": 75.28,
+    "median_hydrate_latency_ms": 137.56,
+    "median_search_latency_ms": 273.93,
+    "median_semantic_search_only_bytes_saved_percent": 80.94,
+    "median_semantic_search_plus_hydrate_bytes_saved_percent": 70.1,
     "query_count": 6
   }
 }

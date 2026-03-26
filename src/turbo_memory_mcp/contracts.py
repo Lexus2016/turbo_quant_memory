@@ -21,7 +21,14 @@ PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "search_memory")
 PHASE_3_TOOL_NAMES = PHASE_2_TOOL_NAMES + ("index_paths",)
 PHASE_4_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "index_paths")
-PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "hydrate", "index_paths")
+PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + (
+    "remember_note",
+    "promote_note",
+    "deprecate_note",
+    "semantic_search",
+    "hydrate",
+    "index_paths",
+)
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
@@ -141,6 +148,7 @@ def build_note_item_payload(
     payload: dict[str, object] = {
         "title": note["title"],
         "note_kind": note["note_kind"],
+        "note_status": note.get("note_status", "active"),
         "content_preview": content_preview,
         "tags": list(note.get("tags", [])),
         "scope": note["scope"],
@@ -155,6 +163,12 @@ def build_note_item_payload(
     }
     if note.get("promoted_from"):
         payload["promoted_from"] = dict(note["promoted_from"])
+    if note.get("deprecated_at"):
+        payload["deprecated_at"] = note["deprecated_at"]
+    if note.get("deprecation_reason"):
+        payload["deprecation_reason"] = note["deprecation_reason"]
+    if note.get("superseded_by"):
+        payload["superseded_by"] = dict(note["superseded_by"])
     return payload
 
 
@@ -224,6 +238,8 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
         payload["warning"] = item["warning"]
     if item.get("note_kind"):
         payload["note_kind"] = item["note_kind"]
+    if item.get("note_status"):
+        payload["note_status"] = item["note_status"]
     if item.get("promoted_from"):
         payload["promoted_from"] = dict(item["promoted_from"])
     return payload
@@ -264,6 +280,7 @@ def build_hydrated_note_item_payload(
         "item_id": note["note_id"],
         "title": note["title"],
         "note_kind": note["note_kind"],
+        "note_status": note.get("note_status", "active"),
         "source_path": source_path,
         "updated_at": note["updated_at"],
         "content": note["content"],
@@ -272,6 +289,12 @@ def build_hydrated_note_item_payload(
     }
     if note.get("promoted_from"):
         payload["promoted_from"] = dict(note["promoted_from"])
+    if note.get("deprecated_at"):
+        payload["deprecated_at"] = note["deprecated_at"]
+    if note.get("deprecation_reason"):
+        payload["deprecation_reason"] = note["deprecation_reason"]
+    if note.get("superseded_by"):
+        payload["superseded_by"] = dict(note["superseded_by"])
     return payload
 
 

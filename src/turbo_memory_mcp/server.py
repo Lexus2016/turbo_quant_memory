@@ -36,7 +36,8 @@ def build_server() -> MCPServer:
         SERVER_ID,
         instructions=(
             "Use remember_note(..., kind=..., scope=\"project\") to store typed project notes, "
-            "promote reusable knowledge into global scope, retrieve compact "
+            "promote reusable knowledge into global scope, deprecate stale notes without deleting "
+            "history, retrieve compact "
             "project/global/hybrid memory, hydrate fuller local context through "
             "hydrate(...), and index Markdown roots through index_paths(...)."
         ),
@@ -74,6 +75,22 @@ def build_server() -> MCPServer:
     @mcp.tool()
     def promote_note(note_id: str) -> dict[str, object]:
         return promote_note_impl(note_id)
+
+    @mcp.tool()
+    def deprecate_note(
+        note_id: str,
+        scope: str = "project",
+        replacement_note_id: str | None = None,
+        replacement_scope: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, object]:
+        return deprecate_note_impl(
+            note_id,
+            scope=scope,
+            replacement_note_id=replacement_note_id,
+            replacement_scope=replacement_scope,
+            reason=reason,
+        )
 
     @mcp.tool()
     def semantic_search(
@@ -190,6 +207,52 @@ def promote_note_impl(
     )
 
 
+def deprecate_note_impl(
+    note_id: str,
+    *,
+    scope: str = PROJECT_SCOPE,
+    replacement_note_id: str | None = None,
+    replacement_scope: str | None = None,
+    reason: str | None = None,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    resolved_note_id = note_id.strip()
+    if not resolved_note_id:
+        raise ValueError("deprecate_note requires a non-empty note_id.")
+
+    resolved_scope = _normalize_scope(scope)
+    if resolved_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE}:
+        raise ValueError(f"deprecate_note only supports scope='{PROJECT_SCOPE}' or scope='{GLOBAL_SCOPE}'.")
+
+    resolved_replacement_scope = None
+    if replacement_scope is not None:
+        resolved_replacement_scope = _normalize_scope(replacement_scope)
+        if resolved_replacement_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE}:
+            raise ValueError("replacement_scope must be 'project' or 'global'.")
+
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    note = store.deprecate_note(
+        resolved_note_id,
+        scope=resolved_scope,
+        replacement_note_id=replacement_note_id,
+        replacement_scope=resolved_replacement_scope,
+        reason=reason,
+    )
+    if resolved_scope == PROJECT_SCOPE:
+        sync_project_retrieval(store)
+    else:
+        sync_global_retrieval(store)
+
+    action = "superseded" if note["note_status"] == "superseded" else "archived"
+    return build_note_write_payload(
+        note,
+        source_path=str(store.note_source_path(note)),
+        action=action,
+        content_preview=build_content_preview(note["content"]),
+    )
+
+
 def semantic_search_impl(
     query: str,
     *,
@@ -248,8 +311,10 @@ def build_current_project_payload(project: ProjectIdentity) -> dict[str, object]
 
 
 def collect_storage_stats(store: MemoryStore) -> dict[str, object]:
-    project_notes = store.list_notes(PROJECT_SCOPE)
-    global_notes = store.list_notes(GLOBAL_SCOPE)
+    project_notes = store.list_notes(PROJECT_SCOPE, include_inactive=True)
+    global_notes = store.list_notes(GLOBAL_SCOPE, include_inactive=True)
+    active_project_notes = [note for note in project_notes if note["note_status"] == "active"]
+    active_global_notes = [note for note in global_notes if note["note_status"] == "active"]
     markdown_roots = store.list_markdown_roots()
     markdown_files = store.list_markdown_file_manifests()
     markdown_blocks = store.list_markdown_blocks()
@@ -257,14 +322,22 @@ def collect_storage_stats(store: MemoryStore) -> dict[str, object]:
 
     return {
         "project": {
-            "note_count": len(project_notes),
+            "note_count": len(active_project_notes),
+            "total_note_count": len(project_notes),
+            "inactive_note_count": len(project_notes) - len(active_project_notes),
+            "archived_note_count": sum(1 for note in project_notes if note["note_status"] == "archived"),
+            "superseded_note_count": sum(1 for note in project_notes if note["note_status"] == "superseded"),
             "markdown_root_count": len(markdown_roots),
             "markdown_file_count": len(markdown_files),
             "markdown_block_count": len(markdown_blocks),
             "retrieval_row_count": retrieval_index.count_rows(PROJECT_SCOPE),
         },
         "global": {
-            "note_count": len(global_notes),
+            "note_count": len(active_global_notes),
+            "total_note_count": len(global_notes),
+            "inactive_note_count": len(global_notes) - len(active_global_notes),
+            "archived_note_count": sum(1 for note in global_notes if note["note_status"] == "archived"),
+            "superseded_note_count": sum(1 for note in global_notes if note["note_status"] == "superseded"),
             "retrieval_row_count": retrieval_index.count_rows(GLOBAL_SCOPE),
         },
     }
@@ -278,8 +351,8 @@ def collect_index_status(
     stats = dict(storage_stats or collect_storage_stats(store))
     project_stats = dict(stats["project"])
     global_stats = dict(stats["global"])
-    project_notes = store.list_notes(PROJECT_SCOPE)
-    global_notes = store.list_notes(GLOBAL_SCOPE)
+    project_notes = store.list_notes(PROJECT_SCOPE, include_inactive=True)
+    global_notes = store.list_notes(GLOBAL_SCOPE, include_inactive=True)
     markdown_files = store.list_markdown_file_manifests()
 
     root_count = int(project_stats["markdown_root_count"])
@@ -348,6 +421,7 @@ __all__ = [
     "collect_index_status",
     "collect_storage_stats",
     "build_content_preview",
+    "deprecate_note_impl",
     "hydrate_impl",
     "index_paths_impl",
     "promote_note_impl",

@@ -22,6 +22,7 @@ EXPECTED_TOOL_NAMES = [
     "self_test",
     "remember_note",
     "promote_note",
+    "deprecate_note",
     "semantic_search",
     "hydrate",
     "index_paths",
@@ -154,6 +155,38 @@ async def run_smoke() -> list[str]:
                         },
                     )
                 )
+                replacement_note = result_payload(
+                    await session.call_tool(
+                        "remember_note",
+                        {
+                            "title": "Updated Smoke Note",
+                            "content": "Packaged install flow uses turbo-memory-mcp serve after installation.",
+                            "kind": "lesson",
+                            "tags": ["smoke", "install", "runtime"],
+                        },
+                    )
+                )
+                deprecated = result_payload(
+                    await session.call_tool(
+                        "deprecate_note",
+                        {
+                            "note_id": remembered["item"]["item_id"],
+                            "scope": "project",
+                            "replacement_note_id": replacement_note["item"]["item_id"],
+                            "reason": "Superseded by packaged install guidance.",
+                        },
+                    )
+                )
+                lifecycle_search = result_payload(
+                    await session.call_tool(
+                        "semantic_search",
+                        {
+                            "query": "packaged install runtime",
+                            "scope": "project",
+                            "limit": 5,
+                        },
+                    )
+                )
                 idle_incremental = result_payload(
                     await session.call_tool(
                         "index_paths",
@@ -199,7 +232,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "hybrid", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 9, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 10, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
@@ -283,15 +316,36 @@ async def run_smoke() -> list[str]:
     expect(note_hydrate["status"] == "ok", f"hydrate note status mismatch: {note_hydrate}")
     expect(note_hydrate["source_kind"] == "memory_note", f"hydrate note source mismatch: {note_hydrate}")
     expect(note_hydrate["item"]["note_kind"] == "pattern", f"hydrate note kind mismatch: {note_hydrate}")
+    expect(note_hydrate["item"]["note_status"] == "active", f"hydrate note status mismatch: {note_hydrate}")
     expect(
         note_hydrate["item"]["content"] == "Phase 5 namespace smoke checks hydration and project/global memory ordering.",
         f"hydrate note content mismatch: {note_hydrate}",
     )
     expect(note_hydrate["neighbors_before"] == [], f"hydrate note neighbors_before mismatch: {note_hydrate}")
     expect(note_hydrate["neighbors_after"] == [], f"hydrate note neighbors_after mismatch: {note_hydrate}")
+    expect(replacement_note["item"]["note_status"] == "active", f"replacement note status mismatch: {replacement_note}")
+    expect(deprecated["action"] == "superseded", f"deprecate_note action mismatch: {deprecated}")
+    expect(deprecated["item"]["note_status"] == "superseded", f"deprecate_note status mismatch: {deprecated}")
+    expect(
+        deprecated["item"]["superseded_by"]["note_id"] == replacement_note["item"]["item_id"],
+        f"deprecate_note superseded_by mismatch: {deprecated}",
+    )
+    expect(lifecycle_search["result_count"] >= 1, f"lifecycle semantic_search mismatch: {lifecycle_search}")
+    expect(
+        lifecycle_search["items"][0]["item_id"] == replacement_note["item"]["item_id"],
+        f"lifecycle replacement ordering mismatch: {lifecycle_search}",
+    )
+    expect(
+        lifecycle_search["items"][0]["note_status"] == "active",
+        f"lifecycle note_status mismatch: {lifecycle_search}",
+    )
     expect(
         server_info_after["storage_stats"]["project"]["note_count"] == 1,
         f"server_info project note_count mismatch: {server_info_after}",
+    )
+    expect(
+        server_info_after["storage_stats"]["project"]["superseded_note_count"] == 1,
+        f"server_info project superseded_note_count mismatch: {server_info_after}",
     )
     expect(
         server_info_after["storage_stats"]["global"]["note_count"] == 1,
@@ -369,6 +423,7 @@ async def run_smoke() -> list[str]:
         f"PASS promote_note: {promoted['item']['item_id']} in {promoted['item']['scope']}",
         f"PASS semantic_search hybrid: {hybrid_search['items'][0]['scope']} before {hybrid_search['items'][1]['scope']}",
         f"PASS hydrate note: {note_hydrate['item']['item_id']} mode={note_hydrate['mode']}",
+        f"PASS deprecate_note: {deprecated['item']['item_id']} -> {replacement_note['item']['item_id']}",
         f"PASS server_info stats: project_rows={server_info_after['storage_stats']['project']['retrieval_row_count']}",
         f"PASS index_paths full: {full_index['indexed_files']} files / {full_index['block_count']} blocks",
         f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
