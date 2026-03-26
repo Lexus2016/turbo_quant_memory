@@ -77,14 +77,14 @@ Turbo Quant Memory допомагає AI-агентам пам’ятати ва
 Рекомендоване встановлення релізної версії з GitHub-тега:
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
 turbo-memory-mcp serve
 ```
 
 Резервний шлях через `pip`:
 
 ```bash
-python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
+python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
 turbo-memory-mcp serve
 ```
 

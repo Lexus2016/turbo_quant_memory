@@ -1,8 +1,8 @@
 # Launch Codex in the target repository, use `codex -C <repo-root> ...`,
 # or set `TQMEMORY_PROJECT_ROOT` explicitly if the MCP process starts elsewhere.
 # The repository path is resolved from the process working directory, not from `args`.
-# Expected user install path: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
-# or `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`.
+# Expected user install path: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`
+# or `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`.
 [mcp_servers.tqmemory]
 command = "turbo-memory-mcp"
 args = ["serve"]

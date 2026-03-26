@@ -77,14 +77,14 @@ These are real measurements for this repository and this implementation. They ar
 Recommended release install from GitHub tag:
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
 turbo-memory-mcp serve
 ```
 
 `pip` fallback:
 
 ```bash
-python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1
+python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
 turbo-memory-mcp serve
 ```
 

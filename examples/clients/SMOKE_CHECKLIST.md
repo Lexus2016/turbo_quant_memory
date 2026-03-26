@@ -6,12 +6,12 @@ Install the packaged CLI before wiring the MCP server into a client:
 
 Спочатку встановіть packaged CLI, а вже потім підключайте MCP-сервер до клієнта:
 
-1. Primary / Основний шлях: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
-2. Fallback / Резервний шлях: `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
+1. Primary / Основний шлях: `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`
+2. Fallback / Резервний шлях: `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`
 
 Pinned release install / Інсталяція з release tag:
 
-- `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.1`
+- `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`
 
 Run contract after install / Команда запуску після інсталяції:
 
