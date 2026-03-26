@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** Phase 3 completed; Phase 4 planned
+**Status:** Phase 4 completed; ready for Phase 5 discussion
 
 ## Overview
 
@@ -69,7 +69,7 @@
 
 **Goal:** Let agents retrieve compact high-signal memory results with clear provenance while avoiding default raw-file dumps.
 
-**Status:** Planned (2026-03-26)
+**Status:** Complete (2026-03-26)
 
 **Requirements:** `RET-01`, `RET-02`, `SAFE-01`, `SAFE-02`
 
@@ -117,4 +117,4 @@
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
 
 ---
-*Last updated: 2026-03-26 after Phase 3 execution*
+*Last updated: 2026-03-26 after Phase 4 execution*

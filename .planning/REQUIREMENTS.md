@@ -27,8 +27,8 @@
 
 ### Retrieval
 
-- [ ] **RET-01**: Agent can run semantic search and receive the top relevant blocks with score, source path, and block ID. / Агент може виконати semantic search і отримати top-relevant блоки зі score, source path і block ID.
-- [ ] **RET-02**: Agent can request a compressed context card for a block that removes low-signal noise while preserving the key meaning. / Агент може запросити compressed context card для блока, яка прибирає low-signal шум і зберігає ключовий зміст.
+- [x] **RET-01**: Agent can run semantic search and receive the top relevant blocks with score, source path, and block ID. / Агент може виконати semantic search і отримати top-relevant блоки зі score, source path і block ID.
+- [x] **RET-02**: Agent can request a compressed context card for a block that removes low-signal noise while preserving the key meaning. / Агент може запросити compressed context card для блока, яка прибирає low-signal шум і зберігає ключовий зміст.
 - [ ] **RET-03**: Agent can hydrate a fuller block or source excerpt on demand when the compressed result is insufficient. / Агент може за потреби hydrate-нути повніший блок або source excerpt, коли стислого результату недостатньо.
 - [ ] **RET-04**: Agent can request related blocks around a result to recover local neighbourhood context. / Агент може запитати related blocks навколо результату, щоб відновити локальний neighbourhood context.
 
@@ -39,8 +39,8 @@
 
 ### Safety
 
-- [ ] **SAFE-01**: Every returned result includes source provenance that lets the agent or user trace it back to the original file and block. / Кожен повернений результат містить provenance до джерела, щоб агент або користувач могли відстежити його до оригінального файла і блока.
-- [ ] **SAFE-02**: The server avoids returning full raw files by default and instead requires explicit hydration calls for larger context. / Сервер не повертає повні сирі файли за замовчуванням і вимагає явного hydration-виклику для більшого контексту.
+- [x] **SAFE-01**: Every returned result includes source provenance that lets the agent or user trace it back to the original file and block. / Кожен повернений результат містить provenance до джерела, щоб агент або користувач могли відстежити його до оригінального файла і блока.
+- [x] **SAFE-02**: The server avoids returning full raw files by default and instead requires explicit hydration calls for larger context. / Сервер не повертає повні сирі файли за замовчуванням і вимагає явного hydration-виклику для більшого контексту.
 
 ### Operations
 
@@ -88,10 +88,10 @@
 | ING-01 | Phase 3 | Complete |
 | ING-02 | Phase 3 | Complete |
 | ING-03 | Phase 3 | Complete |
-| RET-01 | Phase 4 | Pending |
-| RET-02 | Phase 4 | Pending |
-| SAFE-01 | Phase 4 | Pending |
-| SAFE-02 | Phase 4 | Pending |
+| RET-01 | Phase 4 | Complete |
+| RET-02 | Phase 4 | Complete |
+| SAFE-01 | Phase 4 | Complete |
+| SAFE-02 | Phase 4 | Complete |
 | RET-03 | Phase 5 | Pending |
 | RET-04 | Phase 5 | Pending |
 | MEM-01 | Phase 5 | Pending |
@@ -106,4 +106,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-26 after Phase 3 execution*
+*Last updated: 2026-03-26 after Phase 4 execution*
