@@ -2,6 +2,11 @@
 
 ![Turbo Quant Memory hero](assets/readme-hero-en.svg)
 
+[![Latest release](https://img.shields.io/github/v/release/Lexus2016/turbo_quant_memory?display_name=tag&label=release)](https://github.com/Lexus2016/turbo_quant_memory/releases)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)](https://www.python.org/downloads/)
+[![MCP server](https://img.shields.io/badge/MCP-stdio-0A7B83)](https://modelcontextprotocol.io/)
+[![Local-first](https://img.shields.io/badge/storage-local--first-2F855A)](https://github.com/Lexus2016/turbo_quant_memory)
+
 Other languages: [Russian](README.ru.md) | [Ukrainian](README.uk.md)
 
 AI coding tools are fast. Their memory is not.
@@ -9,6 +14,8 @@ AI coding tools are fast. Their memory is not.
 Turbo Quant Memory gives Claude Code, Codex, Cursor, and other MCP clients a durable memory layer so they stop paying the same context tax again and again.
 
 If you use AI agents every day, memory stops being a nice extra and becomes part of your core workflow.
+
+Quick links: [Install](#install) | [Connect a client](#connect-a-client) | [Benchmarks](#proof-from-this-repository) | [Technical spec](TECHNICAL_SPEC.md) | [Memory strategy](MEMORY_STRATEGY.md)
 
 ## Why This Matters
 

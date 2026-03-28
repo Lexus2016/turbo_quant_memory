@@ -5,15 +5,45 @@ build-backend = "hatchling.build"
 [project]
 name = "turbo-memory-mcp"
 version = "0.2.2"
-description = "Local-first stdio MCP server for Turbo Quant Memory for AI Agents."
-readme = "TECHNICAL_SPEC.md"
+description = "Local-first MCP memory server for AI coding agents with compact retrieval and project/global scopes."
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = [
+  "mcp",
+  "model-context-protocol",
+  "ai-agents",
+  "agent-memory",
+  "semantic-search",
+  "retrieval",
+  "codex",
+  "claude-code",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
   "lancedb>=0.30.1,<0.31",
   "markdown-it-py>=4.0.0,<5.0",
   "mcp>=1.12.4,<2.0",
   "sentence-transformers>=5.3.0,<6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Lexus2016/turbo_quant_memory"
+Documentation = "https://github.com/Lexus2016/turbo_quant_memory#readme"
+Repository = "https://github.com/Lexus2016/turbo_quant_memory"
+Issues = "https://github.com/Lexus2016/turbo_quant_memory/issues"
+Changelog = "https://github.com/Lexus2016/turbo_quant_memory/releases"
 
 [project.scripts]
 turbo-memory-mcp = "turbo_memory_mcp.cli:main"
