@@ -9,228 +9,116 @@
 
 Other languages: [Russian](README.ru.md) | [Ukrainian](README.uk.md)
 
-AI coding tools are fast. Their memory is not.
+Turbo Quant Memory is a local-first memory layer for AI coding agents such as Claude Code, Codex, Cursor, and other MCP clients.
 
-Turbo Quant Memory gives Claude Code, Codex, Cursor, and other MCP clients a durable memory layer so they stop paying the same context tax again and again.
+It helps the agent remember project knowledge, search smaller context first, and open more only when the task really needs it.
 
-If you use AI agents every day, memory stops being a nice extra and becomes part of your core workflow.
+> The goal is simple: less repeated reading, more useful work.
 
-Quick links: [Install](#install) | [Connect a client](#connect-a-client) | [Benchmarks](#proof-from-this-repository) | [Technical spec](TECHNICAL_SPEC.md) | [Memory strategy](MEMORY_STRATEGY.md)
+Quick links: [What it does](#what-it-does) | [Install](#install) | [Connect a client](#connect-a-client) | [Benchmarks](#benchmarks-from-this-repository) | [Technical spec](TECHNICAL_SPEC.md) | [Memory strategy](MEMORY_STRATEGY.md)
 
-## Why This Matters
+## What It Does
 
-Without a memory layer, teams keep paying for the same problems:
+| Without a memory layer | With Turbo Quant Memory |
+|---|---|
+| Every task starts by reopening files and old chats | The agent can start from saved project knowledge |
+| Decisions disappear into chat history | Important decisions become searchable notes |
+| Reuse across projects is manual | Good patterns can be promoted into `global` memory |
+| Context windows fill with repeated material | `semantic_search` stays compact and `hydrate` opens more only when needed |
 
-- agents re-read too much source material before they can act
-- earlier decisions disappear between sessions
-- useful lessons stay trapped in old chats
-- every new task starts by rebuilding context from scratch
+## How It Works
 
-Turbo Quant Memory turns that repeated overhead into reusable infrastructure.
+| Step | What happens |
+|---|---|
+| 1. Install once | Run the MCP server locally on your machine |
+| 2. Connect one client | Claude Code, Codex, Cursor, OpenCode, and other MCP clients can use the same server |
+| 3. Work normally | You describe the task in plain language, not as shell commands |
+| 4. Search small first | The agent can call `semantic_search` before opening full files |
+| 5. Save what matters | Decisions, lessons, handoffs, and patterns can be written back as notes |
 
-## What You Get
-
-- Smaller default context: compact retrieval first, fuller context only when you explicitly ask for it
-- Persistent project memory: decisions, lessons, handoffs, and repeatable patterns
-- Reusable knowledge: promote proven notes from the current project into a global namespace
-- Local control: data stays on your machine under `~/.turbo-quant-memory/`
-- Operator visibility: health checks, storage stats, freshness status, and smoke validation
-- Multi-client support: one MCP server for Claude Code, Codex, Cursor, OpenCode, and more
-
-## The Product Pitch in One Sentence
-
-Turbo Quant Memory helps AI coding agents remember what matters, retrieve less by default, and escalate to full context only when the task really needs it.
-
-## Why Teams Keep It
-
-- It reduces repeated context loading.
-- It makes agent sessions feel less stateless.
-- It gives important project knowledge a durable home outside chat history.
-- It keeps retrieval structured instead of turning every task into a full-file dump.
-- It gives you a memory workflow you can inspect, test, and trust.
-
-## Proof From This Repository
+## Benchmarks From This Repository
 
 The repository includes a real benchmark run in [benchmarks/latest.md](benchmarks/latest.md) and [benchmarks/latest.json](benchmarks/latest.json).
 
-Current benchmark snapshot:
+![Benchmark summary](benchmarks/summary-en.svg)
 
-- Corpus size: 9 Markdown files, 138 indexed blocks
-- Full index time: 4.00 s
-- Idle incremental time: 0.68 s
-- Average `semantic_search` latency: 75.14 ms
-- Average `hydrate` latency: 41.71 ms
-- Average byte savings with `semantic_search` only: 78.02%
-- Average byte savings with `semantic_search + hydrate(top1)`: 63.41%
-- Average word savings with `semantic_search` only: 83.84%
-- Average word savings with `semantic_search + hydrate(top1)`: 74.76%
+| Metric | Result | Why it matters |
+|---|---:|---|
+| Corpus | 9 files · 138 blocks | Real repository data, not a toy example |
+| Full index | 4.0 s | Initial indexing is short |
+| Idle incremental | 0.68 s | Refresh after small changes is light |
+| Avg `semantic_search` | 75.14 ms | Fast enough to use by default |
+| Avg `hydrate` | 41.71 ms | Opening more context stays cheap |
+| Search-only byte savings | 78.02% | Much less text goes to the model |
+| Search + hydrate byte savings | 63.41% | Even the guided path stays much smaller than opening full files |
 
-What those numbers mean:
+What to take from these numbers:
 
-- the default retrieval path is much smaller than opening full source files
-- even after hydrating the top hit, the guided path still stays materially smaller than the naive path
-- you keep more context budget for actual reasoning instead of spending it on repeated file reads
-
-Benchmark method:
-
-- Baseline without guided memory: open the full source text of every unique Markdown file represented in the top-5 project search hits
-- Compact path: keep only the `semantic_search` response
-- Guided path: use `semantic_search` and then `hydrate` the top Markdown hit
+- the compact path is dramatically smaller than naive full-file reading
+- even after opening the best hit, the guided path still saves a lot of context
+- more context budget stays available for reasoning instead of repeated reading
 
 These are real measurements for this repository and this implementation. They are not a universal guarantee for every codebase.
 
 ## Install
 
-Recommended release install from GitHub tag:
-
-```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
-turbo-memory-mcp serve
-```
-
-`pip` fallback:
-
-```bash
-python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2
-turbo-memory-mcp serve
-```
-
-Developer setup from source:
-
-```bash
-uv sync
-uv run turbo-memory-mcp serve
-```
-
-Editable `pip` setup from source:
-
-```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -e .
-python -m turbo_memory_mcp serve
-```
+| Best for | Commands |
+|---|---|
+| Released install with `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
+| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
+| Local development | `uv sync`<br>`uv run turbo-memory-mcp serve` |
+| Editable source install | `python -m venv .venv`<br>`. .venv/bin/activate`<br>`pip install -e .`<br>`python -m turbo_memory_mcp serve` |
 
 ## Connect a Client
 
-Server id:
+Server id: `tqmemory`  
+Runtime command: `turbo-memory-mcp serve`
 
-- `tqmemory`
+| Client | Quick start | Ready file |
+|---|---|---|
+| Claude Code | `claude mcp add --scope user tqmemory -- turbo-memory-mcp serve` | [examples/clients/claude.project.mcp.json](examples/clients/claude.project.mcp.json) |
+| Codex | `codex mcp add tqmemory -- turbo-memory-mcp serve` | [examples/clients/codex.config.toml](examples/clients/codex.config.toml) |
+| Cursor | Use the fixture file | [examples/clients/cursor.project.mcp.json](examples/clients/cursor.project.mcp.json) |
+| OpenCode | Use the fixture file | [examples/clients/opencode.config.json](examples/clients/opencode.config.json) |
+| Antigravity | Use the fixture file | [examples/clients/antigravity.mcp.json](examples/clients/antigravity.mcp.json) |
 
-Runtime command:
+Smoke checklist: [examples/clients/SMOKE_CHECKLIST.md](examples/clients/SMOKE_CHECKLIST.md)
 
-- `turbo-memory-mcp serve`
+After setup, you just talk to the agent normally. If memory is relevant, the agent can call `tqmemory` automatically in the background.
 
-Quick examples:
+## Useful Prompts
 
-- Claude Code: `claude mcp add --scope user tqmemory -- turbo-memory-mcp serve`
-- Codex: `codex mcp add tqmemory -- turbo-memory-mcp serve`
+| Goal | Say this |
+|---|---|
+| First time in a repository | `Index this repository and tell me what memory is now available for future tasks.` |
+| Before changing code | `Before you edit anything, check this project's memory for previous decisions about auth, sessions, and retries, then summarize the important points.` |
+| Find the right source first | `Find the payment webhook flow in this project, open the most relevant memory hit, and explain what the current implementation does.` |
+| Save a decision | `Save a decision note titled "Webhook retry policy" with the summary of the approach we just agreed on.` |
+| Reuse knowledge across projects | `If the note we just created is reusable across projects, promote it to global memory.` |
 
-After you install the MCP server and connect it to the client, memory becomes part of the agent's toolset.
+## Simple Mental Model
 
-You do not need to run separate commands, open a second window, or manually turn memory on for each task.
-
-From that point on, you just talk to the agent normally. When memory is relevant, the agent can call `tqmemory` automatically.
-
-If you want to be explicit, you can still say "use project memory" or mention `tqmemory`, but that is optional, not required.
-
-Ready-made client fixtures:
-
-- [examples/clients/claude.project.mcp.json](examples/clients/claude.project.mcp.json)
-- [examples/clients/codex.config.toml](examples/clients/codex.config.toml)
-- [examples/clients/cursor.project.mcp.json](examples/clients/cursor.project.mcp.json)
-- [examples/clients/opencode.config.json](examples/clients/opencode.config.json)
-- [examples/clients/antigravity.mcp.json](examples/clients/antigravity.mcp.json)
-
-Smoke checklist:
-
-- [examples/clients/SMOKE_CHECKLIST.md](examples/clients/SMOKE_CHECKLIST.md)
-
-## What to Tell Codex
-
-You do not talk to the MCP server with shell commands.
-
-You talk to Codex in normal language, and Codex calls the MCP tools when needed.
-
-The important part is this: after MCP is connected, you do not need a special activation phrase for every task.
-
-In normal use, you simply describe the task. If memory can help, Codex should use it automatically.
-
-Good prompt patterns:
-
-1. First time in a repository
-
-```text
-Index this repository and tell me what memory is now available for future tasks.
-```
-
-2. Before changing code
-
-```text
-Before you edit anything, check this project's memory for previous decisions about auth, sessions, and retries, then summarize the important points.
-```
-
-3. When you want Codex to find the right source first
-
-```text
-Find the payment webhook flow in this project, open the most relevant memory hit, and explain what the current implementation does.
-```
-
-4. When you want to save a decision
-
-```text
-Save a decision note titled "Webhook retry policy" with the summary of the approach we just agreed on.
-```
-
-5. When you want reusable knowledge, not just project-local memory
-
-```text
-If the note we just created is reusable across projects, promote it to global memory.
-```
-
-6. When you want a full workflow in one request
-
-```text
-Search for everything relevant to caching in this repository, open the best result, then propose the code change using that context.
-```
-
-7. When you want to be explicit, but still write like a normal person
-
-```text
-Use project memory before you answer. Search for earlier decisions about caching and retries, then continue with the change.
-```
-
-## Simple Human Workflow
-
-- Install the MCP server once and connect it to your agent.
-- After that, work with Codex normally. You describe the task, and memory can be used automatically in the background.
-- On a new repository, it is still useful to ask for an initial index so the memory has something to search.
-- Before risky edits, you can ask the agent to check project memory first.
-- After important decisions, ask the agent to save them so future sessions do not lose them.
-- By default, project indexing skips historical and low-signal folders such as `.planning`, `.serena`, and generated benchmark reports, so active retrieval stays focused on live docs and notes.
-
-In practice, the easiest mental model is this:
-
-- `semantic_search` is for finding
-- `hydrate` is for opening
-- `remember_note` is for saving
-- `promote_note` is for reusing later
-- `deprecate_note` is for retiring stale memory without deleting history
+| Tool | Human meaning |
+|---|---|
+| `semantic_search` | Find the smallest useful piece of context first |
+| `hydrate` | Open more of that context only when needed |
+| `remember_note` | Save something important for later |
+| `promote_note` | Reuse a proven note across projects |
+| `deprecate_note` | Retire old knowledge without deleting history |
 
 ## When Memory Gets Outdated
 
 - Save the new correct knowledge as a fresh note.
 - Use `deprecate_note` on the old note when it should stop appearing in active search.
 - If the old note has a direct replacement, pass the replacement note id so the old record becomes `superseded` instead of just archived.
-- This keeps history available for audit while making `semantic_search` prefer the current truth.
 
 ## Technical Details
 
-Namespace model:
-
-- `project`: repository-local notes for the current codebase
-- `global`: reusable notes promoted explicitly from `project`
-- `hybrid`: merged retrieval across `project` and `global` with a strong project bias
+| Namespace | Meaning |
+|---|---|
+| `project` | Repository-local notes for the current codebase |
+| `global` | Reusable notes promoted explicitly from `project` |
+| `hybrid` | Merged retrieval across `project` and `global` with a strong project bias |
 
 Current project resolution order:
 
@@ -238,22 +126,20 @@ Current project resolution order:
 2. Repository root path hash when no remote exists
 3. Explicit overrides through `TQMEMORY_PROJECT_ROOT`, `TQMEMORY_PROJECT_ID`, and `TQMEMORY_PROJECT_NAME`
 
-Tool catalog:
+| Tool | Purpose |
+|---|---|
+| `health` | Check server and storage health |
+| `server_info` | Show runtime and project info |
+| `list_scopes` | List available memory scopes |
+| `self_test` | Validate the server quickly |
+| `remember_note` | Save a typed note |
+| `promote_note` | Reuse a proven note globally |
+| `deprecate_note` | Retire outdated knowledge |
+| `semantic_search` | Retrieve compact context |
+| `hydrate` | Open more of a selected result |
+| `index_paths` | Index markdown roots |
 
-- `health`
-- `server_info`
-- `list_scopes`
-- `self_test`
-- `remember_note`
-- `promote_note`
-- `deprecate_note`
-- `semantic_search`
-- `hydrate`
-- `index_paths`
-
-Storage location:
-
-- `~/.turbo-quant-memory/`
+Storage location: `~/.turbo-quant-memory/`
 
 Repository verification commands:
 

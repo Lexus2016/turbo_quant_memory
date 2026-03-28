@@ -7,6 +7,24 @@
 
 ![Benchmark summary](summary-en.svg)
 
+## At a Glance
+
+| Metric | Result | Why it matters |
+|---|---:|---|
+| Corpus | 9 files · 138 blocks | This is measured on the real repository corpus |
+| Full index | 4.00 s | First-time indexing is short |
+| Idle incremental | 0.68 s | Re-indexing after small changes is light |
+| Avg `semantic_search` | 75.14 ms | Fast enough to use as the default retrieval path |
+| Avg `hydrate` | 41.71 ms | Opening more context stays cheap |
+| Search-only byte savings | 78.02% | Much less text is sent to the model |
+| Search + hydrate byte savings | 63.41% | Even the guided path stays clearly smaller than opening full files |
+
+## What These Results Mean
+
+- The compact retrieval path is much smaller than naive full-file opening.
+- Even after hydrating the top hit, the guided path still saves a lot of context.
+- More of the model's context window stays available for reasoning instead of repeated reading.
+
 ## Aggregate Savings
 
 | Strategy | Average byte savings | Median byte savings | Average word savings |
@@ -27,7 +45,10 @@
 
 ## Method
 
-- Baseline without MCP: open the full source text of every unique Markdown file represented in the top-5 project search hits.
-- Compact MCP path: use the `semantic_search` response only.
-- Guided MCP path: use `semantic_search` and then `hydrate` only for the top Markdown hit.
-- Savings are measured against the baseline using real UTF-8 byte counts and whitespace-delimited word counts taken from this repository corpus.
+| Path | What it does |
+|---|---|
+| Baseline without MCP | Open the full source text of every unique Markdown file represented in the top-5 project search hits |
+| Compact MCP path | Use the `semantic_search` response only |
+| Guided MCP path | Use `semantic_search` and then `hydrate` only for the top Markdown hit |
+
+Savings are measured against the baseline using real UTF-8 byte counts and whitespace-delimited word counts taken from this repository corpus.
