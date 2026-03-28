@@ -1,11 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
   <title id="title">Знімок benchmark</title>
-  <desc id="desc">Реальні вимірювання репозиторію</desc>
+  <desc id="desc">Реальні вимірювання репозиторію з читабельними картками та смугами економії контексту.</desc>
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#07111f"/>
       <stop offset="55%" stop-color="#0b2840"/>
       <stop offset="100%" stop-color="#0d4d63"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#173550"/>
+      <stop offset="100%" stop-color="#20415c"/>
     </linearGradient>
     <linearGradient id="bar1" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" stop-color="#53d6ff"/>
@@ -18,10 +22,11 @@
     <style>
       .title { font: 700 56px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }
       .subtitle { font: 500 24px 'Segoe UI', Arial, sans-serif; fill: #a4ebff; }
-      .statLabel { font: 600 20px 'Segoe UI', Arial, sans-serif; fill: #9fe7ff; }
-      .statValue { font: 700 38px 'Segoe UI', Arial, sans-serif; fill: #f8fcff; }
-      .barLabel { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #f4fbff; }
-      .barMeta { font: 500 19px 'Segoe UI', Arial, sans-serif; fill: #cbe2f0; }
+      .kpiLabel { font: 600 22px 'Segoe UI', Arial, sans-serif; fill: #9fe7ff; }
+      .kpiValue { font: 700 48px 'Segoe UI', Arial, sans-serif; fill: #f8fcff; }
+      .kpiMeta { font: 500 20px 'Segoe UI', Arial, sans-serif; fill: #cfe3f1; }
+      .barLabel { font: 700 30px 'Segoe UI', Arial, sans-serif; fill: #f4fbff; }
+      .barMeta { font: 500 20px 'Segoe UI', Arial, sans-serif; fill: #cbe2f0; }
       .percent { font: 700 34px 'Segoe UI', Arial, sans-serif; fill: #faffff; }
     </style>
   </defs>
@@ -31,34 +36,38 @@
   <text x="70" y="90" class="title">Знімок benchmark</text>
   <text x="70" y="126" class="subtitle">Реальні вимірювання репозиторію</text>
 
-  <rect x="70" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
-  <rect x="370" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
-  <rect x="670" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
-  <rect x="970" y="170" rx="24" ry="24" width="270" height="120" fill="#11344a"/>
+  <rect x="70" y="170" rx="24" ry="24" width="610" height="126" fill="url(#card)"/>
+  <rect x="720" y="170" rx="24" ry="24" width="610" height="126" fill="url(#card)"/>
+  <rect x="70" y="316" rx="24" ry="24" width="610" height="126" fill="url(#card)"/>
+  <rect x="720" y="316" rx="24" ry="24" width="610" height="126" fill="url(#card)"/>
 
-  <text x="95" y="215" class="statLabel">Корпус</text>
-  <text x="95" y="255" class="statValue">9 файлів · 138 блоків</text>
+  <text x="96" y="215" class="kpiLabel">Корпус</text>
+  <text x="96" y="260" class="kpiValue">9 файлів</text>
+  <text x="96" y="286" class="kpiMeta">138 індексованих блоків</text>
 
-  <text x="395" y="215" class="statLabel">Повна індексація</text>
-  <text x="395" y="255" class="statValue">4.0 с</text>
+  <text x="746" y="215" class="kpiLabel">Повна індексація</text>
+  <text x="746" y="260" class="kpiValue">4.0 с</text>
+  <text x="746" y="286" class="kpiMeta">перший повний прохід</text>
 
-  <text x="695" y="215" class="statLabel">Середній пошук</text>
-  <text x="695" y="255" class="statValue">75.14 мс</text>
+  <text x="96" y="361" class="kpiLabel">Середній пошук</text>
+  <text x="96" y="406" class="kpiValue">75.14 мс</text>
+  <text x="96" y="432" class="kpiMeta">затримка `semantic_search`</text>
 
-  <text x="995" y="215" class="statLabel">Середній hydrate</text>
-  <text x="995" y="255" class="statValue">41.71 мс</text>
+  <text x="746" y="361" class="kpiLabel">Середній hydrate</text>
+  <text x="746" y="406" class="kpiValue">41.71 мс</text>
+  <text x="746" y="432" class="kpiMeta">затримка `hydrate`</text>
 
-  <text x="70" y="380" class="barLabel">Лише пошук</text>
-  <text x="70" y="415" class="barMeta">середня економія по байтах</text>
-  <rect x="70" y="445" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
-  <rect x="70" y="445" rx="24" ry="24" width="827.0" height="56" fill="url(#bar1)"/>
-  <text x="1215" y="482" class="percent">78.02%</text>
-  <text x="70" y="532" class="barMeta">середня економія по словах: 83.84%</text>
+  <text x="70" y="500" class="barLabel">Лише пошук</text>
+  <text x="70" y="535" class="barMeta">середня економія по байтах</text>
+  <rect x="70" y="560" rx="24" ry="24" width="980" height="52" fill="#123248"/>
+  <rect x="70" y="560" rx="24" ry="24" width="764.6" height="52" fill="url(#bar1)"/>
+  <text x="1230" y="597" class="percent" text-anchor="end">78.02%</text>
+  <text x="70" y="640" class="barMeta">середня економія по словах: 83.84%</text>
 
-  <text x="70" y="610" class="barLabel">Пошук + hydrate</text>
-  <text x="70" y="645" class="barMeta">середня економія по байтах</text>
-  <rect x="70" y="665" rx="24" ry="24" width="1120" height="56" fill="#123248"/>
-  <rect x="70" y="665" rx="24" ry="24" width="672.1" height="56" fill="url(#bar2)"/>
-  <text x="1215" y="702" class="percent">63.41%</text>
-  <text x="70" y="752" class="barMeta">середня економія по словах: 74.76%</text>
+  <text x="70" y="670" class="barLabel">Пошук + hydrate</text>
+  <text x="70" y="705" class="barMeta">середня економія по байтах</text>
+  <rect x="70" y="730" rx="24" ry="24" width="980" height="50" fill="#123248"/>
+  <rect x="70" y="730" rx="24" ry="24" width="621.4" height="50" fill="url(#bar2)"/>
+  <text x="1230" y="766" class="percent" text-anchor="end">63.41%</text>
+  <text x="70" y="798" class="barMeta">середня економія по словах: 74.76%</text>
 </svg>
