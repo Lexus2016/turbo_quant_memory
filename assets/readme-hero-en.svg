@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">Turbo Quant Memory for AI Agents</title>
-  <desc id="desc">A title banner explaining that Turbo Quant Memory is a memory layer for AI coding agents that reduces repeated context loading and keeps project knowledge available.</desc>
+  <desc id="desc">A title banner explaining that Turbo Quant Memory is a readable memory layer for AI coding agents with clear project, hybrid, and global memory modes.</desc>
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#07111f"/>
@@ -11,74 +11,82 @@
       <stop offset="0%" stop-color="#153958"/>
       <stop offset="100%" stop-color="#10283c"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#53d6ff"/>
-      <stop offset="100%" stop-color="#8bffb0"/>
-    </linearGradient>
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="28" result="blur"/>
+      <feGaussianBlur stdDeviation="34" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
     <style>
-      .title { font: 700 74px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }
+      .title { font: 700 72px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }
       .subtitle { font: 600 34px 'Segoe UI', Arial, sans-serif; fill: #9fe9ff; }
-      .body { font: 400 28px 'Segoe UI', Arial, sans-serif; fill: #d6e7f2; }
-      .pill { font: 600 22px 'Segoe UI', Arial, sans-serif; fill: #ecfbff; }
-      .chip { font: 600 22px 'Segoe UI', Arial, sans-serif; fill: #eefaff; }
-      .cardTitle { font: 700 30px 'Segoe UI', Arial, sans-serif; fill: #f5fbff; }
-      .cardText { font: 400 20px 'Segoe UI', Arial, sans-serif; fill: #cfe5f3; }
-      .small { font: 600 18px 'Segoe UI', Arial, sans-serif; fill: #96e4ff; letter-spacing: 1.5px; text-transform: uppercase; }
+      .body { font: 400 29px 'Segoe UI', Arial, sans-serif; fill: #d6e7f2; }
+      .kicker { font: 600 23px 'Segoe UI', Arial, sans-serif; fill: #ecfbff; }
+      .eyebrow { font: 700 18px 'Segoe UI', Arial, sans-serif; fill: #96e4ff; letter-spacing: 1.6px; text-transform: uppercase; }
+      .chip { font: 700 21px 'Segoe UI', Arial, sans-serif; fill: #eefaff; }
+      .footer { font: 500 23px 'Segoe UI', Arial, sans-serif; fill: #d9e6ef; }
+      .panelHeading { font: 700 18px 'Segoe UI', Arial, sans-serif; fill: #9fe9ff; letter-spacing: 1.3px; text-transform: uppercase; }
+      .badgeLabel { font: 700 16px 'Segoe UI', Arial, sans-serif; fill: #d9fbff; letter-spacing: 1.1px; }
+      .cardTitle { font: 700 32px 'Segoe UI', Arial, sans-serif; fill: #f7fbff; }
+      .cardText { font: 400 20px 'Segoe UI', Arial, sans-serif; fill: #d4e6f1; }
     </style>
   </defs>
 
   <rect width="1600" height="900" fill="url(#bg)"/>
-  <circle cx="1340" cy="160" r="180" fill="#1ee3cf" opacity="0.12" filter="url(#glow)"/>
-  <circle cx="220" cy="770" r="210" fill="#46b8ff" opacity="0.12" filter="url(#glow)"/>
-  <circle cx="1460" cy="760" r="120" fill="#97ffbe" opacity="0.1" filter="url(#glow)"/>
+  <circle cx="1338" cy="152" r="190" fill="#1ee3cf" opacity="0.12" filter="url(#glow)"/>
+  <circle cx="220" cy="760" r="220" fill="#46b8ff" opacity="0.11" filter="url(#glow)"/>
+  <circle cx="1462" cy="756" r="118" fill="#97ffbe" opacity="0.10" filter="url(#glow)"/>
 
-  <rect x="110" y="90" rx="26" ry="26" width="360" height="56" fill="#11344a" opacity="0.95"/>
-  <text x="140" y="126" class="pill">Memory becomes workflow infrastructure</text>
+  <rect x="74" y="58" rx="42" ry="42" width="760" height="784" fill="#0a1828" opacity="0.18"/>
+  <rect x="96" y="84" rx="28" ry="28" width="430" height="58" fill="#12344a" stroke="#25506a" stroke-opacity="0.8"/>
+  <text x="126" y="121" class="kicker">Memory becomes workflow infrastructure</text>
 
-  <text x="110" y="240" class="small">Built for daily AI coding work</text>
+  <text x="110" y="232" class="eyebrow">Built for daily AI coding work</text>
   <text x="110" y="330" class="title">Turbo Quant Memory</text>
   <text x="110" y="390" class="subtitle">Memory layer for AI coding agents</text>
 
   <text x="110" y="480" class="body">
     <tspan x="110" dy="0">Stop rebuilding context in every session.</tspan>
-    <tspan x="110" dy="40">Keep project knowledge close, retrieve the right</tspan>
-    <tspan x="110" dy="40">fragment first, and open full context only when</tspan>
-    <tspan x="110" dy="40">the task truly needs it.</tspan>
+    <tspan x="110" dy="42">Keep project knowledge close, retrieve the right</tspan>
+    <tspan x="110" dy="42">fragment first, and open the fuller context only</tspan>
+    <tspan x="110" dy="42">when the task truly needs it.</tspan>
   </text>
 
-  <rect x="110" y="650" rx="22" ry="22" width="260" height="60" fill="#12334a"/>
-  <rect x="390" y="650" rx="22" ry="22" width="310" height="60" fill="#12334a"/>
-  <rect x="110" y="730" rx="22" ry="22" width="360" height="60" fill="#12334a"/>
-  <text x="145" y="688" class="chip">Persistent project memory</text>
-  <text x="425" y="688" class="chip">Smaller context by default</text>
-  <text x="145" y="768" class="chip">Hydrate only when needed</text>
+  <rect x="110" y="644" rx="22" ry="22" width="338" height="62" fill="#12334a" stroke="#25506a" stroke-opacity="0.75"/>
+  <rect x="470" y="644" rx="22" ry="22" width="332" height="62" fill="#12334a" stroke="#25506a" stroke-opacity="0.75"/>
+  <rect x="110" y="722" rx="22" ry="22" width="316" height="62" fill="#12334a" stroke="#25506a" stroke-opacity="0.75"/>
+  <text x="279" y="684" class="chip" text-anchor="middle">Persistent project memory</text>
+  <text x="636" y="684" class="chip" text-anchor="middle">Smaller context by default</text>
+  <text x="268" y="762" class="chip" text-anchor="middle">Hydrate only when needed</text>
 
-  <text x="110" y="840" class="body">Claude Code  •  Codex  •  Cursor  •  OpenCode  •  MCP clients</text>
+  <text x="110" y="816" class="footer">Claude Code  •  Codex  •  Cursor  •  OpenCode  •  MCP clients</text>
 
-  <rect x="935" y="130" rx="34" ry="34" width="525" height="640" fill="url(#panel)" opacity="0.98"/>
-  <rect x="980" y="195" rx="28" ry="28" width="435" height="150" fill="#0f4260"/>
-  <rect x="980" y="375" rx="28" ry="28" width="435" height="150" fill="#124964"/>
-  <rect x="980" y="555" rx="28" ry="28" width="435" height="150" fill="#10506a"/>
+  <rect x="900" y="96" rx="36" ry="36" width="560" height="708" fill="url(#panel)" opacity="0.96" stroke="#234f6d" stroke-opacity="0.75"/>
+  <text x="940" y="152" class="panelHeading">Three memory modes</text>
 
-  <rect x="1010" y="224" rx="14" ry="14" width="110" height="36" fill="url(#accent)"/>
-  <text x="1040" y="248" class="small" fill="#062032">Project</text>
-  <text x="1010" y="292" class="cardTitle">Project Memory</text>
-  <text x="1010" y="326" class="cardText">Decisions, lessons, handoffs, patterns.</text>
+  <rect x="940" y="186" rx="30" ry="30" width="480" height="156" fill="#123a54" stroke="#2a5f79" stroke-opacity="0.9"/>
+  <rect x="940" y="376" rx="30" ry="30" width="480" height="156" fill="#14425b" stroke="#2b6480" stroke-opacity="0.9"/>
+  <rect x="940" y="566" rx="30" ry="30" width="480" height="156" fill="#175069" stroke="#2d6a84" stroke-opacity="0.9"/>
 
-  <rect x="1010" y="404" rx="14" ry="14" width="104" height="36" fill="url(#accent)"/>
-  <text x="1046" y="428" class="small" fill="#062032">Hybrid</text>
-  <text x="1010" y="472" class="cardTitle">Compact Recall First</text>
-  <text x="1010" y="506" class="cardText">Search small. Escalate only when needed.</text>
+  <rect x="970" y="214" rx="18" ry="18" width="132" height="38" fill="#0d3144" stroke="#56d6ff" stroke-opacity="0.7"/>
+  <text x="1036" y="239" class="badgeLabel" text-anchor="middle">PROJECT</text>
+  <text x="970" y="289" class="cardTitle">Project Memory</text>
+  <text x="970" y="323" class="cardText">Decisions, lessons, handoffs, and patterns.</text>
 
-  <rect x="1010" y="584" rx="14" ry="14" width="106" height="36" fill="url(#accent)"/>
-  <text x="1044" y="608" class="small" fill="#062032">Global</text>
-  <text x="1010" y="652" class="cardTitle">Reusable Knowledge</text>
-  <text x="1010" y="686" class="cardText">Promote what the whole team should keep.</text>
+  <rect x="970" y="404" rx="18" ry="18" width="128" height="38" fill="#0d3144" stroke="#7ce1ff" stroke-opacity="0.7"/>
+  <text x="1034" y="429" class="badgeLabel" text-anchor="middle">HYBRID</text>
+  <text x="970" y="479" class="cardTitle">Compact Recall First</text>
+  <text x="970" y="513" class="cardText">
+    <tspan x="970" dy="0">Start small. Open more only when</tspan>
+    <tspan x="970" dy="24">the task needs it.</tspan>
+  </text>
+
+  <rect x="970" y="594" rx="18" ry="18" width="128" height="38" fill="#0d3144" stroke="#8bffb0" stroke-opacity="0.7"/>
+  <text x="1034" y="619" class="badgeLabel" text-anchor="middle">GLOBAL</text>
+  <text x="970" y="669" class="cardTitle">Reusable Knowledge</text>
+  <text x="970" y="703" class="cardText">
+    <tspan x="970" dy="0">Promote what the whole team</tspan>
+    <tspan x="970" dy="24">should remember.</tspan>
+  </text>
 </svg>
