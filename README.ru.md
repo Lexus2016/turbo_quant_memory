@@ -15,7 +15,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 
 > Идея простая: меньше повторного чтения, больше полезной работы.
 
-Быстрые ссылки: [Что это делает](#что-это-делает) | [Установка](#установка) | [Подключение клиента](#подключение-клиента) | [Бенчмарки](#бенчмарки-из-этого-репозитория) | [Техническая спецификация](TECHNICAL_SPEC.md) | [Стратегия памяти](MEMORY_STRATEGY.md)
+Быстрые ссылки: [Что это делает](#что-это-делает) | [Установка](#установка) | [Подключение клиента](#подключение-клиента) | [Бенчмарки](#бенчмарки-из-этого-репозитория) | [Гайд по клиентам](CLIENT_INTEGRATIONS.ru.md) | [Техническая спецификация](TECHNICAL_SPEC.ru.md) | [Стратегия памяти](MEMORY_STRATEGY.ru.md)
 
 ## Что Это Делает
 
@@ -38,7 +38,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 
 ## Бенчмарки Из Этого Репозитория
 
-В репозитории есть реальный запуск бенчмарка в [benchmarks/latest.md](benchmarks/latest.md) и [benchmarks/latest.json](benchmarks/latest.json).
+В репозитории есть реальный запуск бенчмарка в [benchmarks/latest.ru.md](benchmarks/latest.ru.md) и [benchmarks/latest.json](benchmarks/latest.json).
 
 ![Снимок benchmark](benchmarks/summary-ru.svg?v=20260328b)
 
@@ -64,8 +64,8 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 
 | Для чего | Команды |
 |---|---|
-| Release-установка через `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
-| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
+| Установка релиза через `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
+| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
 | Локальная разработка | `uv sync`<br>`uv run turbo-memory-mcp serve` |
 | Editable-установка из source | `python -m venv .venv`<br>`. .venv/bin/activate`<br>`pip install -e .`<br>`python -m turbo_memory_mcp serve` |
 
@@ -82,7 +82,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 | OpenCode | используйте готовый конфиг-файл | [examples/clients/opencode.config.json](examples/clients/opencode.config.json) |
 | Antigravity | используйте готовый конфиг-файл | [examples/clients/antigravity.mcp.json](examples/clients/antigravity.mcp.json) |
 
-Smoke checklist: [examples/clients/SMOKE_CHECKLIST.md](examples/clients/SMOKE_CHECKLIST.md)
+Чеклист smoke-проверки: [examples/clients/SMOKE_CHECKLIST.ru.md](examples/clients/SMOKE_CHECKLIST.ru.md)
 
 После подключения вы просто говорите с агентом нормальным языком. Если память уместна, агент сам может вызвать `tqmemory` в фоне.
 
@@ -161,5 +161,7 @@ uv run python scripts/benchmark_context_savings.py
 - Логика hydration: [src/turbo_memory_mcp/hydration.py](src/turbo_memory_mcp/hydration.py)
 - Модель хранения: [src/turbo_memory_mcp/store.py](src/turbo_memory_mcp/store.py)
 - Скрипт benchmark: [scripts/benchmark_context_savings.py](scripts/benchmark_context_savings.py)
-- Техническая спецификация: [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md)
-- Стратегия памяти: [MEMORY_STRATEGY.md](MEMORY_STRATEGY.md)
+- Гайд по клиентам: [CLIENT_INTEGRATIONS.ru.md](CLIENT_INTEGRATIONS.ru.md)
+- Техническая спецификация: [TECHNICAL_SPEC.ru.md](TECHNICAL_SPEC.ru.md)
+- Стратегия памяти: [MEMORY_STRATEGY.ru.md](MEMORY_STRATEGY.ru.md)
+- Чеклист smoke-проверки: [examples/clients/SMOKE_CHECKLIST.ru.md](examples/clients/SMOKE_CHECKLIST.ru.md)

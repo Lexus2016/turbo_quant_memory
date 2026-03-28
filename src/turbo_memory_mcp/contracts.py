@@ -355,6 +355,7 @@ def build_self_test_payload(
         "tool_names": list(PHASE_5_TOOL_NAMES),
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
+        "version": payload["version"],
         "runtime_command": payload["runtime_command"],
         "transport": payload["transport"],
         "install": payload["install"],

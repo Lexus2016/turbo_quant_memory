@@ -24,7 +24,7 @@
 
 ## Documentation Policy
 
-- Keep documentation bilingual: English and Ukrainian.
+- Keep user-facing documentation available in English, Ukrainian, and Russian.
 - Keep the design simple, local-first, and easy to deploy.
 - Avoid product claims that imply direct KV-cache control over hosted models.
 

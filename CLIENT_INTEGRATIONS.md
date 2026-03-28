@@ -1,176 +1,87 @@
-# Client Integrations / Інтеграції клієнтів
+# Client Integrations
 
-## Goal / Мета
+Other languages: [Ukrainian](CLIENT_INTEGRATIONS.uk.md) | [Russian](CLIENT_INTEGRATIONS.ru.md)
 
-Use **one local stdio MCP server** and adapt it to each client with the thinnest possible config.
+## Goal
 
-Використовувати **один local stdio MCP server** і адаптувати його до кожного клієнта через максимально тонкий конфіг.
+Use one local stdio MCP server everywhere, then adapt it to each client with the thinnest possible config.
 
-Assumed local command:
+Shared runtime contract:
 
-Базова локальна команда:
+- server id: `tqmemory`
+- launch command: `turbo-memory-mcp serve`
+- default write scope: `project`
+- default read mode: `hybrid`
 
-```bash
-turbo-memory-mcp serve
-```
+## Integration Matrix
 
-## 1. Claude Code
+| Client | Status | Quick connect | Ready file | Notes |
+|---|---|---|---|---|
+| Claude Code | production-ready | `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve` | [examples/clients/claude.project.mcp.json](examples/clients/claude.project.mcp.json) | supports project and user MCP scopes |
+| Codex | production-ready | `codex mcp add tqmemory -- turbo-memory-mcp serve` | [examples/clients/codex.config.toml](examples/clients/codex.config.toml) | should be started from the target repository |
+| Cursor | production-ready | use the fixture file | [examples/clients/cursor.project.mcp.json](examples/clients/cursor.project.mcp.json) | project config is the safest default |
+| OpenCode | production-ready | use the fixture file | [examples/clients/opencode.config.json](examples/clients/opencode.config.json) | local MCP config under `mcp` |
+| Antigravity | compatibility target | use the fixture file | [examples/clients/antigravity.mcp.json](examples/clients/antigravity.mcp.json) | architecture is compatible, but still smoke-test on the real app |
 
-Verified pattern: official Claude Code docs support `claude mcp add ...`, `.mcp.json`, and project/user scopes.
+## Per-Client Notes
 
-Підтверджений патерн: офіційна документація Claude Code підтримує `claude mcp add ...`, `.mcp.json` і project/user scopes.
+### Claude Code
 
-### Proposed command
+- Supports `claude mcp add ...`, `.mcp.json`, and project or user scopes.
+- Project scope is preferred when memory must stay repository-specific.
+- Use the shared runtime contract without extra wrappers.
 
-```bash
-claude mcp add --transport stdio --scope project tqmemory -- turbo-memory-mcp serve
-```
+### Codex
 
-### Proposed shared config
+- Supports MCP configuration and `codex mcp add ...`.
+- Start Codex in the target repository, or set `TQMEMORY_PROJECT_ROOT` explicitly.
+- Do not add the repository path to MCP `args`; the server resolves the project from the process working directory.
 
-```json
-{
-  "mcpServers": {
-    "tqmemory": {
-      "command": "turbo-memory-mcp",
-      "args": ["serve"],
-      "env": {}
-    }
-  }
-}
-```
+### Cursor
 
-## 2. Codex
+- Supports project `.cursor/mcp.json` and user `~/.cursor/mcp.json`.
+- Use project config when memory should stay tied to the repository.
+- Use user config only when a broader cross-project setup is intentional.
 
-Verified pattern: current OpenAI Codex docs support MCP configuration and `codex mcp add ...`.
+### OpenCode
 
-Підтверджений патерн: актуальна документація OpenAI Codex підтримує конфігурацію MCP і `codex mcp add ...`.
+- Supports local MCP definitions under `mcp`.
+- The repository ships a ready-to-merge config object.
+- Keep the command local and simple: `["turbo-memory-mcp", "serve"]`.
 
-### Proposed command
+### Antigravity
 
-```bash
-codex mcp add tqmemory -- turbo-memory-mcp serve
-```
+- Current documentation and integration reports show a compatible custom MCP flow.
+- The repository includes a raw config example.
+- Treat Antigravity as supported in architecture, but verify it with a smoke test before calling it production-proven.
 
-### Proposed config direction
+## Standardization Rules
 
-- user-level config in Codex config file for cross-project usage
-- repo-local config for project-specific memory routing
+Keep the same contract across every client:
 
-- user-level конфіг у файлі конфігурації Codex для cross-project usage
-- repo-local конфіг для project-specific memory routing
+| Item | Standard |
+|---|---|
+| MCP server name | `tqmemory` |
+| Runtime command | `turbo-memory-mcp serve` |
+| Write scope vocabulary | `project`, `global`, `hybrid` |
+| Install guidance | release install first, source install second |
 
-## 3. Cursor
+This consistency matters because agents, prompts, docs, and smoke tests all become simpler when the runtime contract never changes from one client to another.
 
-Verified pattern: official Cursor docs support project `.cursor/mcp.json` and user `~/.cursor/mcp.json`.
+## Recommended Shipping Set
 
-Підтверджений патерн: офіційна документація Cursor підтримує project `.cursor/mcp.json` і user `~/.cursor/mcp.json`.
+Ship these assets together:
 
-### Project config
+1. one ready file for each supported client
+2. one smoke checklist covering all clients
+3. one install contract tied to the current release
+4. one server id and one launch command everywhere
 
-```json
-{
-  "mcpServers": {
-    "tqmemory": {
-      "command": "turbo-memory-mcp",
-      "args": ["serve"],
-      "env": {}
-    }
-  }
-}
-```
+## Summary
 
-### Recommendation
+The integration strategy is intentionally boring:
 
-- Use project config when memory must stay repo-specific.
-- Use user config only for the global namespace helper.
-
-- Використовувати project config, коли пам'ять має лишатися repo-specific.
-- Використовувати user config лише для global namespace helper.
-
-## 4. OpenCode
-
-Verified pattern: official OpenCode docs support local and remote MCP definitions under `mcp`.
-
-Підтверджений патерн: офіційна документація OpenCode підтримує local і remote MCP definitions під ключем `mcp`.
-
-### Proposed config
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "tqmemory": {
-      "type": "local",
-      "command": ["turbo-memory-mcp", "serve"],
-      "enabled": true
-    }
-  }
-}
-```
-
-## 5. Antigravity
-
-Verified signal: a current Flutter MCP integration guide documents Antigravity custom MCP setup through its MCP server management UI and raw config flow.
-
-Підтверджений сигнал: актуальний Flutter MCP integration guide документує кастомне підключення MCP у Antigravity через UI керування MCP-серверами і raw config flow.
-
-### Proposed raw config shape
-
-```json
-{
-  "mcpServers": {
-    "tqmemory": {
-      "command": "turbo-memory-mcp",
-      "args": ["serve"],
-      "env": {}
-    }
-  }
-}
-```
-
-### Important note
-
-Antigravity should be treated as **verified-compatible in architecture**, but still requires a smoke test against the real product before we call support "production-proven".
-
-Antigravity варто вважати **архітектурно сумісним**, але перед тим як називати підтримку "production-proven", усе одно потрібен smoke test на реальному продукті.
-
-## 6. Recommended Standardization / Рекомендована стандартизація
-
-Use the same MCP server name everywhere:
-
-Скрізь використовувати однакове ім'я MCP-сервера:
-
-`tqmemory`
-
-Use the same launch contract everywhere:
-
-Скрізь використовувати однаковий launch contract:
-
-```bash
-turbo-memory-mcp serve
-```
-
-Use the same scope vocabulary everywhere:
-
-Скрізь використовувати однаковий словник scope:
-
-- `project`
-- `global`
-- `hybrid`
-
-## 7. What I Would Ship In v1 / Що я б ship-нув у v1
-
-1. Claude Code example
-2. Codex example
-3. Cursor example
-4. OpenCode example
-5. Antigravity example
-6. A smoke-test checklist for each client
-
-1. Приклад для Claude Code
-2. Приклад для Codex
-3. Приклад для Cursor
-4. Приклад для OpenCode
-5. Приклад для Antigravity
-6. Smoke-test checklist для кожного клієнта
+- one server
+- one launch command
+- one vocabulary for scopes
+- thin client-specific wrappers only where the client requires them

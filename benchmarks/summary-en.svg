@@ -42,32 +42,32 @@
   <rect x="720" y="316" rx="24" ry="24" width="610" height="126" fill="url(#card)"/>
 
   <text x="96" y="215" class="kpiLabel">Corpus</text>
-  <text x="96" y="260" class="kpiValue">9 files</text>
-  <text x="96" y="286" class="kpiMeta">138 indexed blocks</text>
+  <text x="96" y="260" class="kpiValue">17 files</text>
+  <text x="96" y="286" class="kpiMeta">247 indexed blocks</text>
 
   <text x="746" y="215" class="kpiLabel">Full index</text>
-  <text x="746" y="260" class="kpiValue">4.0 s</text>
+  <text x="746" y="260" class="kpiValue">5.55 s</text>
   <text x="746" y="286" class="kpiMeta">first full index run</text>
 
   <text x="96" y="361" class="kpiLabel">Avg search</text>
-  <text x="96" y="406" class="kpiValue">75.14 ms</text>
-  <text x="96" y="432" class="kpiMeta">`semantic_search` latency</text>
+  <text x="96" y="406" class="kpiValue">68.13 ms</text>
+  <text x="96" y="432" class="kpiMeta">semantic_search latency</text>
 
   <text x="746" y="361" class="kpiLabel">Avg hydrate</text>
-  <text x="746" y="406" class="kpiValue">41.71 ms</text>
-  <text x="746" y="432" class="kpiMeta">`hydrate` latency</text>
+  <text x="746" y="406" class="kpiValue">41.63 ms</text>
+  <text x="746" y="432" class="kpiMeta">hydrate latency</text>
 
   <text x="70" y="500" class="barLabel">Search only</text>
   <text x="70" y="535" class="barMeta">average byte savings</text>
   <rect x="70" y="560" rx="24" ry="24" width="980" height="52" fill="#123248"/>
-  <rect x="70" y="560" rx="24" ry="24" width="764.6" height="52" fill="url(#bar1)"/>
-  <text x="1230" y="597" class="percent" text-anchor="end">78.02%</text>
-  <text x="70" y="640" class="barMeta">average word savings: 83.84%</text>
+  <rect x="70" y="560" rx="24" ry="24" width="626.8" height="52" fill="url(#bar1)"/>
+  <text x="1230" y="597" class="percent" text-anchor="end">63.96%</text>
+  <text x="70" y="632" class="barMeta">average word savings: 75.02%</text>
 
-  <text x="70" y="670" class="barLabel">Search + hydrate</text>
-  <text x="70" y="705" class="barMeta">average byte savings</text>
-  <rect x="70" y="730" rx="24" ry="24" width="980" height="50" fill="#123248"/>
-  <rect x="70" y="730" rx="24" ry="24" width="621.4" height="50" fill="url(#bar2)"/>
-  <text x="1230" y="766" class="percent" text-anchor="end">63.41%</text>
-  <text x="70" y="798" class="barMeta">average word savings: 74.76%</text>
+  <text x="70" y="684" class="barLabel">Search + hydrate</text>
+  <text x="70" y="718" class="barMeta">average byte savings</text>
+  <rect x="70" y="740" rx="24" ry="24" width="980" height="44" fill="#123248"/>
+  <rect x="70" y="740" rx="24" ry="24" width="432.2" height="44" fill="url(#bar2)"/>
+  <text x="1230" y="772" class="percent" text-anchor="end">44.1%</text>
+  <text x="70" y="806" class="barMeta">average word savings: 63.51%</text>
 </svg>

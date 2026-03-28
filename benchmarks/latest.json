@@ -5,19 +5,19 @@
     "without_mcp": "Open the full source text of every unique Markdown file represented in the top-5 project search hits."
   },
   "corpus": {
-    "block_count": 138,
-    "changed_files_on_full": 9,
-    "indexed_files": 9
+    "block_count": 247,
+    "changed_files_on_full": 17,
+    "indexed_files": 17
   },
-  "generated_at": "2026-03-26T18:49:53.978307+00:00",
+  "generated_at": "2026-03-28T17:20:15.198620+00:00",
   "indexing": {
-    "full_index_ms": 4004.26,
-    "idle_incremental_ms": 677.8,
+    "full_index_ms": 5553.57,
+    "idle_incremental_ms": 844.25,
     "idle_incremental_payload": {
-      "block_count": 138,
+      "block_count": 247,
       "changed_files": 0,
       "deleted_files": 0,
-      "indexed_files": 9,
+      "indexed_files": 17,
       "mode": "incremental",
       "registered_roots": [
         {
@@ -25,378 +25,366 @@
           "root_id": "mdroot-b823fa76b43f03fe"
         }
       ],
-      "skipped_files": 9,
+      "skipped_files": 17,
       "status": "ok"
     }
   },
   "project_root": "/Users/admin/_Projects/turbo_quant_mcp_memory",
   "queries": [
     {
-      "hydrate_latency_ms": 39.02,
+      "hydrate_latency_ms": 41.92,
       "naive_full_files": {
-        "bytes": 23474,
-        "file_count": 3,
+        "bytes": 9151,
+        "file_count": 2,
         "files": [
           {
-            "bytes": 5090,
-            "lines": 177,
+            "bytes": 3586,
+            "lines": 88,
             "path": "CLIENT_INTEGRATIONS.md",
-            "words": 570
+            "words": 499
           },
           {
-            "bytes": 8616,
-            "lines": 238,
+            "bytes": 5565,
+            "lines": 195,
             "path": "MEMORY_STRATEGY.md",
-            "words": 957
-          },
-          {
-            "bytes": 9768,
-            "lines": 273,
-            "path": "README.md",
-            "words": 1379
+            "words": 822
           }
         ],
-        "lines": 688,
-        "words": 2906
+        "lines": 283,
+        "words": 1321
       },
       "query": "namespace model project global hybrid",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 73.55,
-          "words_percent": 81.42
+          "bytes_percent": 40.05,
+          "words_percent": 62.15
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 51.71,
-          "words_percent": 67.48
+          "bytes_percent": 8.11,
+          "words_percent": 44.74
         }
       },
-      "search_latency_ms": 103.95,
+      "search_latency_ms": 91.04,
       "semantic_search_payload": {
-        "bytes": 6209,
-        "lines": 139,
-        "words": 540
+        "bytes": 5486,
+        "lines": 141,
+        "words": 500
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 11335,
-        "lines": 203,
-        "words": 945
+        "bytes": 8409,
+        "lines": 205,
+        "words": 730
       },
       "top_hit": {
         "confidence_state": "medium",
-        "score": 0.722,
+        "score": 0.637,
         "source_path": "MEMORY_STRATEGY.md",
-        "title": "2. Active Namespaces / Активні namespace"
+        "title": "`hybrid`"
       }
     },
     {
-      "hydrate_latency_ms": 42.15,
+      "hydrate_latency_ms": 38.7,
       "naive_full_files": {
-        "bytes": 36130,
+        "bytes": 22069,
         "file_count": 3,
         "files": [
           {
-            "bytes": 8616,
-            "lines": 238,
+            "bytes": 5565,
+            "lines": 195,
             "path": "MEMORY_STRATEGY.md",
-            "words": 957
+            "words": 822
           },
           {
-            "bytes": 9768,
-            "lines": 273,
-            "path": "README.md",
-            "words": 1379
+            "bytes": 9194,
+            "lines": 195,
+            "path": "MEMORY_STRATEGY.uk.md",
+            "words": 804
           },
           {
-            "bytes": 17746,
-            "lines": 365,
+            "bytes": 7310,
+            "lines": 194,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1999
+            "words": 1134
           }
         ],
-        "lines": 876,
-        "words": 4335
+        "lines": 584,
+        "words": 2760
       },
       "query": "hydrate bounded neighborhood related mode",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 81.41,
-          "words_percent": 85.33
+          "bytes_percent": 72.98,
+          "words_percent": 79.75
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 70.12,
-          "words_percent": 78.11
+          "bytes_percent": 59.92,
+          "words_percent": 72.39
         }
       },
-      "search_latency_ms": 53.8,
+      "search_latency_ms": 45.22,
       "semantic_search_payload": {
-        "bytes": 6716,
-        "lines": 141,
-        "words": 636
+        "bytes": 5963,
+        "lines": 140,
+        "words": 559
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 10796,
-        "lines": 207,
-        "words": 949
+        "bytes": 8845,
+        "lines": 204,
+        "words": 762
       },
       "top_hit": {
-        "confidence_state": "low",
-        "score": 0.618,
+        "confidence_state": "medium",
+        "score": 0.774,
         "source_path": "MEMORY_STRATEGY.md",
-        "title": "9.5 Hydration Strategy / Стратегія hydration"
+        "title": "Hydration Strategy"
       }
     },
     {
-      "hydrate_latency_ms": 37.83,
+      "hydrate_latency_ms": 43.2,
       "naive_full_files": {
-        "bytes": 23474,
+        "bytes": 17837,
         "file_count": 3,
         "files": [
           {
-            "bytes": 5090,
-            "lines": 177,
+            "bytes": 3586,
+            "lines": 88,
             "path": "CLIENT_INTEGRATIONS.md",
-            "words": 570
+            "words": 499
           },
           {
-            "bytes": 8616,
-            "lines": 238,
+            "bytes": 5565,
+            "lines": 195,
             "path": "MEMORY_STRATEGY.md",
-            "words": 957
+            "words": 822
           },
           {
-            "bytes": 9768,
-            "lines": 273,
+            "bytes": 8686,
+            "lines": 168,
             "path": "README.md",
-            "words": 1379
+            "words": 1156
           }
         ],
-        "lines": 688,
-        "words": 2906
+        "lines": 451,
+        "words": 2477
       },
       "query": "current project resolution git remote overrides",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 71.3,
-          "words_percent": 81.04
+          "bytes_percent": 65.79,
+          "words_percent": 76.46
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 59.14,
-          "words_percent": 74.43
+          "bytes_percent": 48.9,
+          "words_percent": 67.62
         }
       },
-      "search_latency_ms": 101.67,
+      "search_latency_ms": 72.83,
       "semantic_search_payload": {
-        "bytes": 6736,
-        "lines": 142,
-        "words": 551
+        "bytes": 6102,
+        "lines": 143,
+        "words": 583
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 9592,
-        "lines": 190,
-        "words": 743
+        "bytes": 9114,
+        "lines": 207,
+        "words": 802
       },
       "top_hit": {
         "confidence_state": "low",
-        "score": 0.468,
+        "score": 0.58,
         "source_path": "MEMORY_STRATEGY.md",
-        "title": "3. Current Project Identity / Ідентичність поточного проєкту"
+        "title": "Project Identity"
       }
     },
     {
-      "hydrate_latency_ms": 57.82,
+      "hydrate_latency_ms": 40.25,
       "naive_full_files": {
-        "bytes": 42906,
-        "file_count": 4,
+        "bytes": 15996,
+        "file_count": 2,
         "files": [
           {
-            "bytes": 8616,
-            "lines": 238,
-            "path": "MEMORY_STRATEGY.md",
-            "words": 957
-          },
-          {
-            "bytes": 9768,
-            "lines": 273,
+            "bytes": 8686,
+            "lines": 168,
             "path": "README.md",
-            "words": 1379
+            "words": 1156
           },
           {
-            "bytes": 17746,
-            "lines": 365,
+            "bytes": 7310,
+            "lines": 194,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1999
-          },
-          {
-            "bytes": 6776,
-            "lines": 91,
-            "path": "examples/clients/SMOKE_CHECKLIST.md",
-            "words": 800
+            "words": 1134
           }
         ],
-        "lines": 967,
-        "words": 5135
+        "lines": 362,
+        "words": 2290
       },
       "query": "storage stats freshness index status",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 84.83,
-          "words_percent": 88.49
+          "bytes_percent": 63.03,
+          "words_percent": 75.2
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 75.95,
-          "words_percent": 82.45
+          "bytes_percent": 42.45,
+          "words_percent": 62.75
         }
       },
-      "search_latency_ms": 46.98,
+      "search_latency_ms": 50.12,
       "semantic_search_payload": {
-        "bytes": 6507,
-        "lines": 139,
-        "words": 591
+        "bytes": 5913,
+        "lines": 141,
+        "words": 568
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 10319,
-        "lines": 204,
-        "words": 901
+        "bytes": 9206,
+        "lines": 206,
+        "words": 853
       },
       "top_hit": {
-        "confidence_state": "medium",
-        "score": 0.693,
+        "confidence_state": "ambiguous",
+        "score": 0.461,
         "source_path": "TECHNICAL_SPEC.md",
-        "title": "7.5 Operations / Експлуатація"
+        "title": "Acceptance Criteria"
       }
     },
     {
-      "hydrate_latency_ms": 36.86,
+      "hydrate_latency_ms": 40.28,
       "naive_full_files": {
-        "bytes": 30615,
-        "file_count": 3,
+        "bytes": 18582,
+        "file_count": 4,
         "files": [
           {
-            "bytes": 5090,
-            "lines": 177,
+            "bytes": 3586,
+            "lines": 88,
             "path": "CLIENT_INTEGRATIONS.md",
-            "words": 570
+            "words": 499
           },
           {
-            "bytes": 9768,
-            "lines": 273,
-            "path": "README.md",
-            "words": 1379
+            "bytes": 5306,
+            "lines": 88,
+            "path": "CLIENT_INTEGRATIONS.uk.md",
+            "words": 470
           },
           {
-            "bytes": 15757,
-            "lines": 273,
-            "path": "README.uk.md",
-            "words": 1272
+            "bytes": 4854,
+            "lines": 81,
+            "path": "examples/clients/SMOKE_CHECKLIST.ru.md",
+            "words": 412
+          },
+          {
+            "bytes": 4836,
+            "lines": 81,
+            "path": "examples/clients/SMOKE_CHECKLIST.uk.md",
+            "words": 413
           }
         ],
-        "lines": 723,
-        "words": 3221
+        "lines": 338,
+        "words": 1794
       },
       "query": "Claude Code Codex Cursor OpenCode integrations",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 78.74,
-          "words_percent": 84.35
+          "bytes_percent": 64.41,
+          "words_percent": 71.68
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 61.31,
-          "words_percent": 74.05
+          "bytes_percent": 41.31,
+          "words_percent": 56.69
         }
       },
-      "search_latency_ms": 76.81,
+      "search_latency_ms": 78.02,
       "semantic_search_payload": {
-        "bytes": 6508,
-        "lines": 140,
-        "words": 504
+        "bytes": 6613,
+        "lines": 145,
+        "words": 508
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 11845,
-        "lines": 204,
-        "words": 836
+        "bytes": 10905,
+        "lines": 212,
+        "words": 777
       },
       "top_hit": {
         "confidence_state": "ambiguous",
-        "score": 0.576,
-        "source_path": "README.uk.md",
-        "title": "Підключення клієнта"
+        "score": 0.53,
+        "source_path": "examples/clients/SMOKE_CHECKLIST.uk.md",
+        "title": "OpenCode"
       }
     },
     {
-      "hydrate_latency_ms": 36.6,
+      "hydrate_latency_ms": 45.42,
       "naive_full_files": {
-        "bytes": 29842,
+        "bytes": 25147,
         "file_count": 4,
         "files": [
           {
-            "bytes": 1454,
-            "lines": 38,
-            "path": "AGENTS.md",
-            "words": 206
+            "bytes": 3586,
+            "lines": 88,
+            "path": "CLIENT_INTEGRATIONS.md",
+            "words": 499
           },
           {
-            "bytes": 874,
-            "lines": 18,
-            "path": "CLAUDE.md",
-            "words": 136
+            "bytes": 5565,
+            "lines": 195,
+            "path": "MEMORY_STRATEGY.md",
+            "words": 822
           },
           {
-            "bytes": 9768,
-            "lines": 273,
+            "bytes": 8686,
+            "lines": 168,
             "path": "README.md",
-            "words": 1379
+            "words": 1156
           },
           {
-            "bytes": 17746,
-            "lines": 365,
+            "bytes": 7310,
+            "lines": 194,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1999
+            "words": 1134
           }
         ],
-        "lines": 694,
-        "words": 3720
+        "lines": 645,
+        "words": 3611
       },
       "query": "remember note decision lesson handoff pattern",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 78.28,
-          "words_percent": 82.39
+          "bytes_percent": 77.5,
+          "words_percent": 84.85
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 62.26,
-          "words_percent": 72.02
+          "bytes_percent": 63.92,
+          "words_percent": 76.85
         }
       },
-      "search_latency_ms": 67.66,
+      "search_latency_ms": 71.56,
       "semantic_search_payload": {
-        "bytes": 6481,
-        "lines": 141,
-        "words": 655
+        "bytes": 5659,
+        "lines": 140,
+        "words": 547
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 11261,
-        "lines": 206,
-        "words": 1041
+        "bytes": 9072,
+        "lines": 205,
+        "words": 836
       },
       "top_hit": {
-        "confidence_state": "low",
-        "score": 0.583,
+        "confidence_state": "ambiguous",
+        "score": 0.476,
         "source_path": "TECHNICAL_SPEC.md",
-        "title": "7.4 Write-Back Memory / Запис нової пам'яті"
+        "title": "Memory note"
       }
     }
   ],
   "summary": {
-    "average_hydrate_latency_ms": 41.71,
-    "average_search_latency_ms": 75.14,
-    "average_semantic_search_only_bytes_saved_percent": 78.02,
-    "average_semantic_search_only_words_saved_percent": 83.84,
-    "average_semantic_search_plus_hydrate_bytes_saved_percent": 63.41,
-    "average_semantic_search_plus_hydrate_words_saved_percent": 74.76,
-    "median_hydrate_latency_ms": 38.42,
-    "median_search_latency_ms": 72.23,
-    "median_semantic_search_only_bytes_saved_percent": 78.51,
-    "median_semantic_search_plus_hydrate_bytes_saved_percent": 61.78,
+    "average_hydrate_latency_ms": 41.63,
+    "average_search_latency_ms": 68.13,
+    "average_semantic_search_only_bytes_saved_percent": 63.96,
+    "average_semantic_search_only_words_saved_percent": 75.02,
+    "average_semantic_search_plus_hydrate_bytes_saved_percent": 44.1,
+    "average_semantic_search_plus_hydrate_words_saved_percent": 63.51,
+    "median_hydrate_latency_ms": 41.1,
+    "median_search_latency_ms": 72.19,
+    "median_semantic_search_only_bytes_saved_percent": 65.1,
+    "median_semantic_search_plus_hydrate_bytes_saved_percent": 45.67,
     "query_count": 6
   }
 }

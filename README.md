@@ -15,7 +15,7 @@ It helps the agent remember project knowledge, search smaller context first, and
 
 > The goal is simple: less repeated reading, more useful work.
 
-Quick links: [What it does](#what-it-does) | [Install](#install) | [Connect a client](#connect-a-client) | [Benchmarks](#benchmarks-from-this-repository) | [Technical spec](TECHNICAL_SPEC.md) | [Memory strategy](MEMORY_STRATEGY.md)
+Quick links: [What it does](#what-it-does) | [Install](#install) | [Connect a client](#connect-a-client) | [Benchmarks](#benchmarks-from-this-repository) | [Client guide](CLIENT_INTEGRATIONS.md) | [Technical spec](TECHNICAL_SPEC.md) | [Memory strategy](MEMORY_STRATEGY.md)
 
 ## What It Does
 
@@ -64,8 +64,8 @@ These are real measurements for this repository and this implementation. They ar
 
 | Best for | Commands |
 |---|---|
-| Released install with `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
-| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2`<br>`turbo-memory-mcp serve` |
+| Released install with `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
+| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
 | Local development | `uv sync`<br>`uv run turbo-memory-mcp serve` |
 | Editable source install | `python -m venv .venv`<br>`. .venv/bin/activate`<br>`pip install -e .`<br>`python -m turbo_memory_mcp serve` |
 
@@ -161,5 +161,7 @@ uv run python scripts/benchmark_context_savings.py
 - Hydration logic: [src/turbo_memory_mcp/hydration.py](src/turbo_memory_mcp/hydration.py)
 - Storage model: [src/turbo_memory_mcp/store.py](src/turbo_memory_mcp/store.py)
 - Benchmark script: [scripts/benchmark_context_savings.py](scripts/benchmark_context_savings.py)
+- Client integrations: [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md)
 - Technical specification: [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md)
 - Memory strategy: [MEMORY_STRATEGY.md](MEMORY_STRATEGY.md)
+- Smoke checklist: [examples/clients/SMOKE_CHECKLIST.md](examples/clients/SMOKE_CHECKLIST.md)

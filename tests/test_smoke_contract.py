@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from turbo_memory_mcp import __version__
 from turbo_memory_mcp.contracts import (
     PHASE_5_TOOL_NAMES,
     SERVER_ID,
+    build_install_contract,
     build_hydrated_markdown_item_payload,
     build_hydrated_note_item_payload,
     build_hydration_payload,
@@ -22,6 +24,7 @@ SAMPLE_PROJECT = {
 
 
 def test_server_info_matches_documented_namespace_contract() -> None:
+    install_contract = build_install_contract()
     payload = build_server_info_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
@@ -52,14 +55,9 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     )
 
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
-    assert (
-        payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
-    assert (
-        payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
+    assert payload["version"] == __version__
+    assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]
+    assert payload["install"]["fallback"]["command"] == install_contract["fallback"]["command"]
     assert payload["server_id"] == SERVER_ID
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
@@ -70,6 +68,7 @@ def test_server_info_matches_documented_namespace_contract() -> None:
 
 
 def test_self_test_matches_exported_phase_5_tools() -> None:
+    install_contract = build_install_contract()
     payload = build_self_test_payload(
         storage_root="/tmp/tqmemory",
         current_project=SAMPLE_PROJECT,
@@ -78,14 +77,9 @@ def test_self_test_matches_exported_phase_5_tools() -> None:
     assert payload["server_id"] == "tqmemory"
     assert payload["tool_names"] == list(PHASE_5_TOOL_NAMES)
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
-    assert (
-        payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
-    assert (
-        payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
+    assert payload["version"] == __version__
+    assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]
+    assert payload["install"]["fallback"]["command"] == install_contract["fallback"]["command"]
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
     assert payload["namespace_contract"]["default_write_scope"] == "project"

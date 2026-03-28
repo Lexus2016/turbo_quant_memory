@@ -10,6 +10,8 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from turbo_memory_mcp import __version__
+from turbo_memory_mcp.contracts import build_install_contract
 from turbo_memory_mcp.contracts import PHASE_5_TOOL_NAMES
 from turbo_memory_mcp.identity import resolve_project_identity
 from turbo_memory_mcp.server import build_current_project_payload
@@ -82,20 +84,16 @@ def test_health_payload_matches_runtime_contract() -> None:
 def test_server_info_payload_fields() -> None:
     payload = collect_server_contract()["server_info"]
     expected_project = build_current_project_payload(resolve_project_identity(cwd=PROJECT_ROOT))
+    install_contract = build_install_contract()
 
     assert payload["product_name"] == "Turbo Quant Memory for AI Agents"
     assert payload["package_name"] == "turbo-memory-mcp"
+    assert payload["version"] == __version__
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["install"]["primary"]["tool"] == "uv"
-    assert (
-        payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
+    assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]
     assert payload["install"]["fallback"]["tool"] == "pip"
-    assert (
-        payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
+    assert payload["install"]["fallback"]["command"] == install_contract["fallback"]["command"]
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
@@ -128,20 +126,16 @@ def test_live_scope_contract_exposes_active_namespace_modes() -> None:
 
 def test_self_test_summarises_namespace_contract() -> None:
     payload = collect_server_contract()["self_test"]
+    install_contract = build_install_contract()
 
     assert payload["status"] == "ok"
     assert payload["tool_count"] == 10
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"
-    assert (
-        payload["install"]["primary"]["command"]
-        == "uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
-    assert (
-        payload["install"]["fallback"]["command"]
-        == "python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.2"
-    )
+    assert payload["version"] == __version__
+    assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]
+    assert payload["install"]["fallback"]["command"] == install_contract["fallback"]["command"]
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
