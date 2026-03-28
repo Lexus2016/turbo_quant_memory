@@ -1,6 +1,6 @@
 # Turbo Quant Memory for AI Agents
 
-![Turbo Quant Memory hero](assets/readme-hero-en.svg)
+![Turbo Quant Memory hero](assets/readme-hero-en.svg?v=20260328b)
 
 [![Latest release](https://img.shields.io/github/v/release/Lexus2016/turbo_quant_memory?display_name=tag&label=release)](https://github.com/Lexus2016/turbo_quant_memory/releases)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)](https://www.python.org/downloads/)
@@ -40,7 +40,7 @@ Quick links: [What it does](#what-it-does) | [Install](#install) | [Connect a cl
 
 The repository includes a real benchmark run in [benchmarks/latest.md](benchmarks/latest.md) and [benchmarks/latest.json](benchmarks/latest.json).
 
-![Benchmark summary](benchmarks/summary-en.svg)
+![Benchmark summary](benchmarks/summary-en.svg?v=20260328b)
 
 | Metric | Result | Why it matters |
 |---|---:|---|

@@ -5,7 +5,7 @@
 - Full index: `4004.26` ms
 - Idle incremental: `677.8` ms
 
-![Benchmark summary](summary-en.svg)
+![Benchmark summary](summary-en.svg?v=20260328b)
 
 ## At a Glance
 

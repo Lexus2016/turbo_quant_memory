@@ -1,6 +1,6 @@
 # Turbo Quant Memory for AI Agents
 
-![Титульна ілюстрація Turbo Quant Memory](assets/readme-hero-uk.svg)
+![Титульна ілюстрація Turbo Quant Memory](assets/readme-hero-uk.svg?v=20260328b)
 
 [![Latest release](https://img.shields.io/github/v/release/Lexus2016/turbo_quant_memory?display_name=tag&label=release)](https://github.com/Lexus2016/turbo_quant_memory/releases)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)](https://www.python.org/downloads/)
@@ -40,7 +40,7 @@ Turbo Quant Memory — це local-first шар пам’яті для AI-аге�
 
 У репозиторії є реальний запуск бенчмарку в [benchmarks/latest.md](benchmarks/latest.md) та [benchmarks/latest.json](benchmarks/latest.json).
 
-![Знімок benchmark](benchmarks/summary-uk.svg)
+![Знімок benchmark](benchmarks/summary-uk.svg?v=20260328b)
 
 | Метрика | Результат | Що це означає |
 |---|---:|---|
