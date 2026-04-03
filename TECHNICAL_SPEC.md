@@ -85,6 +85,13 @@ The server should reduce repeated token usage by:
 - Provide a quick self-test contract.
 - Keep smoke-test instructions for supported clients.
 
+### 6. Knowledge-Base Hygiene
+
+- Run structural lint checks on Markdown corpora.
+- Detect broken internal Markdown links.
+- Detect orphan candidates with no inbound or outbound internal links.
+- Detect duplicate normalized titles that increase ambiguity during retrieval.
+
 ## MCP Tool Surface
 
 | Tool | Purpose |
@@ -99,6 +106,7 @@ The server should reduce repeated token usage by:
 | `semantic_search(...)` | retrieve compact context |
 | `hydrate(...)` | open bounded fuller context |
 | `index_paths(...)` | index or refresh Markdown roots |
+| `lint_knowledge_base(...)` | run structural checks for link integrity and wiki consistency |
 
 ## Data Model
 
@@ -151,8 +159,8 @@ The server should reduce repeated token usage by:
 
 | Step | Expected contract |
 |---|---|
-| Recommended install | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
-| Fallback install | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
+| Recommended install | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Fallback install | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
 | Runtime command | `turbo-memory-mcp serve` |
 | Claude Code example | `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve` |
 | Equivalent examples | Codex, Cursor, OpenCode, and Antigravity configs ship in the repository |
@@ -162,7 +170,7 @@ The server should reduce repeated token usage by:
 | Layer | Coverage |
 |---|---|
 | Unit tests | chunking, IDs, payload contracts, provenance mapping |
-| Integration tests | index -> search -> hydrate and note write-back flows |
+| Integration tests | index -> search -> hydrate, note write-back, and knowledge-base lint flows |
 | Smoke tests | fresh install, client connection, indexing, retrieval, hydration |
 | Benchmarking | repository-level context-savings report with real measurements |
 
@@ -174,6 +182,7 @@ The server should reduce repeated token usage by:
 4. Agents can explicitly hydrate fuller context when needed.
 5. Notes can be saved, promoted, deprecated, and found later.
 6. Operators can inspect health, freshness, and storage state quickly.
+7. Operators can lint indexed Markdown knowledge bases for broken links, orphan candidates, and duplicate titles.
 
 ## Non-Goals
 

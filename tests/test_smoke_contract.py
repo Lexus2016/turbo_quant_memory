@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from turbo_memory_mcp import __version__
 from turbo_memory_mcp.contracts import (
-    PHASE_5_TOOL_NAMES,
+    CURRENT_TOOL_NAMES,
     SERVER_ID,
     build_install_contract,
     build_hydrated_markdown_item_payload,
@@ -75,7 +75,7 @@ def test_self_test_matches_exported_phase_5_tools() -> None:
     )
 
     assert payload["server_id"] == "tqmemory"
-    assert payload["tool_names"] == list(PHASE_5_TOOL_NAMES)
+    assert payload["tool_names"] == list(CURRENT_TOOL_NAMES)
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["version"] == __version__
     assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]

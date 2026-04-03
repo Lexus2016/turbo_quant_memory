@@ -35,6 +35,7 @@ Quick links: [What it does](#what-it-does) | [Install](#install) | [Connect a cl
 | 3. Work normally | You describe the task in plain language, not as shell commands |
 | 4. Search small first | The agent can call `semantic_search` before opening full files |
 | 5. Save what matters | Decisions, lessons, handoffs, and patterns can be written back as notes |
+| 6. Keep knowledge clean | `lint_knowledge_base` can detect broken links, orphan notes, and duplicate titles |
 
 ## Benchmarks From This Repository
 
@@ -64,8 +65,8 @@ These are real measurements for this repository and this implementation. They ar
 
 | Best for | Commands |
 |---|---|
-| Released install with `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
-| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
+| Released install with `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4`<br>`turbo-memory-mcp serve` |
+| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4`<br>`turbo-memory-mcp serve` |
 | Local development | `uv sync`<br>`uv run turbo-memory-mcp serve` |
 | Editable source install | `python -m venv .venv`<br>`. .venv/bin/activate`<br>`pip install -e .`<br>`python -m turbo_memory_mcp serve` |
 
@@ -105,6 +106,7 @@ After setup, you just talk to the agent normally. If memory is relevant, the age
 | `remember_note` | Save something important for later |
 | `promote_note` | Reuse a proven note across projects |
 | `deprecate_note` | Retire old knowledge without deleting history |
+| `lint_knowledge_base` | Run a structural health check over your markdown knowledge base |
 
 ## When Memory Gets Outdated
 
@@ -138,6 +140,7 @@ Current project resolution order:
 | `semantic_search` | Retrieve compact context |
 | `hydrate` | Open more of a selected result |
 | `index_paths` | Index markdown roots |
+| `lint_knowledge_base` | Report broken internal links, orphan candidates, and duplicate titles |
 
 Storage location: `~/.turbo-quant-memory/`
 

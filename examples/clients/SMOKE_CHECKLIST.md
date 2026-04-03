@@ -8,8 +8,8 @@ Install the packaged CLI before wiring the MCP server into a client.
 
 | Method | Command |
 |---|---|
-| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
-| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
+| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
 | Runtime | `turbo-memory-mcp serve` |
 
 ## Shared Validation Flow
@@ -22,16 +22,18 @@ Run this flow in every client after the server is connected:
 4. `promote_note(note_id)`
 5. `index_paths(paths=["."], mode="incremental")`
 6. `semantic_search(query="namespace smoke", scope="hybrid")`
-7. `hydrate(item_id, scope="project", mode="default")` on a Markdown hit
+7. `lint_knowledge_base(paths=["."], max_issues=50)`
+8. `hydrate(item_id, scope="project", mode="default")` on a Markdown hit
 
 Expected pass signals:
 
-- `self_test.tool_count = 10`
+- `self_test.tool_count = 11`
 - `server_info.current_project` exists
 - `server_info.index_status.project.freshness` becomes `fresh` after indexing
 - `remember_note` returns `scope = "project"`
 - `promote_note` returns `scope = "global"` with `promoted_from`
 - `semantic_search(scope="hybrid")` returns compact cards with `compressed_summary`, `key_points`, and `confidence_state`
+- `lint_knowledge_base(...)` returns `summary` and bounded `issues`
 - `hydrate(...)` returns the full source item plus a bounded neighborhood
 - `project` hits appear before promoted `global` hits when both are relevant
 

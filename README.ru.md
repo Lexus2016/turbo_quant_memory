@@ -35,6 +35,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 | 3. Работать нормально | Вы описываете задачу обычным языком, а не shell-командами |
 | 4. Сначала искать коротко | Агент может вызвать `semantic_search` перед открытием полных файлов |
 | 5. Сохранять важное | Решения, уроки, передачи контекста и паттерны можно записывать обратно в память |
+| 6. Держать базу знаний чистой | `lint_knowledge_base` находит битые ссылки, сиротские заметки и дубликаты заголовков |
 
 ## Бенчмарки Из Этого Репозитория
 
@@ -64,8 +65,8 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 
 | Для чего | Команды |
 |---|---|
-| Установка релиза через `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
-| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3`<br>`turbo-memory-mcp serve` |
+| Установка релиза через `uv` | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4`<br>`turbo-memory-mcp serve` |
+| `pip` fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4`<br>`turbo-memory-mcp serve` |
 | Локальная разработка | `uv sync`<br>`uv run turbo-memory-mcp serve` |
 | Editable-установка из source | `python -m venv .venv`<br>`. .venv/bin/activate`<br>`pip install -e .`<br>`python -m turbo_memory_mcp serve` |
 
@@ -105,6 +106,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 | `remember_note` | Сохранить что-то важное на будущее |
 | `promote_note` | Переиспользовать проверенную заметку между проектами |
 | `deprecate_note` | Убрать устаревшее знание без потери истории |
+| `lint_knowledge_base` | Запустить структурную проверку markdown knowledge base |
 
 ## Когда Знание Устарело
 
@@ -138,6 +140,7 @@ Turbo Quant Memory — это local-first слой памяти для AI-аге
 | `semantic_search` | Достать компактный контекст |
 | `hydrate` | Открыть больше выбранного результата |
 | `index_paths` | Проиндексировать markdown roots |
+| `lint_knowledge_base` | Показать битые internal links, orphan candidates и duplicate titles |
 
 Где лежат данные: `~/.turbo-quant-memory/`
 

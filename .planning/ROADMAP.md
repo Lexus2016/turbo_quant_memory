@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** All v1 phases completed; ready for production validation
+**Status:** All v1 phases completed; production validation plus targeted v1.1 quick extensions
 
 ## Overview
 
@@ -14,6 +14,7 @@
 | 4 | Compressed Retrieval | Return compact, provenance-rich retrieval results instead of raw file dumps | RET-01, RET-02, SAFE-01, SAFE-02 | 4 |
 | 5 | Hydration and Write-Back | Add fuller-context recovery and persistent session memory | RET-03, RET-04, MEM-01, MEM-02 | 4 |
 | 6 | Hardening and Adoption | Add observability, smoke tests, and easy operator guidance for real use | OPS-01, OPS-02 | 4 |
+| 7 | Knowledge-Base Hygiene (Quick Extension) | Add structural wiki linting so agent-managed markdown corpora stay consistent over time | KBL-01, KBL-02, KBL-03 | 3 |
 
 ## Phase Details
 
@@ -113,12 +114,28 @@
 3. The integration guide is simple enough for a new project to adopt without reverse engineering.
 4. Common failure modes are documented with first-response troubleshooting steps.
 
+### Phase 7: Knowledge-Base Hygiene (Quick Extension)
+
+**Goal:** Add a lightweight maintenance loop for agent-managed markdown wikis so broken links, orphan pages, and duplicate titles are visible before they degrade retrieval quality.
+
+**Status:** Complete (2026-04-03, quick task `260403-fe0`)
+
+**Requirements:** `KBL-01`, `KBL-02`, `KBL-03`
+
+**UI hint:** no
+
+**Success criteria:**
+1. MCP server exposes `lint_knowledge_base(...)` in the stable tool catalog.
+2. Lint reports broken internal links, orphan candidates, and duplicate normalized titles with bounded payload size.
+3. Lint can run against explicit `paths` or already registered markdown roots without re-indexing.
+
 ## Coverage Check
 
 - All v1 requirements map to exactly one phase.
 - Усі v1-вимоги замаплено рівно на одну фазу.
 - The roadmap is biased toward fast adoption and minimal deployment friction.
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
+- Post-v1 quick extensions can ship as focused slices without reopening the full milestone lifecycle.
 
 ---
-*Last updated: 2026-03-26 after Phase 6 execution*
+*Last updated: 2026-04-03 after quick extension 260403-fe0*

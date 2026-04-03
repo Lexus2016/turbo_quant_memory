@@ -8,8 +8,8 @@
 
 | Способ | Команда |
 |---|---|
-| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
-| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
+| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
 | Запуск | `turbo-memory-mcp serve` |
 
 ## Общий Поток Проверки
@@ -22,16 +22,18 @@
 4. `promote_note(note_id)`
 5. `index_paths(paths=["."], mode="incremental")`
 6. `semantic_search(query="namespace smoke", scope="hybrid")`
-7. `hydrate(item_id, scope="project", mode="default")` для Markdown-hit
+7. `lint_knowledge_base(paths=["."], max_issues=50)`
+8. `hydrate(item_id, scope="project", mode="default")` для Markdown-hit
 
 Ожидаемые сигналы успеха:
 
-- `self_test.tool_count = 10`
+- `self_test.tool_count = 11`
 - `server_info.current_project` существует
 - `server_info.index_status.project.freshness` становится `fresh` после индексации
 - `remember_note` возвращает `scope = "project"`
 - `promote_note` возвращает `scope = "global"` вместе с `promoted_from`
 - `semantic_search(scope="hybrid")` возвращает компактные карточки с `compressed_summary`, `key_points` и `confidence_state`
+- `lint_knowledge_base(...)` возвращает `summary` и ограниченный список `issues`
 - `hydrate(...)` возвращает полный source item и ограниченное локальное окружение
 - `project` hit-и идут раньше promoted `global` hit-ов, когда оба релевантны
 

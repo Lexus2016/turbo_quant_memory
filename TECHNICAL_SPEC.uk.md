@@ -85,6 +85,13 @@
 - Давати швидкий self-test контракт.
 - Тримати smoke-test інструкції для підтримуваних клієнтів.
 
+### 6. Гігієна Бази Знань
+
+- Запускати структурні lint-перевірки Markdown-корпусу.
+- Виявляти биті внутрішні Markdown-посилання.
+- Виявляти orphan candidates без вхідних і вихідних internal links.
+- Виявляти дублікати нормалізованих заголовків, які підвищують неоднозначність retrieval.
+
 ## Набір MCP-Інструментів
 
 | Інструмент | Для чого |
@@ -99,6 +106,7 @@
 | `semantic_search(...)` | дістати компактний контекст |
 | `hydrate(...)` | відкрити обмежений повніший контекст |
 | `index_paths(...)` | індексувати або оновити Markdown-root |
+| `lint_knowledge_base(...)` | запускати структурну перевірку цілісності посилань і узгодженості wiki |
 
 ## Модель Даних
 
@@ -151,8 +159,8 @@
 
 | Крок | Очікуваний контракт |
 |---|---|
-| Рекомендоване встановлення | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
-| Fallback-встановлення | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.3` |
+| Рекомендоване встановлення | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Fallback-встановлення | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
 | Команда запуску | `turbo-memory-mcp serve` |
 | Приклад для Claude Code | `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve` |
 | Еквівалентні приклади | у репозиторії є готові конфіги для Codex, Cursor, OpenCode та Antigravity |
@@ -162,7 +170,7 @@
 | Рівень | Покриття |
 |---|---|
 | Unit-тести | chunking, IDs, payload contracts, provenance mapping |
-| Integration-тести | flow index -> search -> hydrate і note write-back |
+| Integration-тести | flow index -> search -> hydrate, note write-back і knowledge-base lint |
 | Smoke-тести | чиста інсталяція, підключення клієнта, індексація, retrieval, hydration |
 | Benchmarking | repository-level звіт про економію контексту з реальними вимірюваннями |
 
@@ -174,6 +182,7 @@
 4. Агенти можуть явно hydrate-ити повніший контекст за потреби.
 5. Нотатки можна зберігати, промотувати, deprecate-ити і знаходити пізніше.
 6. Оператор може швидко перевірити health, freshness і стан storage.
+7. Оператор може lint-ити Markdown knowledge base на биті посилання, orphan candidates і duplicate titles.
 
 ## Нецілі
 

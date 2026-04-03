@@ -64,6 +64,12 @@
 - **COL-01**: Multiple named memory spaces can coexist for separate projects or teams. / Кілька іменованих memory spaces можуть співіснувати для різних проєктів або команд.
 - **COL-02**: Notes can carry richer relationship metadata beyond tags. / Нотатки можуть нести багатші relationship metadata, ніж прості теги.
 
+### Knowledge Base Lifecycle
+
+- **KBL-01**: Server exposes `lint_knowledge_base(...)` to run structural diagnostics over Markdown knowledge bases. / Сервер надає `lint_knowledge_base(...)` для структурної діагностики Markdown knowledge base.
+- **KBL-02**: Lint results report broken internal links, orphan candidates, and duplicate normalized titles. / Результати lint показують биті internal links, orphan candidates і дублікати нормалізованих заголовків.
+- **KBL-03**: Lint supports both explicit root paths and previously registered Markdown roots. / Lint підтримує і явні root paths, і раніше зареєстровані Markdown roots.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -106,4 +112,4 @@
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-26 after Phase 6 execution*
+*Last updated: 2026-04-03 after quick task 260403-fe0*

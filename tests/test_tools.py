@@ -12,7 +12,7 @@ from mcp.client.stdio import stdio_client
 
 from turbo_memory_mcp import __version__
 from turbo_memory_mcp.contracts import build_install_contract
-from turbo_memory_mcp.contracts import PHASE_5_TOOL_NAMES
+from turbo_memory_mcp.contracts import CURRENT_TOOL_NAMES
 from turbo_memory_mcp.identity import resolve_project_identity
 from turbo_memory_mcp.server import build_current_project_payload
 from turbo_memory_mcp.store import resolve_storage_root
@@ -29,6 +29,7 @@ EXPECTED_TOOL_NAMES = [
     "semantic_search",
     "hydrate",
     "index_paths",
+    "lint_knowledge_base",
 ]
 
 
@@ -69,7 +70,7 @@ def collect_server_contract() -> dict[str, Any]:
 def test_tool_catalog_is_exact() -> None:
     contract = collect_server_contract()
 
-    assert list(PHASE_5_TOOL_NAMES) == EXPECTED_TOOL_NAMES
+    assert list(CURRENT_TOOL_NAMES) == EXPECTED_TOOL_NAMES
     assert contract["tool_names"] == EXPECTED_TOOL_NAMES
 
 
@@ -129,7 +130,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     install_contract = build_install_contract()
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 10
+    assert payload["tool_count"] == 11
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"

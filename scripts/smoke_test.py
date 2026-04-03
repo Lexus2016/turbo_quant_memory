@@ -26,6 +26,7 @@ EXPECTED_TOOL_NAMES = [
     "semantic_search",
     "hydrate",
     "index_paths",
+    "lint_knowledge_base",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
 
@@ -98,6 +99,15 @@ async def run_smoke() -> list[str]:
                         {
                             "paths": [str(markdown_root)],
                             "mode": "full",
+                        },
+                    )
+                )
+                knowledge_lint = result_payload(
+                    await session.call_tool(
+                        "lint_knowledge_base",
+                        {
+                            "paths": [str(markdown_root)],
+                            "max_issues": 50,
                         },
                     )
                 )
@@ -232,7 +242,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "hybrid", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 10, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 11, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
@@ -386,6 +396,18 @@ async def run_smoke() -> list[str]:
     expect(full_index["changed_files"] == 2, f"index_paths changed_files mismatch: {full_index}")
     expect(full_index["deleted_files"] == 0, f"index_paths deleted_files mismatch: {full_index}")
     expect(full_index["block_count"] >= 2, f"index_paths block_count mismatch: {full_index}")
+    expect(knowledge_lint["status"] == "ok", f"knowledge_lint status mismatch: {knowledge_lint}")
+    expect(knowledge_lint["summary"]["root_count"] == 1, f"knowledge_lint root_count mismatch: {knowledge_lint}")
+    expect(knowledge_lint["summary"]["file_count"] == 2, f"knowledge_lint file_count mismatch: {knowledge_lint}")
+    expect(knowledge_lint["summary"]["broken_link_count"] == 0, f"knowledge_lint broken_link mismatch: {knowledge_lint}")
+    expect(
+        knowledge_lint["summary"]["duplicate_title_count"] == 0,
+        f"knowledge_lint duplicate_title mismatch: {knowledge_lint}",
+    )
+    expect(
+        knowledge_lint["summary"]["orphan_candidate_count"] >= 1,
+        f"knowledge_lint orphan_count mismatch: {knowledge_lint}",
+    )
 
     expect(idle_incremental["mode"] == "incremental", f"idle incremental mode mismatch: {idle_incremental}")
     expect(idle_incremental["indexed_files"] == 2, f"idle incremental indexed_files mismatch: {idle_incremental}")
@@ -426,6 +448,7 @@ async def run_smoke() -> list[str]:
         f"PASS deprecate_note: {deprecated['item']['item_id']} -> {replacement_note['item']['item_id']}",
         f"PASS server_info stats: project_rows={server_info_after['storage_stats']['project']['retrieval_row_count']}",
         f"PASS index_paths full: {full_index['indexed_files']} files / {full_index['block_count']} blocks",
+        f"PASS lint_knowledge_base: issues={knowledge_lint['summary']['issue_count']}",
         f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
         f"PASS index_paths incremental changed: changed={changed_incremental['changed_files']} deleted={changed_incremental['deleted_files']}",
     ]

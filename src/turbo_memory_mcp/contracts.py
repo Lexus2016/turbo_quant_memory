@@ -1,4 +1,4 @@
-"""Stable payload contracts for the Phase 5 MCP tool surface."""
+"""Stable payload contracts for the current MCP tool surface."""
 
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + (
     "hydrate",
     "index_paths",
 )
+PHASE_6_TOOL_NAMES = PHASE_5_TOOL_NAMES + ("lint_knowledge_base",)
+CURRENT_TOOL_NAMES = PHASE_6_TOOL_NAMES
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
@@ -351,8 +353,8 @@ def build_self_test_payload(
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     return {
         "status": "ok",
-        "tool_count": len(PHASE_5_TOOL_NAMES),
-        "tool_names": list(PHASE_5_TOOL_NAMES),
+        "tool_count": len(CURRENT_TOOL_NAMES),
+        "tool_names": list(CURRENT_TOOL_NAMES),
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
         "version": payload["version"],
@@ -373,6 +375,7 @@ def build_self_test_payload(
 
 
 __all__ = [
+    "CURRENT_TOOL_NAMES",
     "DEFAULT_QUERY_MODE",
     "DEFAULT_WRITE_SCOPE",
     "HYDRATE_MODES",
@@ -382,6 +385,7 @@ __all__ = [
     "PHASE_2_TOOL_NAMES",
     "PHASE_3_TOOL_NAMES",
     "PHASE_4_TOOL_NAMES",
+    "PHASE_6_TOOL_NAMES",
     "PHASE_5_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",

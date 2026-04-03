@@ -12,12 +12,9 @@ except ImportError:  # pragma: no cover - compatibility for current stable SDK
 
 from .contracts import (
     DEFAULT_QUERY_MODE,
-    PHASE_5_TOOL_NAMES,
     PRODUCT_NAME,
-    QUERY_MODES,
     SERVER_ID,
     build_health_payload,
-    build_note_item_payload,
     build_note_write_payload,
     build_scope_payload,
     build_self_test_payload,
@@ -26,6 +23,7 @@ from .contracts import (
 from .hydration import hydrate
 from .identity import ProjectIdentity, resolve_project_identity
 from .ingestion import index_paths
+from .knowledge_lint import lint_knowledge_base
 from .retrieval import semantic_search, sync_global_retrieval, sync_project_retrieval
 from .retrieval_index import RetrievalIndex
 from .store import GLOBAL_SCOPE, MemoryStore, NOTE_KINDS, PROJECT_SCOPE, resolve_storage_root
@@ -39,7 +37,8 @@ def build_server() -> MCPServer:
             "promote reusable knowledge into global scope, deprecate stale notes without deleting "
             "history, retrieve compact "
             "project/global/hybrid memory, hydrate fuller local context through "
-            "hydrate(...), and index Markdown roots through index_paths(...)."
+            "hydrate(...), index Markdown roots through index_paths(...), and run "
+            "lint_knowledge_base(...) to detect broken links, orphans, and duplicate titles."
         ),
         json_response=True,
         log_level="ERROR",
@@ -114,6 +113,13 @@ def build_server() -> MCPServer:
         mode: str = "incremental",
     ) -> dict[str, object]:
         return index_paths_impl(paths=paths, mode=mode)
+
+    @mcp.tool()
+    def lint_knowledge_base(
+        paths: list[str] | None = None,
+        max_issues: int = 200,
+    ) -> dict[str, object]:
+        return lint_knowledge_base_impl(paths=paths, max_issues=max_issues)
 
     return mcp
 
@@ -291,6 +297,18 @@ def index_paths_impl(
     return payload
 
 
+def lint_knowledge_base_impl(
+    paths: list[str] | None = None,
+    *,
+    max_issues: int = 200,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    runtime_cwd = Path(cwd).expanduser().resolve() if cwd is not None else store.project.project_root
+    return lint_knowledge_base(store, paths=paths, max_issues=max_issues, cwd=runtime_cwd)
+
+
 def build_runtime_context(
     *,
     cwd: Path | str | None = None,
@@ -412,7 +430,6 @@ def _max_timestamp(values: list[object]) -> str | None:
 
 __all__ = [
     "MCPServer",
-    "PHASE_5_TOOL_NAMES",
     "PRODUCT_NAME",
     "SERVER_ID",
     "build_server",
@@ -424,6 +441,7 @@ __all__ = [
     "deprecate_note_impl",
     "hydrate_impl",
     "index_paths_impl",
+    "lint_knowledge_base_impl",
     "promote_note_impl",
     "remember_note_impl",
     "run_stdio_server",
