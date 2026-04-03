@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: Ready for production validation
 stopped_at: Phase 6 completed
-last_updated: "2026-04-03T09:23:00.000Z"
+last_updated: "2026-04-03T14:34:39.023Z"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -103,7 +103,13 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- [2026-04-03-detect-stale-index-freshness](./todos/pending/2026-04-03-detect-stale-index-freshness.md) - confirm source freshness before search/hydrate so agents do not use stale Markdown context
+- [2026-04-03-prune-removed-markdown-roots](./todos/pending/2026-04-03-prune-removed-markdown-roots.md) - remove dead roots, manifests, and retrieval rows when indexed root sets change
+- [2026-04-03-make-retrieval-sync-incremental](./todos/pending/2026-04-03-make-retrieval-sync-incremental.md) - stop full-scope re-embedding on every note write
+- [2026-04-03-decouple-writes-from-embedder](./todos/pending/2026-04-03-decouple-writes-from-embedder.md) - keep note persistence reliable even when embeddings are slow or unavailable
+- [2026-04-03-harden-hybrid-scope-isolation](./todos/pending/2026-04-03-harden-hybrid-scope-isolation.md) - prevent accidental cross-project context mixing through `global` and `hybrid`
+- [2026-04-03-improve-unicode-lexical-ranking](./todos/pending/2026-04-03-improve-unicode-lexical-ranking.md) - improve retrieval quality for Ukrainian and Russian queries
+- [2026-04-03-cache-storage-stats-and-server-info](./todos/pending/2026-04-03-cache-storage-stats-and-server-info.md) - reduce repeated storage scans in ops payload generation
 
 ### Blockers/Concerns
 
