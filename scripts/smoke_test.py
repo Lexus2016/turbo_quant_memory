@@ -43,7 +43,10 @@ def result_payload(result: Any) -> dict[str, Any]:
     if text is None:
         raise AssertionError("Tool call returned no text payload.")
 
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"Tool call returned non-JSON payload: {text}") from exc
 
 
 def expect(condition: bool, message: str) -> None:
@@ -239,7 +242,7 @@ async def run_smoke() -> list[str]:
     scopes = [scope["name"] for scope in list_scopes["scopes"]]
     expect(scopes == EXPECTED_SCOPES, f"list_scopes mismatch: {list_scopes}")
     expect(list_scopes["default_write_scope"] == "project", f"list_scopes.default_write_scope mismatch: {list_scopes}")
-    expect(list_scopes["default_query_mode"] == "hybrid", f"list_scopes.default_query_mode mismatch: {list_scopes}")
+    expect(list_scopes["default_query_mode"] == "project", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
     expect(self_test["tool_count"] == 11, f"self_test.tool_count mismatch: {self_test}")

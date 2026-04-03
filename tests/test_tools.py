@@ -103,7 +103,7 @@ def test_server_info_payload_fields() -> None:
     ]
     assert payload["client_tiers"]["tier_2"] == ["Antigravity"]
     assert payload["default_write_scope"] == "project"
-    assert payload["default_query_mode"] == "hybrid"
+    assert payload["default_query_mode"] == "project"
     assert payload["query_modes"] == ["project", "global", "hybrid"]
     assert payload["storage_root"] == str(resolve_storage_root())
     assert payload["current_project"] == expected_project
@@ -122,7 +122,7 @@ def test_live_scope_contract_exposes_active_namespace_modes() -> None:
     assert [scope["status"] for scope in scopes] == ["active", "active", "active"]
     assert [scope["writes"] for scope in scopes] == ["default", "promotion_only", "read_only"]
     assert payload["default_write_scope"] == "project"
-    assert payload["default_query_mode"] == "hybrid"
+    assert payload["default_query_mode"] == "project"
 
 
 def test_self_test_summarises_namespace_contract() -> None:
@@ -145,7 +145,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     ]
     assert payload["storage_root"] == str(resolve_storage_root())
     assert payload["namespace_contract"]["default_write_scope"] == "project"
-    assert payload["namespace_contract"]["default_query_mode"] == "hybrid"
+    assert payload["namespace_contract"]["default_query_mode"] == "project"
     assert payload["namespace_contract"]["query_modes"] == ["project", "global", "hybrid"]
     assert payload["namespace_contract"]["index_modes"] == ["full", "incremental"]
     assert payload["namespace_contract"]["hydrate_modes"] == ["default", "related"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,10 +8,13 @@ import pytest
 from turbo_memory_mcp.server import (
     deprecate_note_impl,
     hydrate_impl,
+    index_paths_impl,
     promote_note_impl,
     remember_note_impl,
     semantic_search_impl,
+    server_info_impl,
 )
+from turbo_memory_mcp.store import RETRIEVAL_FORMAT_VERSION
 from unittest.mock import patch
 
 
@@ -212,3 +216,93 @@ def test_deprecate_note_impl_supersedes_old_note_and_hides_it_from_search(tmp_pa
     assert payload["item"]["note_status"] == "superseded"
     assert payload["item"]["superseded_by"]["note_id"] == replacement["item"]["item_id"]
     assert [item["item_id"] for item in search["items"]] == [replacement["item"]["item_id"]]
+
+
+def test_hydrate_impl_refreshes_stale_markdown_before_loading(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    project_root = Path(env["TQMEMORY_PROJECT_ROOT"])
+    docs = project_root / "docs"
+    docs.mkdir()
+    auth_doc = docs / "auth.md"
+    auth_doc.write_text("# Auth\n\nAlpha block.", encoding="utf-8")
+
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    auth_doc.write_text("# Auth\n\nBeta block.", encoding="utf-8")
+
+    search = semantic_search_impl("beta block", scope="project", environ=env)
+    payload = hydrate_impl(search["items"][0]["item_id"], scope="project", mode="default", environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["source_kind"] == "markdown"
+    assert "Beta block." in payload["item"]["content"]
+
+
+def test_explicit_hybrid_search_can_include_highly_relevant_global_note(tmp_path: Path) -> None:
+    env_a = _test_env(tmp_path)
+    env_b = dict(env_a)
+    env_b["TQMEMORY_PROJECT_ID"] = "project-beta"
+    env_b["TQMEMORY_PROJECT_NAME"] = "Beta Project"
+
+    remember_note_impl(
+        "Local Note",
+        "Project-only auth note.",
+        kind="lesson",
+        tags=["auth"],
+        environ=env_a,
+    )
+    promoted = remember_note_impl(
+        "Reusable Best Practice",
+        "Critical zebra strategy best practice from global memory.",
+        kind="pattern",
+        tags=["best-practice", "zebra"],
+        environ=env_b,
+    )
+    promote_note_impl(promoted["item"]["item_id"], environ=env_b)
+
+    payload = semantic_search_impl("zebra strategy best practice", scope="hybrid", limit=5, environ=env_a)
+
+    assert payload["scope"] == "hybrid"
+    assert any(item["scope"] == "global" for item in payload["items"])
+    assert any(item["title"] == "Reusable Best Practice" for item in payload["items"])
+
+
+def test_server_info_reports_usage_stats_after_search_and_hydrate(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    stored = remember_note_impl(
+        "Auth Flow",
+        "Project auth flow uses JWT refresh rotation.",
+        kind="lesson",
+        tags=["auth"],
+        environ=env,
+    )
+
+    semantic_search_impl("auth refresh", scope="project", environ=env)
+    hydrate_impl(stored["item"]["item_id"], scope="project", mode="related", environ=env)
+    payload = server_info_impl(environ=env)
+
+    assert payload["usage_stats"]["totals"]["search_calls"] == 1
+    assert payload["usage_stats"]["totals"]["hydrate_calls"] == 1
+    assert payload["usage_stats"]["current_project"]["project_id"] == "project-alpha"
+    assert payload["usage_stats"]["headline"]
+
+
+def test_semantic_search_rebuilds_project_retrieval_after_manifest_mismatch(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Auth Flow",
+        "Project auth flow uses JWT refresh rotation.",
+        kind="lesson",
+        tags=["auth"],
+        environ=env,
+    )
+
+    manifest_path = Path(env["TQMEMORY_HOME"]) / "projects" / "project-alpha" / "retrieval" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 0
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    payload = semantic_search_impl("auth refresh", scope="project", environ=env)
+    repaired_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert payload["result_count"] == 1
+    assert repaired_manifest["format_version"] == RETRIEVAL_FORMAT_VERSION

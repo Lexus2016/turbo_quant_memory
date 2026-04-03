@@ -126,3 +126,25 @@ def test_index_paths_skips_default_ignored_subdirectories_and_cleans_existing_no
     assert cleanup_payload["deleted_files"] == 1
     assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["README.md"]
     assert {block["source_path"] for block in store.list_markdown_blocks()} == {"README.md"}
+
+
+def test_index_paths_full_with_explicit_paths_prunes_removed_roots(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs_a = project_root / "docs-a"
+    docs_b = project_root / "docs-b"
+    docs_a.mkdir()
+    docs_b.mkdir()
+    (docs_a / "a.md").write_text("# A\n\nAlpha text.", encoding="utf-8")
+    (docs_b / "b.md").write_text("# B\n\nBeta text.", encoding="utf-8")
+
+    first_payload = index_paths_impl(paths=[str(docs_a), str(docs_b)], mode="full", cwd=project_root, environ=env)
+    second_payload = index_paths_impl(paths=[str(docs_b)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert len(first_payload["registered_roots"]) == 2
+    assert len(second_payload["registered_roots"]) == 1
+    assert second_payload["registered_roots"][0]["path"] == str(docs_b.resolve())
+    assert second_payload["deleted_files"] == 1
+    assert [root["path"] for root in store.list_markdown_roots()] == [str(docs_b.resolve())]
+    assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["b.md"]
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {"b.md"}

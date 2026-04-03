@@ -1,3 +1,4 @@
+completed: 2026-04-03
 ---
 created: 2026-04-03T14:34:39.023Z
 title: Decouple writes from embedder

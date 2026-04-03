@@ -62,7 +62,7 @@ def test_server_info_matches_documented_namespace_contract() -> None:
     assert payload["current_project"] == SAMPLE_PROJECT
     assert payload["storage_root"] == "/tmp/tqmemory"
     assert payload["query_modes"] == ["project", "global", "hybrid"]
-    assert payload["default_query_mode"] == "hybrid"
+    assert payload["default_query_mode"] == "project"
     assert payload["storage_stats"]["project"]["markdown_block_count"] == 3
     assert payload["index_status"]["project"]["freshness"] == "fresh"
 

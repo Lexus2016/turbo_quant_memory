@@ -1,15 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
+milestone: v1.1
 milestone_name: milestone
-status: Ready for production validation
-stopped_at: Phase 6 completed
-last_updated: "2026-04-03T14:34:39.023Z"
+status: Milestone complete
+stopped_at: Phase 8 completed
+last_updated: "2026-04-03T15:35:39.100Z"
+last_activity: 2026-04-03
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 16
-  completed_plans: 16
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 17
+  completed_plans: 17
 ---
 
 # Project State
@@ -19,18 +20,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** Agents can offload cold project context and recover only the minimum high-signal context needed to act correctly.
-**Current focus:** Production validation and client rollout
+**Current focus:** Release adoption and client rollout on the `v0.3.0` contract
 
 ## Current Position
 
-Milestone: v1.0 — COMPLETE
-Next: run production validation in the target client environments using `examples/clients/SMOKE_CHECKLIST.md`
+Milestone: v1.1 hardening slice — COMPLETE
+Next: monitor adoption on live agent clients and tune pricing basis per environment if USD telemetry is desired
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 16
+- Total plans completed: 17
 - Average duration: 4 min
 - Total execution time: 1.1 hours
 
@@ -48,7 +49,7 @@ Next: run production validation in the target client environments using `example
 **Recent Trend:**
 
 - Last 3 plans: 05-02, 05-03, 06-01
-- Trend: v1 complete; ready for production validation
+- Trend: v1 hardening slice complete; ready for release rollout validation
 
 | Phase 01-client-integration-foundation P01 | 356 | 3 tasks | 9 files |
 | Phase 01-client-integration-foundation P02 | 412 | 3 tasks | 7 files |
@@ -101,15 +102,15 @@ Recent decisions affecting current work:
 - Phase 6: `server_info()` now exposes storage counts and freshness snapshots instead of adding a separate ops tool
 - Phase 6: the shared stdio smoke path now proves install -> index -> search -> hydrate -> typed note write-back end to end
 
+### Roadmap Evolution
+
+- Phase 8 added: version-aware index migration, persistent savings telemetry, release rollout, and client refresh
+- Phase 8 completed: derived indexes auto-rebuild on format mismatch and telemetry stays outside retrieval memory
+
 ### Pending Todos
 
-- [2026-04-03-detect-stale-index-freshness](./todos/pending/2026-04-03-detect-stale-index-freshness.md) - confirm source freshness before search/hydrate so agents do not use stale Markdown context
-- [2026-04-03-prune-removed-markdown-roots](./todos/pending/2026-04-03-prune-removed-markdown-roots.md) - remove dead roots, manifests, and retrieval rows when indexed root sets change
-- [2026-04-03-make-retrieval-sync-incremental](./todos/pending/2026-04-03-make-retrieval-sync-incremental.md) - stop full-scope re-embedding on every note write
-- [2026-04-03-decouple-writes-from-embedder](./todos/pending/2026-04-03-decouple-writes-from-embedder.md) - keep note persistence reliable even when embeddings are slow or unavailable
-- [2026-04-03-harden-hybrid-scope-isolation](./todos/pending/2026-04-03-harden-hybrid-scope-isolation.md) - prevent accidental cross-project context mixing through `global` and `hybrid`
-- [2026-04-03-improve-unicode-lexical-ranking](./todos/pending/2026-04-03-improve-unicode-lexical-ranking.md) - improve retrieval quality for Ukrainian and Russian queries
-- [2026-04-03-cache-storage-stats-and-server-info](./todos/pending/2026-04-03-cache-storage-stats-and-server-info.md) - reduce repeated storage scans in ops payload generation
+No active pending todos.
+Audit hardening items from 2026-04-03 were completed and archived under `./todos/completed/`.
 
 ### Blockers/Concerns
 
@@ -124,6 +125,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-26T15:05:00.000Z
-Last activity: 2026-04-03 - Completed quick task 260403-fe0: Implement knowledge-base lint tool and docs/roadmap updates for agentic wiki loop
-Stopped at: Phase 6 completed
-Resume file: examples/clients/SMOKE_CHECKLIST.md
+Last activity: 2026-04-03 - Completed Phase 8 hardening/release rollout slice for `v0.3.0`
+Stopped at: Phase 8 completed
+Resume file: README.md

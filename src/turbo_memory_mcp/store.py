@@ -11,6 +11,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
+from . import __version__
 from .identity import ProjectIdentity
 
 ENV_STORAGE_HOME = "TQMEMORY_HOME"
@@ -29,6 +30,9 @@ NOTE_STATUSES = (
     ARCHIVED_NOTE_STATUS,
     SUPERSEDED_NOTE_STATUS,
 )
+MARKDOWN_FORMAT_VERSION = 1
+RETRIEVAL_FORMAT_VERSION = 1
+USAGE_STATS_FORMAT_VERSION = 1
 
 
 class MemoryStore:
@@ -83,6 +87,9 @@ class MemoryStore:
     def project_retrieval_dir(self, project_id: str | None = None) -> Path:
         return self.project_dir(project_id) / "retrieval"
 
+    def project_retrieval_manifest_path(self, project_id: str | None = None) -> Path:
+        return self.project_retrieval_dir(project_id) / "manifest.json"
+
     def global_dir(self) -> Path:
         return self.storage_root / "global"
 
@@ -98,6 +105,15 @@ class MemoryStore:
     def global_retrieval_dir(self) -> Path:
         return self.global_dir() / "retrieval"
 
+    def global_retrieval_manifest_path(self) -> Path:
+        return self.global_retrieval_dir() / "manifest.json"
+
+    def telemetry_dir(self) -> Path:
+        return self.storage_root / "telemetry"
+
+    def usage_stats_path(self) -> Path:
+        return self.telemetry_dir() / "usage.json"
+
     def ensure_layout(self) -> None:
         self.project_notes_dir().mkdir(parents=True, exist_ok=True)
         self.global_notes_dir().mkdir(parents=True, exist_ok=True)
@@ -111,6 +127,9 @@ class MemoryStore:
         self.project_retrieval_dir(project_id).mkdir(parents=True, exist_ok=True)
         self.global_retrieval_dir().mkdir(parents=True, exist_ok=True)
 
+    def ensure_telemetry_layout(self) -> None:
+        self.telemetry_dir().mkdir(parents=True, exist_ok=True)
+
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
         manifest = {
@@ -120,6 +139,9 @@ class MemoryStore:
         }
         _write_json_atomic(self.project_manifest_path(), manifest)
         return manifest
+
+    def read_project_manifest(self, project_id: str | None = None) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.project_manifest_path(project_id))
 
     def write_global_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
@@ -131,6 +153,9 @@ class MemoryStore:
         _write_json_atomic(self.global_manifest_path(), manifest)
         return manifest
 
+    def read_global_manifest(self) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.global_manifest_path())
+
     def write_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any]:
         resolved_project_id = project_id or self.project.project_id
         self.ensure_markdown_layout(resolved_project_id)
@@ -138,10 +163,56 @@ class MemoryStore:
             "scope": PROJECT_SCOPE,
             "project_id": resolved_project_id,
             "source_kind": MARKDOWN_SOURCE_KIND,
+            "format_version": MARKDOWN_FORMAT_VERSION,
+            "package_version": __version__,
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.project_markdown_manifest_path(resolved_project_id), manifest)
         return manifest
+
+    def read_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.project_markdown_manifest_path(project_id))
+
+    def write_project_retrieval_manifest(self, project_id: str | None = None) -> dict[str, Any]:
+        resolved_project_id = project_id or self.project.project_id
+        self.ensure_retrieval_layout(resolved_project_id)
+        manifest = {
+            "scope": PROJECT_SCOPE,
+            "project_id": resolved_project_id,
+            "source_kind": "retrieval",
+            "format_version": RETRIEVAL_FORMAT_VERSION,
+            "package_version": __version__,
+            "updated_at": utc_now(),
+        }
+        _write_json_atomic(self.project_retrieval_manifest_path(resolved_project_id), manifest)
+        return manifest
+
+    def read_project_retrieval_manifest(self, project_id: str | None = None) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.project_retrieval_manifest_path(project_id))
+
+    def write_global_retrieval_manifest(self) -> dict[str, Any]:
+        self.ensure_retrieval_layout()
+        manifest = {
+            "scope": GLOBAL_SCOPE,
+            "source_kind": "retrieval",
+            "format_version": RETRIEVAL_FORMAT_VERSION,
+            "package_version": __version__,
+            "updated_at": utc_now(),
+        }
+        _write_json_atomic(self.global_retrieval_manifest_path(), manifest)
+        return manifest
+
+    def read_global_retrieval_manifest(self) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.global_retrieval_manifest_path())
+
+    def write_usage_stats(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        self.ensure_telemetry_layout()
+        record = dict(payload)
+        _write_json_atomic(self.usage_stats_path(), record)
+        return record
+
+    def read_usage_stats(self) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.usage_stats_path())
 
     def write_project_note(
         self,
@@ -370,6 +441,7 @@ class MemoryStore:
 
     def delete_markdown_file_manifest(self, file_key: str, project_id: str | None = None) -> None:
         self.project_markdown_file_path(file_key, project_id).unlink(missing_ok=True)
+        self.write_markdown_manifest(project_id)
 
     def write_markdown_block(self, block_record: Mapping[str, Any]) -> dict[str, Any]:
         record = {
@@ -459,6 +531,7 @@ class MemoryStore:
 
     def delete_markdown_block(self, block_id: str, project_id: str | None = None) -> None:
         self.project_markdown_block_path(block_id, project_id).unlink(missing_ok=True)
+        self.write_markdown_manifest(project_id)
 
     def delete_blocks_for_file(
         self,
@@ -474,6 +547,34 @@ class MemoryStore:
         for block_id in block_ids:
             self.delete_markdown_block(block_id, project_id=project_id)
         return sorted(block_ids)
+
+    def delete_markdown_root_data(
+        self,
+        root_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, list[str]]:
+        manifests = self.list_markdown_file_manifests(project_id=project_id, root_id=root_id)
+        deleted_file_keys: list[str] = []
+        deleted_block_ids: list[str] = []
+
+        for manifest in manifests:
+            deleted_file_keys.append(str(manifest["file_key"]))
+            deleted_block_ids.extend(
+                self.delete_blocks_for_file(
+                    root_id,
+                    str(manifest["source_path"]),
+                    project_id=project_id,
+                )
+            )
+            self.delete_markdown_file_manifest(str(manifest["file_key"]), project_id=project_id)
+
+        self.project_markdown_root_path(root_id, project_id).unlink(missing_ok=True)
+        self.write_markdown_manifest(project_id)
+        return {
+            "file_keys": sorted(deleted_file_keys),
+            "block_ids": sorted(set(deleted_block_ids)),
+        }
 
     def replace_blocks_for_file(
         self,
@@ -605,6 +706,12 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return _read_json(path)
+
+
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
@@ -630,12 +737,15 @@ __all__ = [
     "ARCHIVED_NOTE_STATUS",
     "ENV_STORAGE_HOME",
     "GLOBAL_SCOPE",
+    "MARKDOWN_FORMAT_VERSION",
     "MARKDOWN_SOURCE_KIND",
     "MemoryStore",
     "NOTE_SOURCE_KIND",
     "NOTE_STATUSES",
+    "RETRIEVAL_FORMAT_VERSION",
     "SUPERSEDED_NOTE_STATUS",
     "PROJECT_SCOPE",
+    "USAGE_STATS_FORMAT_VERSION",
     "generate_note_id",
     "normalize_note_status",
     "resolve_storage_root",

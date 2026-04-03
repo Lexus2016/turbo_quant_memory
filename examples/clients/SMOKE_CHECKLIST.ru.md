@@ -8,8 +8,8 @@
 
 | Способ | Команда |
 |---|---|
-| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
-| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
+| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
 | Запуск | `turbo-memory-mcp serve` |
 
 ## Общий Поток Проверки
@@ -29,7 +29,9 @@
 
 - `self_test.tool_count = 11`
 - `server_info.current_project` существует
+- `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` становится `fresh` после индексации
+- `server_info.usage_stats` существует и показывает накопленную retrieval/hydrate активность
 - `remember_note` возвращает `scope = "project"`
 - `promote_note` возвращает `scope = "global"` вместе с `promoted_from`
 - `semantic_search(scope="hybrid")` возвращает компактные карточки с `compressed_summary`, `key_points` и `confidence_state`
@@ -53,6 +55,7 @@
 - Фикстура: [examples/clients/codex.config.toml](codex.config.toml)
 - Подключение: смержить фикстуру в `.codex/config.toml` или `~/.codex/config.toml`, либо выполнить `codex mcp add tqmemory -- turbo-memory-mcp serve`
 - Примечание о repo root: запускать Codex в целевом репозитории, через `codex -C <repo-root> ...`, или явно задать `TQMEMORY_PROJECT_ROOT`, если MCP запускается в другом месте
+- Опционально для value tracking: добавьте `TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD` в `env`, если хотите видеть примерную экономию в USD в `server_info.usage_stats`
 - Подтверждение: в `/mcp` видно `tqmemory`, а `server_info.current_project.project_root` указывает на целевой репозиторий
 - Промпт: использовать только MCP-сервер `tqmemory` и пройти общий validation flow
 

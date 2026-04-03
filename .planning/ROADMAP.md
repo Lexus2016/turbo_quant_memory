@@ -2,7 +2,7 @@
 
 **Defined:** 2026-03-25
 **Requirements mapped:** 21 / 21
-**Status:** All v1 phases completed; production validation plus targeted v1.1 quick extensions
+**Status:** v1 core shipped; post-v1 hardening and rollout slices shipped through `v0.3.0`
 
 ## Overview
 
@@ -15,6 +15,7 @@
 | 5 | Hydration and Write-Back | Add fuller-context recovery and persistent session memory | RET-03, RET-04, MEM-01, MEM-02 | 4 |
 | 6 | Hardening and Adoption | Add observability, smoke tests, and easy operator guidance for real use | OPS-01, OPS-02 | 4 |
 | 7 | Knowledge-Base Hygiene (Quick Extension) | Add structural wiki linting so agent-managed markdown corpora stay consistent over time | KBL-01, KBL-02, KBL-03 | 3 |
+| 8 | Memory Resilience, Migration Stats, Release Rollout, and Client Refresh | Make derived indexes self-healing across upgrades, prove token savings with persistent telemetry, and refresh the live client rollout contract | OPS-01, OPS-02 | 4 |
 
 ## Phase Details
 
@@ -137,5 +138,24 @@
 - Roadmap навмисно зміщений у бік швидкого adoption і мінімального тертя при розгортанні.
 - Post-v1 quick extensions can ship as focused slices without reopening the full milestone lifecycle.
 
+### Phase 8: Memory resilience, migration stats, release rollout, and client refresh
+
+**Goal:** Make upgrades safe, keep context retrieval honest, surface durable savings metrics, and ensure the released binary is the one local agent clients actually execute.
+
+**Status:** Complete (2026-04-03)
+
+**Requirements:** `OPS-01`, `OPS-02`
+**Depends on:** Phase 7
+**Plans:** 1/1 plans complete
+
+Plans:
+- [x] `08-01` Version-aware manifests, savings telemetry, smoke/docs refresh, and release rollout (completed 2026-04-03)
+
+**Success criteria:**
+1. Search and hydration auto-refresh stale derived indexes after a retrieval/markdown format mismatch instead of serving outdated context.
+2. Usage telemetry persists outside project/global memory and exposes byte/token savings plus bounded milestone headlines without polluting retrieval context.
+3. README, smoke checklist, and client fixtures match the new `v0.3.0` contract and explain the savings value clearly.
+4. The shared local MCP binary can be refreshed in place for Claude Code, Codex, Gemini, and OpenCode so live clients pick up the release.
+
 ---
-*Last updated: 2026-04-03 after quick extension 260403-fe0*
+*Last updated: 2026-04-03 after phase 8 completion*

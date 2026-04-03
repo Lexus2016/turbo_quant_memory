@@ -13,7 +13,7 @@ RUNTIME_COMMAND = "turbo-memory-mcp serve"
 REPOSITORY_URL = "https://github.com/Lexus2016/turbo_quant_memory"
 TRANSPORT = "stdio"
 DEFAULT_WRITE_SCOPE = "project"
-DEFAULT_QUERY_MODE = "hybrid"
+DEFAULT_QUERY_MODE = "project"
 QUERY_MODES = ("project", "global", "hybrid")
 INDEX_MODES = ("full", "incremental")
 HYDRATE_MODES = ("default", "related")
@@ -99,12 +99,15 @@ def build_server_info_payload(
     current_project: Mapping[str, Any],
     storage_stats: Mapping[str, Any] | None = None,
     index_status: Mapping[str, Any] | None = None,
+    usage_stats: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     if storage_stats is not None:
         payload["storage_stats"] = dict(storage_stats)
     if index_status is not None:
         payload["index_status"] = dict(index_status)
+    if usage_stats is not None:
+        payload["usage_stats"] = dict(usage_stats)
     return payload
 
 
@@ -180,8 +183,9 @@ def build_note_write_payload(
     source_path: str,
     action: str,
     content_preview: str,
+    warning: str | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "status": "ok",
         "action": action,
         "item": build_note_item_payload(
@@ -192,6 +196,9 @@ def build_note_write_payload(
             content_preview=content_preview,
         ),
     }
+    if warning is not None:
+        payload["warning"] = warning
+    return payload
 
 
 def build_search_payload(

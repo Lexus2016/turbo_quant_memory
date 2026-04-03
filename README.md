@@ -45,16 +45,26 @@ Your agents stop behaving like temporary assistants and start behaving like memb
 
 ## Quick Start
 
-Install:
+Use this 60-second flow:
 
+1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4
-turbo-memory-mcp serve
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0
 ```
 
-Connect in your client as MCP server `tqmemory` with command `turbo-memory-mcp serve`.
+2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
 
-Client-specific setup files: [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md)
+```bash
+# Codex
+codex mcp add tqmemory -- turbo-memory-mcp serve
+
+# Claude Code (project scope)
+claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
+```
+
+3. Restart the client and run any `tqmemory` tool.
+
+Need Cursor, OpenCode, or Antigravity? Use ready configs in [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
 
 ## Who This Is For
 
@@ -71,6 +81,30 @@ Choose Turbo Quant Memory if you want:
 - fewer repeated mistakes
 - stronger continuity across sessions
 - higher ROI from every agent run
+
+## Benchmark-Proven Cost Advantage
+
+![Benchmark summary](benchmarks/summary-en.svg)
+
+On this repository corpus, the compact memory path shows strong savings that directly reduce model spend:
+
+- `semantic_search` only: **63.96% fewer bytes** sent to the model on average
+- `semantic_search + hydrate(top1)`: **44.1% fewer bytes** on average
+- `semantic_search` latency: **68.13 ms** average
+- `hydrate` latency: **41.63 ms** average
+
+Why this is a practical advantage:
+
+- less repeated reading means fewer billed input tokens
+- lower token pressure means lower cost per task
+- context budget stays available for reasoning instead of reloading files
+
+## New In v0.3.0
+
+- Version-aware index manifests auto-rebuild derived indexes after a format-changing upgrade.
+- `server_info()` now reports persistent usage and savings telemetry outside the memory scopes.
+- Set `TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD` if you want saved tokens translated into estimated USD.
+- Retrieval responses can emit short savings milestones from time to time without polluting memory itself.
 
 ## Learn More
 

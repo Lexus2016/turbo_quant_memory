@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,11 +9,12 @@ import pytest
 from turbo_memory_mcp.server import (
     build_runtime_context,
     deprecate_note_impl,
+    index_paths_impl,
     remember_note_impl,
     promote_note_impl,
     semantic_search_impl,
 )
-from turbo_memory_mcp.store import sha256_text
+from turbo_memory_mcp.store import MARKDOWN_FORMAT_VERSION, sha256_text
 
 
 class KeywordEmbedder:
@@ -206,3 +208,90 @@ def test_semantic_search_ignores_archived_notes(tmp_path: Path) -> None:
     assert payload["result_count"] == 1
     assert payload["items"][0]["title"] == "Current Runtime"
     assert payload["items"][0]["note_status"] == "active"
+
+
+def test_semantic_search_refreshes_stale_markdown_before_query(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    project_root = Path(env["TQMEMORY_PROJECT_ROOT"])
+    docs = project_root / "docs"
+    docs.mkdir()
+    auth_doc = docs / "auth.md"
+    auth_doc.write_text("# Auth\n\nAlpha refresh memory.", encoding="utf-8")
+
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    auth_doc.write_text("# Auth\n\nBeta refresh memory.", encoding="utf-8")
+
+    payload = semantic_search_impl("beta refresh memory", scope="project", limit=5, cwd=project_root, environ=env)
+
+    assert payload["result_count"] >= 1
+    assert "Beta refresh memory" in payload["items"][0]["compressed_summary"]
+
+
+def test_semantic_search_lexical_bonus_supports_unicode_queries(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+
+    class FlatEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] * 384 for _ in texts]
+
+    with patch("turbo_memory_mcp.retrieval_index.build_default_embedder", return_value=FlatEmbedder()):
+        remember_note_impl(
+            "Оновлення Сесії",
+            "Критична практика для оновлення сесії.",
+            kind="pattern",
+            tags=["сесія"],
+            environ=env,
+        )
+        remember_note_impl(
+            "Deployment Note",
+            "Infrastructure fallback only.",
+            kind="lesson",
+            tags=["deploy"],
+            environ=env,
+        )
+
+        payload = semantic_search_impl("оновлення сесії", scope="project", limit=5, environ=env)
+
+    assert payload["items"][0]["title"] == "Оновлення Сесії"
+
+
+def test_semantic_search_emits_usage_milestone_for_large_savings(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    large_content = "auth refresh " * 500
+    remember_note_impl(
+        "Large Auth Note",
+        large_content,
+        kind="pattern",
+        tags=["auth", "refresh"],
+        environ=env,
+    )
+
+    payload = {}
+    for _ in range(10):
+        payload = semantic_search_impl("auth refresh", scope="project", limit=5, environ=env)
+    stats_path = Path(env["TQMEMORY_HOME"]) / "telemetry" / "usage.json"
+    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+
+    assert payload["impact_milestone"]["kind"] == "retrievals"
+    assert stats["totals"]["search_calls"] == 10
+
+
+def test_semantic_search_full_reindexes_when_markdown_manifest_format_is_stale(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    project_root = Path(env["TQMEMORY_PROJECT_ROOT"])
+    docs = project_root / "docs"
+    docs.mkdir()
+    auth_doc = docs / "auth.md"
+    auth_doc.write_text("# Auth\n\nAlpha refresh memory.", encoding="utf-8")
+
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    manifest_path = Path(env["TQMEMORY_HOME"]) / "projects" / "project-alpha" / "markdown" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 0
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    payload = semantic_search_impl("alpha refresh memory", scope="project", limit=5, environ=env)
+    repaired_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert payload["result_count"] >= 1
+    assert repaired_manifest["format_version"] == MARKDOWN_FORMAT_VERSION

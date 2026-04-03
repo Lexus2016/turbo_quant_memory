@@ -8,8 +8,8 @@ Install the packaged CLI before wiring the MCP server into a client.
 
 | Method | Command |
 |---|---|
-| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
-| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
+| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
 | Runtime | `turbo-memory-mcp serve` |
 
 ## Shared Validation Flow
@@ -29,7 +29,9 @@ Expected pass signals:
 
 - `self_test.tool_count = 11`
 - `server_info.current_project` exists
+- `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` becomes `fresh` after indexing
+- `server_info.usage_stats` exists and reports cumulative retrieval/hydration activity
 - `remember_note` returns `scope = "project"`
 - `promote_note` returns `scope = "global"` with `promoted_from`
 - `semantic_search(scope="hybrid")` returns compact cards with `compressed_summary`, `key_points`, and `confidence_state`
@@ -53,6 +55,7 @@ Expected pass signals:
 - Fixture: [examples/clients/codex.config.toml](codex.config.toml)
 - Load: merge the fixture into `.codex/config.toml` or `~/.codex/config.toml`, or run `codex mcp add tqmemory -- turbo-memory-mcp serve`
 - Root note: launch Codex in the target repository, run `codex -C <repo-root> ...`, or set `TQMEMORY_PROJECT_ROOT` if the MCP process starts elsewhere
+- Optional value tracking: add `TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD` in `env` if you want `server_info.usage_stats` to estimate USD saved
 - Confirm: `/mcp` shows `tqmemory`, and `server_info.current_project.project_root` points to the target repository
 - Prompt: use only the `tqmemory` MCP server and run the shared validation flow
 

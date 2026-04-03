@@ -38,6 +38,17 @@ def index_paths(
     mode: str = "incremental",
     cwd: Path | str | None = None,
 ) -> dict[str, object]:
+    payload, _ = index_paths_with_sync_plan(store, paths=paths, mode=mode, cwd=cwd)
+    return payload
+
+
+def index_paths_with_sync_plan(
+    store: MemoryStore,
+    paths: Sequence[str] | None = None,
+    *,
+    mode: str = "incremental",
+    cwd: Path | str | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
     """Register Markdown roots and index them into the current project store."""
 
     resolved_mode = mode.strip().lower()
@@ -53,6 +64,16 @@ def index_paths(
     changed_files = 0
     skipped_files = 0
     deleted_files = 0
+    changed_block_ids: set[str] = set()
+    deleted_block_ids: set[str] = set()
+
+    if paths is not None and resolved_mode == "full":
+        prune_result = _prune_removed_roots(
+            store,
+            keep_root_ids={str(root["root_id"]) for root in registered_roots},
+        )
+        deleted_files += int(prune_result["deleted_files"])
+        deleted_block_ids.update(str(block_id) for block_id in prune_result["deleted_block_ids"])
 
     for root_record in registered_roots:
         root_id = str(root_record["root_id"])
@@ -111,6 +132,10 @@ def index_paths(
                 continue
 
             parsed_blocks = parse_markdown_blocks(source_text)
+            existing_block_ids = {
+                str(block["block_id"])
+                for block in store.list_markdown_blocks(project_id=store.project.project_id, root_id=root_id, source_path=source_path)
+            }
             block_records = [
                 {
                     "block_id": build_block_id(root_id, source_path, block.heading_path, block.chunk_index),
@@ -126,6 +151,8 @@ def index_paths(
                 for block in parsed_blocks
             ]
             block_ids = store.replace_blocks_for_file(root_id, source_path, block_records)
+            changed_block_ids.update(str(block_id) for block_id in block_ids)
+            deleted_block_ids.update(existing_block_ids.difference(block_ids))
             store.write_markdown_file_manifest(
                 {
                     "root_id": root_id,
@@ -143,12 +170,12 @@ def index_paths(
         deleted_source_paths = sorted(set(existing_manifests).difference(seen_source_paths))
         for source_path in deleted_source_paths:
             manifest = existing_manifests[source_path]
-            store.delete_blocks_for_file(root_id, source_path)
+            deleted_block_ids.update(store.delete_blocks_for_file(root_id, source_path))
             store.delete_markdown_file_manifest(str(manifest["file_key"]))
             deleted_files += 1
 
-    block_count = sum(len(store.list_markdown_blocks(root_id=str(root["root_id"]))) for root in registered_roots)
-    return build_indexing_payload(
+    block_count = len(store.list_markdown_blocks())
+    payload = build_indexing_payload(
         mode=resolved_mode,
         registered_roots=[
             {"root_id": str(root["root_id"]), "path": str(root["path"])}
@@ -160,6 +187,77 @@ def index_paths(
         deleted_files=deleted_files,
         block_count=block_count,
     )
+    return payload, {
+        "upsert_block_ids": sorted(changed_block_ids),
+        "delete_block_ids": sorted(deleted_block_ids),
+    }
+
+
+def assess_project_index_freshness(
+    store: MemoryStore,
+    *,
+    cwd: Path | str | None = None,
+) -> dict[str, object]:
+    base_dir = Path(cwd or store.project.project_root).expanduser().resolve()
+    roots = _resolve_roots(store, None, base_dir=base_dir)
+    if not roots:
+        return {
+            "is_stale": False,
+            "missing_root_count": 0,
+            "changed_file_count": 0,
+            "missing_file_count": 0,
+            "unindexed_file_count": 0,
+        }
+
+    manifests_by_root: dict[str, dict[str, dict[str, object]]] = {}
+    for manifest in store.list_markdown_file_manifests():
+        root_bucket = manifests_by_root.setdefault(str(manifest["root_id"]), {})
+        root_bucket[str(manifest["source_path"])] = manifest
+
+    missing_root_count = 0
+    changed_file_count = 0
+    missing_file_count = 0
+    unindexed_file_count = 0
+
+    for root in roots:
+        root_id = str(root["root_id"])
+        root_path = Path(str(root["path"])).expanduser().resolve()
+        if not root_path.exists() or not root_path.is_dir():
+            missing_root_count += 1
+            continue
+
+        actual_files = _iter_markdown_files(root_path)
+        actual_source_paths = {path.relative_to(root_path).as_posix(): path for path in actual_files}
+        manifest_source_paths = manifests_by_root.get(root_id, {})
+
+        missing_file_count += len(set(manifest_source_paths).difference(actual_source_paths))
+        unindexed_file_count += len(set(actual_source_paths).difference(manifest_source_paths))
+
+        for source_path, file_path in actual_source_paths.items():
+            manifest = manifest_source_paths.get(source_path)
+            if manifest is None:
+                continue
+
+            stat = file_path.stat()
+            size = int(stat.st_size)
+            mtime_ns = int(stat.st_mtime_ns)
+            if int(manifest["size"]) == size and int(manifest["mtime_ns"]) == mtime_ns:
+                continue
+
+            source_text = file_path.read_text(encoding="utf-8")
+            source_checksum = sha256_text(source_text)
+            if str(manifest["source_checksum"]) != source_checksum:
+                changed_file_count += 1
+
+    return {
+        "is_stale": any(
+            count > 0 for count in (missing_root_count, changed_file_count, missing_file_count, unindexed_file_count)
+        ),
+        "missing_root_count": missing_root_count,
+        "changed_file_count": changed_file_count,
+        "missing_file_count": missing_file_count,
+        "unindexed_file_count": unindexed_file_count,
+    }
 
 
 def build_root_id(root_path: str | Path) -> str:
@@ -225,9 +323,34 @@ def _iter_markdown_files(root_path: Path) -> list[Path]:
     return sorted(files)
 
 
+def _prune_removed_roots(
+    store: MemoryStore,
+    *,
+    keep_root_ids: set[str],
+) -> dict[str, object]:
+    deleted_files = 0
+    deleted_block_ids: list[str] = []
+
+    for root in store.list_markdown_roots():
+        root_id = str(root["root_id"])
+        if root_id in keep_root_ids:
+            continue
+        manifests = store.list_markdown_file_manifests(root_id=root_id)
+        deleted_files += len(manifests)
+        deleted = store.delete_markdown_root_data(root_id)
+        deleted_block_ids.extend(str(block_id) for block_id in deleted["block_ids"])
+
+    return {
+        "deleted_files": deleted_files,
+        "deleted_block_ids": sorted(set(deleted_block_ids)),
+    }
+
+
 __all__ = [
     "DEFAULT_IGNORED_DIR_NAMES",
+    "assess_project_index_freshness",
     "build_file_key",
     "build_root_id",
     "index_paths",
+    "index_paths_with_sync_plan",
 ]

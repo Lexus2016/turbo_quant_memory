@@ -110,3 +110,53 @@ def test_sync_global_prunes_stale_global_pattern_note_rows(tmp_path: Path) -> No
     assert first_rows[0]["note_kind"] == "pattern"
     assert index.count_rows("global") == 0
     assert second_rows == []
+
+
+def test_incremental_project_note_sync_and_delete_keep_other_rows_intact(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+
+    store.write_project_note(
+        "Auth Note",
+        "Original auth note content.",
+        note_kind="lesson",
+        note_id="auth-note",
+    )
+    store.write_markdown_root(
+        {
+            "root_id": "docs-root",
+            "path": str((tmp_path / "repo" / "docs").resolve()),
+            "path_hash": "docs-root-hash",
+        }
+    )
+    store.write_markdown_block(
+        {
+            "block_id": "block-auth",
+            "root_id": "docs-root",
+            "source_path": "docs/auth.md",
+            "heading_path": ["Architecture", "Auth"],
+            "chunk_index": 0,
+            "content_raw": "Block content.",
+            "block_checksum": sha256_text("Block content."),
+            "source_checksum": "source-checksum-auth",
+        }
+    )
+    index.sync_project()
+
+    store.write_project_note(
+        "Auth Note",
+        "Updated auth note content.",
+        note_kind="lesson",
+        note_id="auth-note",
+    )
+
+    updated_rows = index.sync_project_notes(["auth-note"])
+
+    assert index.count_rows("project") == 2
+    assert len(updated_rows) == 1
+    assert updated_rows[0]["item_id"] == "auth-note"
+    assert updated_rows[0]["content_summary_seed"] == "Updated auth note content."
+
+    index.delete_items("project", ["auth-note"])
+
+    assert index.count_rows("project") == 1

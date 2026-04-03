@@ -14,7 +14,7 @@ HYBRID_PROJECT_BIAS = 0.15
 MARKDOWN_KIND_BONUS = 0.02
 MAX_SEMANTIC_LIMIT = 20
 AMBIGUOUS_SCORE_DELTA = 0.03
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)")
 
@@ -90,6 +90,8 @@ def _query_scope(
 ) -> list[dict[str, Any]]:
     _ensure_scope_synced(index, store, scope)
     rows = index.search(query, scope, limit=max(limit, 5))
+    if not rows:
+        rows = _lexical_fallback_rows(index, scope, query, limit=max(limit, 5))
     candidates: list[dict[str, Any]] = []
     for row in rows:
         base_score = _distance_to_score(float(row.get("_distance", 1.0)))
@@ -212,6 +214,24 @@ def _distance_to_score(distance: float) -> float:
     return max(0.0, 1.0 - min(distance, 1.0))
 
 
+def _lexical_fallback_rows(
+    index: RetrievalIndex,
+    scope: str,
+    query: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    ranked: list[tuple[float, float, dict[str, Any]]] = []
+    for row in index.list_rows(scope):
+        lexical_score = _lexical_bonus(row, query)
+        if lexical_score <= 0.0:
+            continue
+        ranked.append((lexical_score, _updated_epoch(str(row["updated_at"])), {**row, "_distance": 1.0}))
+
+    ranked.sort(key=lambda item: (-item[0], -item[1], str(item[2]["item_id"])))
+    return [row for _, _, row in ranked[:limit]]
+
+
 def _lexical_bonus(candidate: Mapping[str, Any], query: str) -> float:
     query_terms = tuple(dict.fromkeys(_tokenize(query)))
     if not query_terms:
@@ -220,15 +240,15 @@ def _lexical_bonus(candidate: Mapping[str, Any], query: str) -> float:
     title = str(candidate.get("title", ""))
     tags = " ".join(str(tag) for tag in candidate.get("tags", []))
     content_search = str(candidate.get("content_search", ""))
-    full_text = f"{title} {tags} {content_search}".lower()
-    title_tokens = set(_tokenize(title.lower()))
-    tag_tokens = set(_tokenize(tags.lower()))
+    full_text = f"{title} {tags} {content_search}".casefold()
+    title_tokens = set(_tokenize(title.casefold()))
+    tag_tokens = set(_tokenize(tags.casefold()))
     full_tokens = set(_tokenize(full_text))
 
     overlap = sum(1 for term in query_terms if term in full_tokens)
     title_overlap = sum(1 for term in query_terms if term in title_tokens)
     tag_overlap = sum(1 for term in query_terms if term in tag_tokens)
-    phrase_bonus = 0.08 if query.lower() in full_text else 0.0
+    phrase_bonus = 0.08 if query.casefold() in full_text else 0.0
     denominator = max(len(query_terms), 1)
     return min(
         (overlap / denominator) * 0.16
@@ -300,7 +320,7 @@ def _updated_epoch(value: str) -> float:
 
 
 def _tokenize(value: str) -> list[str]:
-    return [match.group(0).lower() for match in _TOKEN_RE.finditer(value)]
+    return [match.group(0).casefold() for match in _TOKEN_RE.finditer(value)]
 
 
 __all__ = [

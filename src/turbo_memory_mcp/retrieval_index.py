@@ -10,13 +10,14 @@ import lancedb
 import pyarrow as pa
 from sentence_transformers import SentenceTransformer
 
-from .store import GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, NOTE_SOURCE_KIND, PROJECT_SCOPE
+from .store import ACTIVE_NOTE_STATUS, GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, NOTE_SOURCE_KIND, PROJECT_SCOPE
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 RETRIEVAL_TABLE_NAME = "items"
 VECTOR_DIMENSIONS = 384
 PROJECT_RETRIEVAL_LAYOUT = "projects/<project_id>/retrieval/"
 GLOBAL_RETRIEVAL_LAYOUT = "global/retrieval/"
+ITEM_ID_FIELD = "item_id"
 
 
 class TextEmbedder(Protocol):
@@ -59,11 +60,93 @@ class RetrievalIndex:
             *self._build_markdown_rows(project_id=resolved_project_id),
             *self._build_note_rows(PROJECT_SCOPE),
         ]
-        return self._overwrite_scope_table(self.project_db_path(resolved_project_id), rows)
+        return self._merge_scope_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id, delete_missing=True)
 
     def sync_global(self) -> list[dict[str, Any]]:
         rows = self._build_note_rows(GLOBAL_SCOPE)
-        return self._overwrite_scope_table(self.global_db_path(), rows)
+        return self._merge_scope_rows(GLOBAL_SCOPE, rows, delete_missing=True)
+
+    def sync_project_notes(
+        self,
+        note_ids: Sequence[str],
+        *,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        resolved_project_id = project_id or self.store.project.project_id
+        rows: list[dict[str, Any]] = []
+        for note_id in _dedupe_ids(note_ids):
+            try:
+                note = self.store.read_project_note(note_id, resolved_project_id)
+            except FileNotFoundError:
+                continue
+            if note["note_status"] != ACTIVE_NOTE_STATUS:
+                continue
+            rows.append(mirror_note_record(self.store, note))
+        return self.upsert_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id)
+
+    def sync_global_notes(self, note_ids: Sequence[str]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for note_id in _dedupe_ids(note_ids):
+            try:
+                note = self.store.read_global_note(note_id)
+            except FileNotFoundError:
+                continue
+            if note["note_status"] != ACTIVE_NOTE_STATUS:
+                continue
+            rows.append(mirror_note_record(self.store, note))
+        return self.upsert_rows(GLOBAL_SCOPE, rows)
+
+    def sync_project_blocks(
+        self,
+        block_ids: Sequence[str],
+        *,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        resolved_project_id = project_id or self.store.project.project_id
+        rows: list[dict[str, Any]] = []
+        for block_id in _dedupe_ids(block_ids):
+            try:
+                block = self.store.read_markdown_block(block_id, resolved_project_id)
+            except FileNotFoundError:
+                continue
+            rows.append(mirror_markdown_block(self.store, block, project_id=resolved_project_id))
+        return self.upsert_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id)
+
+    def upsert_rows(
+        self,
+        scope: str,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_rows = [dict(row) for row in rows]
+        if not normalized_rows:
+            return []
+        return self._merge_scope_rows(scope, normalized_rows, project_id=project_id, delete_missing=False)
+
+    def delete_items(
+        self,
+        scope: str,
+        item_ids: Sequence[str],
+        *,
+        project_id: str | None = None,
+    ) -> int:
+        normalized_ids = _dedupe_ids(item_ids)
+        if not normalized_ids:
+            return 0
+
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None:
+            return 0
+
+        if len(normalized_ids) == 1:
+            where = f"{ITEM_ID_FIELD} = {_quote_sql_string(normalized_ids[0])}"
+        else:
+            values = ", ".join(_quote_sql_string(item_id) for item_id in normalized_ids)
+            where = f"{ITEM_ID_FIELD} IN ({values})"
+        table.delete(where)
+        self._write_scope_manifest(scope, project_id=project_id)
+        return len(normalized_ids)
 
     def search(self, query: str, scope: str, *, limit: int, project_id: str | None = None) -> list[dict[str, Any]]:
         table = self._open_scope_table(scope, project_id=project_id)
@@ -72,6 +155,12 @@ class RetrievalIndex:
 
         query_vector = self._embed_texts([query])[0]
         return [dict(row) for row in table.search(query_vector).metric("cosine").limit(limit).to_list()]
+
+    def list_rows(self, scope: str, *, project_id: str | None = None) -> list[dict[str, Any]]:
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return []
+        return [dict(row) for row in table.to_arrow().to_pylist()]
 
     def count_rows(self, scope: str, project_id: str | None = None) -> int:
         table = self._open_scope_table(scope, project_id=project_id)
@@ -106,7 +195,15 @@ class RetrievalIndex:
     def _build_note_rows(self, scope: str) -> list[dict[str, Any]]:
         return [mirror_note_record(self.store, note) for note in self.store.list_notes(scope)]
 
-    def _overwrite_scope_table(self, db_path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _merge_scope_rows(
+        self,
+        scope: str,
+        rows: list[dict[str, Any]],
+        *,
+        project_id: str | None = None,
+        delete_missing: bool,
+    ) -> list[dict[str, Any]]:
+        db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
         db_path.mkdir(parents=True, exist_ok=True)
         vectors = self._embed_texts([row["content_search"] for row in rows])
         indexed_rows: list[dict[str, Any]] = []
@@ -116,11 +213,42 @@ class RetrievalIndex:
             indexed_rows.append(indexed_row)
 
         database = lancedb.connect(str(db_path))
-        if indexed_rows:
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None:
+            if indexed_rows:
+                database.create_table(RETRIEVAL_TABLE_NAME, indexed_rows, mode="overwrite")
+            else:
+                database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+            self._write_scope_manifest(scope, project_id=project_id)
+            return indexed_rows
+
+        if not indexed_rows:
+            if delete_missing:
+                database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+                self._write_scope_manifest(scope, project_id=project_id)
+            return []
+
+        builder = table.merge_insert(ITEM_ID_FIELD).when_matched_update_all().when_not_matched_insert_all()
+        if delete_missing:
+            builder = builder.when_not_matched_by_source_delete()
+        try:
+            builder.execute(indexed_rows)
+        except Exception:
+            if not delete_missing:
+                raise
             database.create_table(RETRIEVAL_TABLE_NAME, indexed_rows, mode="overwrite")
-        else:
-            database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+        self._write_scope_manifest(scope, project_id=project_id)
         return indexed_rows
+
+    def reset_scope(self, scope: str, *, project_id: str | None = None) -> None:
+        db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
+        db_path.mkdir(parents=True, exist_ok=True)
+        database = lancedb.connect(str(db_path))
+        try:
+            database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+        except Exception:
+            database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+        self._write_scope_manifest(scope, project_id=project_id)
 
     def _open_scope_table(self, scope: str, project_id: str | None = None) -> Any | None:
         if scope == PROJECT_SCOPE:
@@ -138,6 +266,23 @@ class RetrievalIndex:
             return database.open_table(RETRIEVAL_TABLE_NAME)
         except Exception:
             return None
+
+    def _write_scope_manifest(self, scope: str, *, project_id: str | None = None) -> None:
+        if scope == PROJECT_SCOPE:
+            self.store.write_project_retrieval_manifest(project_id)
+            return
+        if scope == GLOBAL_SCOPE:
+            self.store.write_global_retrieval_manifest()
+            return
+        raise ValueError(f"Unsupported retrieval scope: {scope}")
+
+
+def _dedupe_ids(item_ids: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(str(item_id) for item_id in item_ids if str(item_id).strip()))
+
+
+def _quote_sql_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def mirror_markdown_block(
@@ -220,6 +365,7 @@ def _table_schema() -> pa.Schema:
 __all__ = [
     "EMBEDDING_MODEL_NAME",
     "GLOBAL_RETRIEVAL_LAYOUT",
+    "ITEM_ID_FIELD",
     "PROJECT_RETRIEVAL_LAYOUT",
     "RETRIEVAL_TABLE_NAME",
     "RetrievalIndex",
