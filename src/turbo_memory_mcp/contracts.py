@@ -50,7 +50,7 @@ def build_install_contract() -> dict[str, dict[str, str]]:
 
 def build_supported_client_tiers() -> dict[str, list[str]]:
     return {
-        "tier_1": ["Claude Code", "Codex", "Cursor", "OpenCode"],
+        "tier_1": ["Claude Code", "Codex", "Gemini CLI", "Cursor", "OpenCode"],
         "tier_2": ["Antigravity"],
     }
 

@@ -8,8 +8,8 @@
 
 | Способ | Команда |
 |---|---|
-| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
-| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0` |
+| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
+| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
 | Запуск | `turbo-memory-mcp serve` |
 
 ## Общий Поток Проверки
@@ -57,6 +57,16 @@
 - Примечание о repo root: запускать Codex в целевом репозитории, через `codex -C <repo-root> ...`, или явно задать `TQMEMORY_PROJECT_ROOT`, если MCP запускается в другом месте
 - Опционально для value tracking: добавьте `TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD` в `env`, если хотите видеть примерную экономию в USD в `server_info.usage_stats`
 - Подтверждение: в `/mcp` видно `tqmemory`, а `server_info.current_project.project_root` указывает на целевой репозиторий
+- Промпт: использовать только MCP-сервер `tqmemory` и пройти общий validation flow
+
+### Gemini CLI
+
+- Уровень: `Tier 1`
+- Фикстура: [examples/clients/gemini.settings.json](gemini.settings.json)
+- Подключение: смержить фикстуру в `~/.gemini/settings.json` или выполнить `gemini mcp add tqmemory turbo-memory-mcp serve`
+- Примечание о repo root: запускать Gemini CLI в целевом репозитории или явно задать `TQMEMORY_PROJECT_ROOT`, если MCP запускается в другом месте
+- Примечание о доверии: если Gemini показывает сервер как настроенный, но не подключённый, доверьте текущую папку и ещё раз выполните `gemini mcp list`
+- Подтверждение: `gemini mcp list` или `/mcp list` показывает `tqmemory`, а `server_info.current_project.project_root` указывает на целевой репозиторий
 - Промпт: использовать только MCP-сервер `tqmemory` и пройти общий validation flow
 
 ### Cursor

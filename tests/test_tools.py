@@ -98,6 +98,7 @@ def test_server_info_payload_fields() -> None:
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
+        "Gemini CLI",
         "Cursor",
         "OpenCode",
     ]
@@ -140,6 +141,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     assert payload["client_tiers"]["tier_1"] == [
         "Claude Code",
         "Codex",
+        "Gemini CLI",
         "Cursor",
         "OpenCode",
     ]

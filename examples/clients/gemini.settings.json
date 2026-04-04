@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tqmemory": {
+      "command": "turbo-memory-mcp",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

@@ -40,6 +40,7 @@ Your agents stop behaving like temporary assistants and start behaving like memb
 
 - Local-first by design: your memory stays under your control.
 - One memory layer for many clients: same knowledge, same standards, same outcomes.
+- Cross-agent continuity: start in Codex, continue in Gemini CLI, come back to Codex, and keep the same project memory.
 - Built for real delivery: capture decisions, patterns, and handoffs that compound over time.
 - Transparent and auditable: memory is explicit, structured, and easy to inspect.
 
@@ -49,7 +50,7 @@ Use this 60-second flow:
 
 1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1
 ```
 
 2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
@@ -58,13 +59,32 @@ uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.0
 # Codex
 codex mcp add tqmemory -- turbo-memory-mcp serve
 
+# Gemini CLI
+gemini mcp add tqmemory turbo-memory-mcp serve
+
 # Claude Code (project scope)
 claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
 ```
 
 3. Restart the client and run any `tqmemory` tool.
 
-Need Cursor, OpenCode, or Antigravity? Use ready configs in [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
+Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
+
+## Shared Memory Across Agents
+
+This works out of the box in the standard local setup. You do not need a separate sync service, export/import flow, or agent-specific memory configuration.
+
+This is shared local memory, not remote cloud sync. If Codex and Gemini CLI run on the same machine and open the same repository, they can use the same memory layer automatically.
+
+To keep one shared project memory across Codex, Gemini CLI, and other MCP clients:
+
+1. Install `turbo-memory-mcp` once on the machine.
+2. Add the same `tqmemory` MCP server in each client you use.
+3. Open the same repository in each client.
+
+When those conditions are true, the clients resolve the same project memory automatically. That means you can start work in Codex, continue in Gemini CLI, and return to Codex without rebuilding context.
+
+If a client is launched outside the repository root, set `TQMEMORY_PROJECT_ROOT` explicitly so it resolves the same project identity.
 
 ## Who This Is For
 
@@ -99,12 +119,11 @@ Why this is a practical advantage:
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
 
-## New In v0.3.0
+## New In v0.3.1
 
-- Version-aware index manifests auto-rebuild derived indexes after a format-changing upgrade.
-- `server_info()` now reports persistent usage and savings telemetry outside the memory scopes.
-- Set `TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD` if you want saved tokens translated into estimated USD.
-- Retrieval responses can emit short savings milestones from time to time without polluting memory itself.
+- Published shared-memory guidance for Codex and Gemini CLI handoffs inside the README and client integration docs.
+- Added a ready Gemini CLI fixture plus smoke-check steps for validating the same `tqmemory` server across clients.
+- Clarified that shared memory is local same-machine continuity, not remote cloud sync.
 
 ## Learn More
 

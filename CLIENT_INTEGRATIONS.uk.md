@@ -19,6 +19,7 @@
 |---|---|---|---|---|
 | Claude Code | production-ready | `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve` | [examples/clients/claude.project.mcp.json](examples/clients/claude.project.mcp.json) | підтримує project і user MCP scopes |
 | Codex | production-ready | `codex mcp add tqmemory -- turbo-memory-mcp serve` | [examples/clients/codex.config.toml](examples/clients/codex.config.toml) | Codex краще запускати з цільового репозиторію |
+| Gemini CLI | production-ready | `gemini mcp add tqmemory turbo-memory-mcp serve` | [examples/clients/gemini.settings.json](examples/clients/gemini.settings.json) | підтримує `settings.json`, `gemini mcp add` і перевірку MCP status |
 | Cursor | production-ready | використайте готовий файл | [examples/clients/cursor.project.mcp.json](examples/clients/cursor.project.mcp.json) | project config є найнадійнішим дефолтом |
 | OpenCode | production-ready | використайте готовий файл | [examples/clients/opencode.config.json](examples/clients/opencode.config.json) | локальний MCP-конфіг під ключем `mcp` |
 | Antigravity | compatibility target | використайте готовий файл | [examples/clients/antigravity.mcp.json](examples/clients/antigravity.mcp.json) | архітектурно сумісний, але його треба smoke-тестити на реальному застосунку |
@@ -37,6 +38,12 @@
 - Codex потрібно запускати з цільового репозиторію або явно задавати `TQMEMORY_PROJECT_ROOT`.
 - Не треба передавати шлях репозиторію в MCP `args`; сервер сам визначає проєкт із process working directory.
 
+### Gemini CLI
+
+- Підтримує `~/.gemini/settings.json`, `gemini mcp add ...` і `gemini mcp list`.
+- Gemini CLI слід запускати в цільовому репозиторії або явно задавати `TQMEMORY_PROJECT_ROOT`, якщо MCP стартує в іншому місці.
+- Якщо Gemini показує сервер як налаштований, але не підключений, потрібно довірити поточну папку для stdio MCP-підключення.
+
 ### Cursor
 
 - Підтримує project `.cursor/mcp.json` і user `~/.cursor/mcp.json`.
@@ -54,6 +61,22 @@
 - Поточні гіди та integration-сигнали показують сумісний custom MCP flow.
 - Репозиторій містить raw config приклад.
 - Antigravity варто вважати архітектурно сумісним, але production-proven його можна називати тільки після реального smoke test.
+
+## Спільна Project Memory Між Клієнтами
+
+У стандартному локальному встановленні спільна project memory працює з коробки.
+
+- Не потрібен окремий sync-сервіс.
+- Не потрібен export/import handoff.
+- Не потрібен окремий memory-backend під конкретного клієнта.
+
+Codex, Gemini CLI та інші MCP-клієнти можуть продовжувати ту саму project memory, коли вони:
+
+1. використовують той самий серверний контракт `tqmemory`
+2. працюють на одній машині з тим самим локальним storage root
+3. відкривають той самий репозиторій або визначають той самий `TQMEMORY_PROJECT_ROOT`
+
+Це спільна локальна памʼять, а не віддалена хмарна синхронізація.
 
 ## Правила Стандартизації
 
