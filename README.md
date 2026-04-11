@@ -70,6 +70,25 @@ claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
 
 Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
 
+## Ignoring Files During Indexing
+
+Create a `.tqmemoryignore` file in your project root to exclude directories or files from Markdown indexing. The format is similar to `.gitignore` — one glob pattern per line, `#` for comments.
+
+```gitignore
+# Skip duplicate workspace template directories
+workspace-*
+
+# Skip runtime reports
+data/reports/*.md
+
+# Skip generated content
+output/
+```
+
+The ignore file is picked up automatically by `index_paths(...)`. Patterns match against both directory names and full relative paths. The search walks upward from the indexed root until it finds a `.tqmemoryignore` or reaches the `.git` boundary.
+
+Directories like `node_modules`, `.git`, `__pycache__`, `dist`, and `build` are always ignored by default.
+
 ## Shared Memory Across Agents
 
 This works out of the box in the standard local setup. You do not need a separate sync service, export/import flow, or agent-specific memory configuration.

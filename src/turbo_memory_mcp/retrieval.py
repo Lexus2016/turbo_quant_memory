@@ -275,11 +275,11 @@ def _extract_key_points(raw_text: str, query: str, *, max_points: int = 3) -> li
     for line in raw_text.splitlines():
         cleaned = _clean_candidate_line(line)
         if cleaned:
-            candidates.append(cleaned)
+            candidates.extend(_split_candidate_segments(cleaned))
 
     if not candidates:
         normalized = _normalize_text(raw_text)
-        candidates = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", normalized) if segment.strip()]
+        candidates = _split_candidate_segments(normalized)
 
     query_terms = set(_tokenize(query))
     scored: list[tuple[int, int, int, str]] = []
@@ -306,6 +306,11 @@ def _clean_candidate_line(line: str) -> str | None:
     if len(stripped) < 6:
         return None
     return stripped
+
+
+def _split_candidate_segments(text: str) -> list[str]:
+    segments = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
+    return segments or [text.strip()]
 
 
 def _normalize_text(value: str) -> str:

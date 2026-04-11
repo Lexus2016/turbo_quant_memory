@@ -270,7 +270,11 @@ def test_server_info_reports_usage_stats_after_search_and_hydrate(tmp_path: Path
     env = _test_env(tmp_path)
     stored = remember_note_impl(
         "Auth Flow",
-        "Project auth flow uses JWT refresh rotation.",
+        (
+            "Project auth flow uses JWT refresh rotation with short-lived access tokens and strict replay protection. "
+            "Carry the same rotation policy into every API and worker integration. "
+        )
+        * 5,
         kind="lesson",
         tags=["auth"],
         environ=env,
@@ -283,7 +287,61 @@ def test_server_info_reports_usage_stats_after_search_and_hydrate(tmp_path: Path
     assert payload["usage_stats"]["totals"]["search_calls"] == 1
     assert payload["usage_stats"]["totals"]["hydrate_calls"] == 1
     assert payload["usage_stats"]["current_project"]["project_id"] == "project-alpha"
+    assert payload["usage_stats"]["totals"]["compact_context_bytes"] > 0
+    assert payload["usage_stats"]["totals"]["estimated_bytes_saved"] > 0
+    assert payload["usage_stats"]["totals"]["estimated_input_tokens_saved"] > 0
     assert payload["usage_stats"]["headline"]
+
+
+def test_server_info_migrates_legacy_usage_stats_without_losing_activity_counts(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    usage_path = Path(env["TQMEMORY_HOME"]) / "telemetry" / "usage.json"
+    usage_path.parent.mkdir(parents=True, exist_ok=True)
+    usage_path.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "created_at": "2026-04-03T00:00:00Z",
+                "updated_at": "2026-04-03T00:00:00Z",
+                "totals": {
+                    "search_calls": 7,
+                    "hydrate_calls": 2,
+                    "compact_items_served": 9,
+                    "hydrated_items_served": 2,
+                    "raw_source_bytes": 1234,
+                    "compact_response_bytes": 4321,
+                    "hydrated_response_bytes": 999,
+                    "estimated_bytes_saved": 0,
+                    "estimated_input_tokens_saved": 0,
+                    "last_announced_token_milestone": 0,
+                    "last_announced_search_milestone": 0,
+                },
+                "projects": {
+                    "project-alpha": {
+                        "project_id": "project-alpha",
+                        "project_name": "Alpha Project",
+                        "search_calls": 4,
+                        "hydrate_calls": 1,
+                        "compact_items_served": 5,
+                        "hydrated_items_served": 1,
+                    }
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = server_info_impl(environ=env)
+
+    assert payload["usage_stats"]["format_version"] == 2
+    assert payload["usage_stats"]["totals"]["search_calls"] == 7
+    assert payload["usage_stats"]["totals"]["hydrate_calls"] == 2
+    assert payload["usage_stats"]["current_project"]["search_calls"] == 4
+    assert payload["usage_stats"]["totals"]["estimated_bytes_saved"] == 0
+    assert payload["usage_stats"]["totals"]["compact_context_bytes"] == 0
 
 
 def test_semantic_search_rebuilds_project_retrieval_after_manifest_mismatch(tmp_path: Path) -> None:

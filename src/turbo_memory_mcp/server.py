@@ -51,7 +51,11 @@ def build_server() -> MCPServer:
             "history, retrieve compact "
             "project/global/hybrid memory, hydrate fuller local context through "
             "hydrate(...), index Markdown roots through index_paths(...), and run "
-            "lint_knowledge_base(...) to detect broken links, orphans, and duplicate titles."
+            "lint_knowledge_base(...) to detect broken links, orphans, and duplicate titles. "
+            "To exclude directories or files from indexing, create a .tqmemoryignore file "
+            "in the project root with glob patterns (one per line, # for comments). "
+            "Example patterns: 'workspace-*' skips dirs matching the glob, "
+            "'data/reports/*.md' skips specific paths."
         ),
         json_response=True,
         log_level="ERROR",
@@ -125,6 +129,14 @@ def build_server() -> MCPServer:
         paths: list[str] | None = None,
         mode: str = "incremental",
     ) -> dict[str, object]:
+        """Register and index Markdown directories into project memory.
+
+        Supports .tqmemoryignore files (placed in project root or any indexed
+        directory) with glob patterns to exclude paths from indexing.
+        One pattern per line, # for comments.  Example patterns:
+        ``workspace-*`` skips any directory matching the glob;
+        ``data/reports/*.md`` skips files matching a path pattern.
+        """
         return index_paths_impl(paths=paths, mode=mode)
 
     @mcp.tool()

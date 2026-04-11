@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 from typing import Sequence
@@ -311,7 +312,42 @@ def _slugify(value: str) -> str:
     return slug or "markdown"
 
 
+def _load_ignore_patterns(root_path: Path) -> list[str]:
+    """Load glob patterns from the nearest .tqmemoryignore file.
+
+    Walks from *root_path* upward until it finds a ``.tqmemoryignore`` file
+    or reaches a ``.git`` boundary.  Returns a list of non-empty,
+    non-comment lines (``#``-prefixed lines are comments).
+    """
+    patterns: list[str] = []
+    for candidate in (root_path, *root_path.parents):
+        ignore_file = candidate / ".tqmemoryignore"
+        if ignore_file.is_file():
+            for line in ignore_file.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    patterns.append(stripped)
+            break  # use closest .tqmemoryignore only
+        if (candidate / ".git").exists():
+            break  # stop at git root
+    return patterns
+
+
+def _matches_ignore(relative_posix: str, patterns: list[str]) -> bool:
+    """Check if a relative POSIX path matches any ignore pattern."""
+    for pattern in patterns:
+        if fnmatch.fnmatch(relative_posix, pattern):
+            return True
+        # also match against each directory component individually
+        parts = relative_posix.split("/")
+        for part in parts[:-1]:  # directories only
+            if fnmatch.fnmatch(part, pattern):
+                return True
+    return False
+
+
 def _iter_markdown_files(root_path: Path) -> list[Path]:
+    ignore_patterns = _load_ignore_patterns(root_path)
     files: list[Path] = []
     for file_path in root_path.rglob("*.md"):
         if not file_path.is_file():
@@ -319,6 +355,10 @@ def _iter_markdown_files(root_path: Path) -> list[Path]:
         relative_parts = file_path.relative_to(root_path).parts[:-1]
         if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):
             continue
+        if ignore_patterns:
+            relative_posix = file_path.relative_to(root_path).as_posix()
+            if _matches_ignore(relative_posix, ignore_patterns):
+                continue
         files.append(file_path)
     return sorted(files)
 

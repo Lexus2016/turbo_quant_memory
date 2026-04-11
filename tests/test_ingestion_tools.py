@@ -128,6 +128,57 @@ def test_index_paths_skips_default_ignored_subdirectories_and_cleans_existing_no
     assert {block["source_path"] for block in store.list_markdown_blocks()} == {"README.md"}
 
 
+def test_index_paths_respects_tqmemoryignore_patterns(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+
+    # Create structure with duplicate workspace templates
+    visible_doc = project_root / "README.md"
+    visible_doc.write_text("# README\n\nMain doc.", encoding="utf-8")
+    config_doc = project_root / "config" / "prompts" / "system.md"
+    config_doc.parent.mkdir(parents=True)
+    config_doc.write_text("# System Prompt\n\nPrompt text.", encoding="utf-8")
+
+    # Create duplicate workspace dirs (simulates the openclaw pattern)
+    for name in ("workspace-alice", "workspace-bob", "workspace-charlie"):
+        ws = project_root / "data" / name
+        ws.mkdir(parents=True)
+        (ws / "AGENTS.md").write_text("# AGENTS\n\nDuplicate template.", encoding="utf-8")
+        (ws / "TOOLS.md").write_text("# TOOLS\n\nDuplicate tools.", encoding="utf-8")
+
+    # Create .tqmemoryignore
+    ignore_file = project_root / ".tqmemoryignore"
+    ignore_file.write_text("# Skip duplicate workspaces\nworkspace-*\n", encoding="utf-8")
+
+    payload = index_paths_impl(paths=[str(project_root)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    # Should only index README.md and config/prompts/system.md, NOT workspace-* files
+    assert payload["indexed_files"] == 2
+    assert payload["changed_files"] == 2
+    source_paths = sorted(m["source_path"] for m in store.list_markdown_file_manifests())
+    assert source_paths == ["README.md", "config/prompts/system.md"]
+
+
+def test_tqmemoryignore_supports_path_glob_patterns(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+
+    (project_root / "docs").mkdir()
+    (project_root / "docs" / "guide.md").write_text("# Guide\n\nKeep.", encoding="utf-8")
+    reports_dir = project_root / "data" / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "daily.md").write_text("# Daily\n\nSkip.", encoding="utf-8")
+
+    ignore_file = project_root / ".tqmemoryignore"
+    ignore_file.write_text("data/reports/*.md\n", encoding="utf-8")
+
+    payload = index_paths_impl(paths=[str(project_root)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert payload["indexed_files"] == 1
+    source_paths = [m["source_path"] for m in store.list_markdown_file_manifests()]
+    assert source_paths == ["docs/guide.md"]
+
+
 def test_index_paths_full_with_explicit_paths_prunes_removed_roots(tmp_path: Path) -> None:
     project_root, env = _test_env(tmp_path)
     docs_a = project_root / "docs-a"
