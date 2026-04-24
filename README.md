@@ -138,6 +138,13 @@ Why this is a practical advantage:
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
 
+## New In v0.4.0
+
+- Singleton daemon transport: only one `turbo-memory-mcp` process per machine keeps the sentence-transformers model and LanceDB handles resident. Every additional MCP-client launch becomes a thin stdio↔socket proxy that forwards tool calls to the primary.
+- Cross-platform coordination: Unix/macOS uses an `AF_UNIX` socket under the system temp dir (short path, 0600 perms); Windows uses a named pipe scoped to the current user. Authenticated via a 32-byte random authkey stored in `~/.turbo-quant-memory/.daemon.lock`.
+- Lazy imports in `retrieval_index` mean proxy processes do not pay the ~470 MB cost of PyTorch / LanceDB / PyArrow imports when they only forward RPC. Measured savings: ~1 GB RSS for four concurrent MCP clients (primary 530 MB, proxies ~50 MB each vs 437 MB each before).
+- Existing on-disk state (JSON notes, LanceDB tables, Markdown blocks, manifests) is unchanged and fully backward-compatible. Escape hatch: set `TQMEMORY_DAEMON_DISABLE=1` to fall back to per-process mode.
+
 ## New In v0.3.1
 
 - Published shared-memory guidance for Codex and Gemini CLI handoffs inside the README and client integration docs.
