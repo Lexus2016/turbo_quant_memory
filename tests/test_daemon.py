@@ -256,3 +256,72 @@ def test_release_daemon_lock_cleans_socket(storage_env: dict[str, str]) -> None:
     release_daemon_lock(endpoint)
     assert not path.exists()
     assert not Path(endpoint.address).exists()
+
+
+def test_proxy_dispatcher_forwards_cwd_and_environ(
+    storage_env: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Proxy must forward caller cwd + identity env vars so the primary
+    resolves the *proxy's* project identity, not its own."""
+
+    from turbo_memory_mcp.server import make_proxy_dispatcher
+
+    captured: dict[str, Any] = {}
+
+    def _handler(tool: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        captured["tool"] = tool
+        captured["kwargs"] = dict(kwargs)
+        return {"ok": True}
+
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, _handler)
+    listener.start()
+    try:
+        client = DaemonClient(endpoint)
+        dispatcher = make_proxy_dispatcher(client)
+
+        # Simulate a proxy whose cwd and project-identity env differ from primary's.
+        proxy_cwd = tmp_path / "some_project_worktree"
+        proxy_cwd.mkdir()
+        monkeypatch.chdir(proxy_cwd)
+        monkeypatch.setenv("TQMEMORY_PROJECT_ID", "proxy-project-xyz")
+        monkeypatch.setenv("TQMEMORY_PROJECT_NAME", "Proxy Project")
+
+        dispatcher("health", {})
+
+        assert captured["tool"] == "health"
+        assert str(Path(captured["kwargs"]["_cwd"]).resolve()) == str(proxy_cwd.resolve())
+        assert captured["kwargs"]["_environ"]["TQMEMORY_PROJECT_ID"] == "proxy-project-xyz"
+        assert captured["kwargs"]["_environ"]["TQMEMORY_PROJECT_NAME"] == "Proxy Project"
+        client.close()
+    finally:
+        listener.stop()
+
+
+def test_call_does_not_retry_to_prevent_duplicates(storage_env: dict[str, str]) -> None:
+    """Regression: RPC failures mid-call must NOT be silently retried, because
+    that would duplicate non-idempotent tools like remember_note."""
+
+    # Handler that crashes the connection exactly once by closing it mid-reply.
+    call_count = {"n": 0}
+
+    def _handler(tool: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        call_count["n"] += 1
+        # Pretend the primary crashed right after receiving the call: simulate
+        # by raising inside the handler (listener sends an error payload).
+        raise RuntimeError("simulated primary crash")
+
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, _handler)
+    listener.start()
+    try:
+        client = DaemonClient(endpoint)
+        # Handler raises -> client surfaces it, but handler is only called once.
+        with pytest.raises(RuntimeError, match="simulated primary crash"):
+            client.call("remember_note", {"title": "x", "content": "y", "kind": "lesson"})
+        assert call_count["n"] == 1, "handler should NOT be invoked twice"
+        client.close()
+    finally:
+        listener.stop()

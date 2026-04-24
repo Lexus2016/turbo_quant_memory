@@ -5,13 +5,17 @@ and LanceDB handles. Additional MCP-client launches become thin stdio<->socket
 proxies that forward tool calls to the primary process.
 
 Cross-platform:
-- Unix / macOS: AF_UNIX socket at ~/.turbo-quant-memory/.daemon.sock (0600 perms)
-- Windows:     AF_PIPE named pipe (\\\\.\\pipe\\tqmemory-<user>-<pid>)
+- Unix / macOS: AF_UNIX socket at ``<tempdir>/tqm-<hash>.sock`` (0600 perms).
+  The socket lives under the system temp dir (not storage root) so AF_UNIX
+  path-length limits (~104 chars on macOS) are never hit, even with deeply
+  nested worktrees. The short hash discriminator is derived from uid +
+  storage_root so per-user per-install coordination stays isolated.
+- Windows: AF_PIPE named pipe (``\\\\.\\pipe\\tqmemory-<user>-<pid>``).
 
-Lockfile stores: pid, protocol_version, server_version, endpoint address,
-authkey (base64). Path: ~/.turbo-quant-memory/.daemon.lock (0600 perms).
+Lockfile stores pid, protocol_version, server_version, endpoint address and
+a 32-byte authkey (base64). Path: ``<storage_root>/.daemon.lock`` (0600).
 
-Escape hatch: TQMEMORY_DAEMON_DISABLE=1 falls back to self-contained mode
+Escape hatch: ``TQMEMORY_DAEMON_DISABLE=1`` falls back to self-contained mode
 (previous behavior: each process owns its own model + LanceDB handles).
 """
 
@@ -37,7 +41,6 @@ from .store import resolve_storage_root
 DAEMON_PROTOCOL_VERSION = "1.0"
 ENV_DAEMON_DISABLE = "TQMEMORY_DAEMON_DISABLE"
 LOCKFILE_NAME = ".daemon.lock"
-UNIX_SOCKET_NAME = ".daemon.sock"
 AUTHKEY_BYTES = 32
 CONNECT_TIMEOUT_SECONDS = 5.0
 RPC_TIMEOUT_SECONDS = 120.0
@@ -326,17 +329,28 @@ class DaemonClient:
                 self._conn = None
 
     def call(self, tool: str, kwargs: Mapping[str, Any]) -> Any:
+        """Send an RPC call and return the daemon's reply.
+
+        We deliberately do NOT retry on transport errors: once the payload has
+        been written to the socket we cannot know whether the primary observed
+        it (and mutated state) before the link dropped. Silent retry would
+        duplicate non-idempotent tools like remember_note. Callers that want
+        retry semantics can handle it themselves on top of a fresh client.
+        """
+
         payload = {"kind": MESSAGE_CALL, "tool": tool, "kwargs": dict(kwargs)}
         with self._lock:
             conn = self._ensure_conn()
             try:
                 _send(conn, payload)
                 reply = _recv(conn, RPC_TIMEOUT_SECONDS)
-            except (BrokenPipeError, ConnectionError, EOFError, OSError, TimeoutError):
+            except (BrokenPipeError, ConnectionError, EOFError, OSError, TimeoutError) as exc:
+                # Connection died mid-call. Drop the cached connection so the
+                # next call reopens; surface the error to the caller.
                 self._conn = None
-                conn = self._ensure_conn()
-                _send(conn, payload)
-                reply = _recv(conn, RPC_TIMEOUT_SECONDS)
+                raise ConnectionError(
+                    f"daemon RPC {tool!r} failed mid-call: {type(exc).__name__}: {exc}"
+                ) from exc
         if not isinstance(reply, Mapping):
             raise RuntimeError(f"Unexpected reply shape: {reply!r}")
         kind = reply.get("kind")
@@ -583,7 +597,6 @@ __all__ = [
     "MESSAGE_HELLO",
     "MESSAGE_HELLO_ACK",
     "MESSAGE_OK",
-    "UNIX_SOCKET_NAME",
     "acquire_daemon_role",
     "daemon_is_disabled",
     "lockfile_path",
