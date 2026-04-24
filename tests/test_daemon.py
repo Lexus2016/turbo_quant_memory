@@ -497,3 +497,64 @@ def test_proxy_runtime_preserves_midcall_connection_error(
     finally:
         listener.stop()
         release_daemon_lock(endpoint)
+
+
+def test_proxy_runtime_concurrent_failover_promotes_once(
+    storage_env: dict[str, str],
+) -> None:
+    """Two threads hitting PrimaryUnreachable simultaneously must produce
+    exactly one promotion, not two competing ones.
+
+    Regression: an earlier draft released the state lock around
+    acquire_daemon_role, which let a second thread unlink the first
+    thread's lockfile (thinking the endpoint was stale because the
+    listener hadn't yet started accepting). Both threads would then
+    install primary state and the singleton invariant would break.
+    """
+
+    from turbo_memory_mcp.server import ProxyRuntime
+
+    # 1. Start a primary.
+    recorded: list[tuple[str, dict[str, Any]]] = []
+    listener, endpoint = _start_primary(storage_env, _make_handler(recorded))
+
+    # 2. Bootstrap a proxy.
+    bootstrap = acquire_daemon_role()
+    assert bootstrap.role == "proxy"
+    assert bootstrap.client is not None
+    runtime = ProxyRuntime(bootstrap.client)
+
+    # 3. Kill the primary and close the proxy's cached connection so the
+    #    next RPC raises PrimaryUnreachable.
+    listener.stop()
+    release_daemon_lock(endpoint)
+    bootstrap.client.close()
+
+    # 4. Fire two concurrent calls. Exactly one must complete the promotion,
+    #    the other must observe the already-promoted state and retry locally.
+    results: list[Any] = []
+    errors: list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            results.append(runtime("health", {}))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_worker) for _ in range(2)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
+
+        assert not errors, f"unexpected errors: {errors!r}"
+        assert len(results) == 2
+        assert runtime.is_primary, "one of the threads should have promoted"
+        # Lockfile must point at our pid exactly once; sanity-check the
+        # stored endpoint matches our installed listener.
+        current = maybe_existing_endpoint()
+        assert current is not None
+        assert current.pid == os.getpid()
+    finally:
+        runtime.shutdown()

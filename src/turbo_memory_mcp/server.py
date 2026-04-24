@@ -407,39 +407,34 @@ class ProxyRuntime:
             return self._listener is not None
 
     def _failover(self) -> None:
-        """Re-bootstrap after the primary died. Idempotent under concurrent calls."""
+        """Re-bootstrap after the primary died. Serialized: only one thread
+        runs the recovery flow at a time; concurrent callers block on the
+        state lock, then observe the installed state and return.
+
+        Holding the lock across :func:`acquire_daemon_role` is intentional.
+        Without it, a second thread could race into ``acquire_daemon_role``
+        between this thread's lockfile claim and listener start, and (seeing
+        our advertised but not-yet-accepting socket) wrongly conclude the
+        endpoint is stale and unlink it. The O_EXCL retry loop would then
+        let *both* threads install lockfiles, breaking the singleton
+        invariant within a single process. ``acquire_daemon_role`` performs
+        no callbacks into this runtime, so no deadlock is possible.
+        """
 
         with self._state_lock:
             if self._listener is not None:
-                # Already promoted ourselves; nothing to do.
+                # Another call already promoted us.
                 return
 
             dead_client = self._client
             self._client = None
+            if dead_client is not None:
+                try:
+                    dead_client.close()
+                except Exception:
+                    pass
 
-        if dead_client is not None:
-            try:
-                dead_client.close()
-            except Exception:
-                pass
-
-        bootstrap = acquire_daemon_role()
-
-        with self._state_lock:
-            if self._listener is not None:
-                # Another call promoted us between the unlocked bootstrap and
-                # now. Discard this bootstrap's resources to avoid double-claim.
-                if bootstrap.client is not None:
-                    try:
-                        bootstrap.client.close()
-                    except Exception:
-                        pass
-                if bootstrap.role == "primary" and bootstrap.endpoint is not None:
-                    try:
-                        release_daemon_lock(bootstrap.endpoint)
-                    except Exception:
-                        pass
-                return
+            bootstrap = acquire_daemon_role()
 
             if bootstrap.role == "primary" and bootstrap.endpoint is not None:
                 local_dispatcher = make_local_dispatcher(
