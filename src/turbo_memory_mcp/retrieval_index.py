@@ -1,16 +1,22 @@
-"""Embedded retrieval-index primitives for Phase 4."""
+"""Embedded retrieval-index primitives for Phase 4.
+
+Heavy runtime dependencies (sentence_transformers -> PyTorch, lancedb, pyarrow)
+are imported lazily inside the functions that actually need them. This keeps
+daemon-proxy processes lightweight: if a proxy never builds or queries a
+vector table, it never pays the ~470 MB import cost of these libraries.
+"""
 
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
-
-import lancedb
-import pyarrow as pa
-from sentence_transformers import SentenceTransformer
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
 
 from .store import ACTIVE_NOTE_STATUS, GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, NOTE_SOURCE_KIND, PROJECT_SCOPE
+
+if TYPE_CHECKING:  # pragma: no cover - type-only imports
+    import pyarrow as pa
+    from sentence_transformers import SentenceTransformer
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 RETRIEVAL_TABLE_NAME = "items"
@@ -25,13 +31,15 @@ class TextEmbedder(Protocol):
         """Return one embedding vector per text item."""
 
 
-def build_default_embedder() -> SentenceTransformer:
+def build_default_embedder() -> "SentenceTransformer":
     return _load_default_embedder()
 
 
 @lru_cache(maxsize=1)
-def _load_default_embedder() -> SentenceTransformer:
-    return SentenceTransformer("all-MiniLM-L6-v2")
+def _load_default_embedder() -> "SentenceTransformer":
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(EMBEDDING_MODEL_NAME)
 
 
 class RetrievalIndex:
@@ -212,6 +220,8 @@ class RetrievalIndex:
             indexed_row["vector"] = vector
             indexed_rows.append(indexed_row)
 
+        import lancedb
+
         database = lancedb.connect(str(db_path))
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:
@@ -243,6 +253,8 @@ class RetrievalIndex:
     def reset_scope(self, scope: str, *, project_id: str | None = None) -> None:
         db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
         db_path.mkdir(parents=True, exist_ok=True)
+        import lancedb
+
         database = lancedb.connect(str(db_path))
         try:
             database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
@@ -260,6 +272,8 @@ class RetrievalIndex:
 
         if not db_path.exists():
             return None
+
+        import lancedb
 
         database = lancedb.connect(str(db_path))
         try:
@@ -339,7 +353,9 @@ def mirror_note_record(store: MemoryStore, note: Mapping[str, Any]) -> dict[str,
     }
 
 
-def _table_schema() -> pa.Schema:
+def _table_schema() -> "pa.Schema":
+    import pyarrow as pa
+
     return pa.schema(
         [
             pa.field("scope", pa.string()),

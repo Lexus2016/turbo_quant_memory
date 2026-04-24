@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -22,13 +24,27 @@ from .contracts import (
     build_self_test_payload,
     build_server_info_payload,
 )
+from .daemon import (
+    BootstrapResult,
+    DaemonClient,
+    DaemonListener,
+    acquire_daemon_role,
+    release_daemon_lock,
+)
 from .hydration import hydrate
-from .identity import ProjectIdentity, resolve_project_identity
+from .identity import (
+    ENV_PROJECT_ID,
+    ENV_PROJECT_NAME,
+    ENV_PROJECT_ROOT,
+    ProjectIdentity,
+    resolve_project_identity,
+)
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
 from .retrieval import semantic_search
 from .retrieval_index import RetrievalIndex
 from .store import (
+    ENV_STORAGE_HOME,
     GLOBAL_SCOPE,
     MARKDOWN_FORMAT_VERSION,
     MARKDOWN_SOURCE_KIND,
@@ -42,7 +58,19 @@ from .store import (
 from .telemetry import build_usage_snapshot, record_hydration_usage, record_semantic_search_usage
 
 
-def build_server() -> MCPServer:
+Dispatcher = Callable[[str, Mapping[str, Any]], Any]
+
+# Environment variables forwarded from proxy -> primary so the primary resolves
+# the proxy's project identity (not its own cwd) for cwd-aware tools.
+_FORWARDED_ENV_KEYS: tuple[str, ...] = (
+    ENV_PROJECT_ROOT,
+    ENV_PROJECT_ID,
+    ENV_PROJECT_NAME,
+    ENV_STORAGE_HOME,
+)
+
+
+def build_server(dispatcher: Dispatcher) -> MCPServer:
     mcp = MCPServer(
         SERVER_ID,
         instructions=(
@@ -63,19 +91,19 @@ def build_server() -> MCPServer:
 
     @mcp.tool()
     def health() -> dict[str, object]:
-        return build_health_payload()
+        return dispatcher("health", {})
 
     @mcp.tool()
     def server_info() -> dict[str, object]:
-        return server_info_impl()
+        return dispatcher("server_info", {})
 
     @mcp.tool()
     def list_scopes() -> dict[str, object]:
-        return build_scope_payload()
+        return dispatcher("list_scopes", {})
 
     @mcp.tool()
     def self_test() -> dict[str, object]:
-        return self_test_impl()
+        return dispatcher("self_test", {})
 
     @mcp.tool()
     def remember_note(
@@ -86,11 +114,21 @@ def build_server() -> MCPServer:
         source_refs: list[str] | None = None,
         scope: str = "project",
     ) -> dict[str, object]:
-        return remember_note_impl(title, content, kind=kind, tags=tags, source_refs=source_refs, scope=scope)
+        return dispatcher(
+            "remember_note",
+            {
+                "title": title,
+                "content": content,
+                "kind": kind,
+                "tags": tags,
+                "source_refs": source_refs,
+                "scope": scope,
+            },
+        )
 
     @mcp.tool()
     def promote_note(note_id: str) -> dict[str, object]:
-        return promote_note_impl(note_id)
+        return dispatcher("promote_note", {"note_id": note_id})
 
     @mcp.tool()
     def deprecate_note(
@@ -100,12 +138,15 @@ def build_server() -> MCPServer:
         replacement_scope: str | None = None,
         reason: str | None = None,
     ) -> dict[str, object]:
-        return deprecate_note_impl(
-            note_id,
-            scope=scope,
-            replacement_note_id=replacement_note_id,
-            replacement_scope=replacement_scope,
-            reason=reason,
+        return dispatcher(
+            "deprecate_note",
+            {
+                "note_id": note_id,
+                "scope": scope,
+                "replacement_note_id": replacement_note_id,
+                "replacement_scope": replacement_scope,
+                "reason": reason,
+            },
         )
 
     @mcp.tool()
@@ -114,7 +155,10 @@ def build_server() -> MCPServer:
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 5,
     ) -> dict[str, object]:
-        return semantic_search_impl(query, scope=scope, limit=limit)
+        return dispatcher(
+            "semantic_search",
+            {"query": query, "scope": scope, "limit": limit},
+        )
 
     @mcp.tool()
     def hydrate(
@@ -122,7 +166,10 @@ def build_server() -> MCPServer:
         scope: str,
         mode: str = "default",
     ) -> dict[str, object]:
-        return hydrate_impl(item_id, scope=scope, mode=mode)
+        return dispatcher(
+            "hydrate",
+            {"item_id": item_id, "scope": scope, "mode": mode},
+        )
 
     @mcp.tool()
     def index_paths(
@@ -137,20 +184,228 @@ def build_server() -> MCPServer:
         ``workspace-*`` skips any directory matching the glob;
         ``data/reports/*.md`` skips files matching a path pattern.
         """
-        return index_paths_impl(paths=paths, mode=mode)
+        return dispatcher("index_paths", {"paths": paths, "mode": mode})
 
     @mcp.tool()
     def lint_knowledge_base(
         paths: list[str] | None = None,
         max_issues: int = 200,
     ) -> dict[str, object]:
-        return lint_knowledge_base_impl(paths=paths, max_issues=max_issues)
+        return dispatcher(
+            "lint_knowledge_base",
+            {"paths": paths, "max_issues": max_issues},
+        )
 
     return mcp
 
 
+# ---------------------------------------------------------------------------
+# Tool dispatch (local / proxy)
+# ---------------------------------------------------------------------------
+
+
+def _tool_health(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return build_health_payload()
+
+
+def _tool_server_info(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return server_info_impl(cwd=cwd, environ=environ)
+
+
+def _tool_list_scopes(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return build_scope_payload()
+
+
+def _tool_self_test(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return self_test_impl(cwd=cwd, environ=environ)
+
+
+def _tool_remember_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return remember_note_impl(
+        str(kwargs["title"]),
+        str(kwargs["content"]),
+        kind=str(kwargs["kind"]),
+        tags=kwargs.get("tags"),
+        source_refs=kwargs.get("source_refs"),
+        scope=str(kwargs.get("scope", "project")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_promote_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return promote_note_impl(str(kwargs["note_id"]), cwd=cwd, environ=environ)
+
+
+def _tool_deprecate_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return deprecate_note_impl(
+        str(kwargs["note_id"]),
+        scope=str(kwargs.get("scope", "project")),
+        replacement_note_id=kwargs.get("replacement_note_id"),
+        replacement_scope=kwargs.get("replacement_scope"),
+        reason=kwargs.get("reason"),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_semantic_search(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return semantic_search_impl(
+        str(kwargs["query"]),
+        scope=str(kwargs.get("scope", DEFAULT_QUERY_MODE)),
+        limit=int(kwargs.get("limit", 5)),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_hydrate(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return hydrate_impl(
+        str(kwargs["item_id"]),
+        scope=str(kwargs["scope"]),
+        mode=str(kwargs.get("mode", "default")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_index_paths(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return index_paths_impl(
+        paths=kwargs.get("paths"),
+        mode=str(kwargs.get("mode", "incremental")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_lint_knowledge_base(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return lint_knowledge_base_impl(
+        paths=kwargs.get("paths"),
+        max_issues=int(kwargs.get("max_issues", 200)),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
+    "health": _tool_health,
+    "server_info": _tool_server_info,
+    "list_scopes": _tool_list_scopes,
+    "self_test": _tool_self_test,
+    "remember_note": _tool_remember_note,
+    "promote_note": _tool_promote_note,
+    "deprecate_note": _tool_deprecate_note,
+    "semantic_search": _tool_semantic_search,
+    "hydrate": _tool_hydrate,
+    "index_paths": _tool_index_paths,
+    "lint_knowledge_base": _tool_lint_knowledge_base,
+}
+
+
+_DEFAULT_LOCAL_LOCK = threading.RLock()
+
+
+def make_local_dispatcher(
+    *,
+    dispatch_lock: threading.RLock | None = None,
+    default_cwd: Path | str | None = None,
+    default_environ: Mapping[str, str] | None = None,
+) -> Dispatcher:
+    """Return a dispatcher that runs tools in-process.
+
+    The lock is shared between the primary's stdio handler and its daemon
+    listener workers so MemoryStore / LanceDB access remains single-writer.
+    """
+
+    lock = dispatch_lock or _DEFAULT_LOCAL_LOCK
+
+    def _dispatch(tool: str, kwargs: Mapping[str, Any]) -> Any:
+        handler = TOOL_HANDLERS.get(tool)
+        if handler is None:
+            raise ValueError(f"Unknown tool: {tool}")
+        merged_kwargs = dict(kwargs)
+        cwd_override = merged_kwargs.pop("_cwd", None)
+        environ_override = merged_kwargs.pop("_environ", None)
+        resolved_cwd = cwd_override if cwd_override is not None else default_cwd
+        if environ_override:
+            resolved_environ = {**os.environ, **{str(k): str(v) for k, v in environ_override.items()}}
+        else:
+            resolved_environ = default_environ
+        with lock:
+            return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
+
+    return _dispatch
+
+
+def make_proxy_dispatcher(client: DaemonClient) -> Dispatcher:
+    """Return a dispatcher that forwards every call to the primary via RPC."""
+
+    def _collect_env() -> dict[str, str]:
+        collected: dict[str, str] = {}
+        for key in _FORWARDED_ENV_KEYS:
+            value = os.environ.get(key)
+            if value is not None:
+                collected[key] = value
+        return collected
+
+    def _dispatch(tool: str, kwargs: Mapping[str, Any]) -> Any:
+        payload = dict(kwargs)
+        payload["_cwd"] = str(Path(os.getcwd()).resolve())
+        payload["_environ"] = _collect_env()
+        return client.call(tool, payload)
+
+    return _dispatch
+
+
 def run_stdio_server() -> None:
-    build_server().run(transport="stdio")
+    """Entry point used by the CLI. Handles daemon bootstrap transparently."""
+
+    bootstrap = acquire_daemon_role()
+    if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+        _run_primary(bootstrap)
+    elif bootstrap.role == "proxy" and bootstrap.client is not None:
+        _run_proxy(bootstrap)
+    else:
+        _run_standalone()
+
+
+def _run_primary(bootstrap: BootstrapResult) -> None:
+    endpoint = bootstrap.endpoint
+    assert endpoint is not None  # guarded by run_stdio_server
+    dispatch_lock = threading.RLock()
+    dispatcher = make_local_dispatcher(dispatch_lock=dispatch_lock)
+
+    def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
+        # Listener thread uses same dispatcher, which holds the shared lock.
+        return dispatcher(tool, kwargs)
+
+    listener = DaemonListener(endpoint, _listener_handler, dispatch_lock=dispatch_lock)
+    listener.start()
+    try:
+        build_server(dispatcher).run(transport="stdio")
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)
+
+
+def _run_proxy(bootstrap: BootstrapResult) -> None:
+    client = bootstrap.client
+    assert client is not None
+    dispatcher = make_proxy_dispatcher(client)
+    try:
+        build_server(dispatcher).run(transport="stdio")
+    finally:
+        client.close()
+
+
+def _run_standalone() -> None:
+    dispatcher = make_local_dispatcher()
+    build_server(dispatcher).run(transport="stdio")
+
+
+# ---------------------------------------------------------------------------
+# Tool implementations (unchanged)
+# ---------------------------------------------------------------------------
 
 
 def server_info_impl(
@@ -756,9 +1011,11 @@ def _max_timestamp(values: list[object]) -> str | None:
 
 
 __all__ = [
+    "Dispatcher",
     "MCPServer",
     "PRODUCT_NAME",
     "SERVER_ID",
+    "TOOL_HANDLERS",
     "build_server",
     "build_runtime_context",
     "build_current_project_payload",
@@ -769,6 +1026,8 @@ __all__ = [
     "hydrate_impl",
     "index_paths_impl",
     "lint_knowledge_base_impl",
+    "make_local_dispatcher",
+    "make_proxy_dispatcher",
     "promote_note_impl",
     "remember_note_impl",
     "run_stdio_server",
