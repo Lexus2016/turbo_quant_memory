@@ -325,3 +325,175 @@ def test_call_does_not_retry_to_prevent_duplicates(storage_env: dict[str, str]) 
         client.close()
     finally:
         listener.stop()
+
+
+def test_call_raises_primary_unreachable_when_connect_fails(
+    storage_env: dict[str, str],
+) -> None:
+    """Connect-phase failure must raise PrimaryUnreachable so callers can
+    safely failover without worrying about duplicate state."""
+
+    from turbo_memory_mcp.daemon import PrimaryUnreachable
+
+    if platform.system() == "Windows":
+        pytest.skip("AF_PIPE semantics differ; covered on Unix")
+
+    # Point a client at a socket path that doesn't exist.
+    phantom = DaemonEndpoint(
+        address=str(Path(os.environ["TQMEMORY_HOME"]) / ".phantom.sock"),
+        family="AF_UNIX",
+        authkey=b"z" * 32,
+        pid=os.getpid(),
+        server_version="0.0.0",
+        protocol_version=DAEMON_PROTOCOL_VERSION,
+    )
+    client = DaemonClient(phantom)
+    with pytest.raises(PrimaryUnreachable):
+        client.call("health", {})
+    client.close()
+
+
+def test_proxy_runtime_promotes_when_primary_dies(
+    storage_env: dict[str, str],
+) -> None:
+    """When the primary goes away, a proxy's next call must auto-promote
+    (start its own listener + serve locally) rather than surface an error.
+    """
+
+    from turbo_memory_mcp.server import ProxyRuntime
+
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    # 1. Start a primary.
+    listener, endpoint = _start_primary(storage_env, _make_handler(recorded))
+
+    # 2. Bootstrap a proxy against that primary.
+    bootstrap = acquire_daemon_role()
+    assert bootstrap.role == "proxy"
+    assert bootstrap.client is not None
+
+    runtime = ProxyRuntime(bootstrap.client)
+    try:
+        # First call works via the original primary.
+        reply = runtime("echo_tool", {"phase": "pre_kill"})
+        assert reply["echo"] == "echo_tool"
+        assert reply["kwargs"]["phase"] == "pre_kill"
+        assert recorded[-1][0] == "echo_tool"
+
+        # 3. Kill the primary — stop listener, unlink the lockfile, and close
+        #    the client's cached connection so the next call MUST reconnect.
+        #    (In production, kernel tears down sockets when the owning process
+        #    dies; here we simulate by closing the client's cached conn.)
+        listener.stop()
+        release_daemon_lock(endpoint)
+        bootstrap.client.close()
+
+        # 4. Next call must auto-promote. ProxyRuntime catches
+        #    PrimaryUnreachable (reconnect to gone socket fails), runs
+        #    acquire_daemon_role, wins the claim (no other bootstrap is
+        #    competing in this test), starts its own DaemonListener, and
+        #    routes the retry to the in-process local dispatcher.
+        reply = runtime("health", {})
+        assert isinstance(reply, dict)
+        assert runtime.is_primary, "proxy should have promoted itself"
+        # New primary's lockfile must point at OUR pid.
+        new_endpoint = maybe_existing_endpoint()
+        assert new_endpoint is not None
+        assert new_endpoint.pid == os.getpid()
+    finally:
+        runtime.shutdown()
+
+
+def test_proxy_runtime_reconnects_when_another_process_promoted(
+    storage_env: dict[str, str],
+) -> None:
+    """When the primary dies but another process wins the promotion race,
+    this proxy must reconnect to the new primary (not promote itself)."""
+
+    from turbo_memory_mcp.server import ProxyRuntime
+
+    recorded_old: list[tuple[str, dict[str, Any]]] = []
+    recorded_new: list[tuple[str, dict[str, Any]]] = []
+
+    # 1. Start "old" primary.
+    old_listener, old_endpoint = _start_primary(storage_env, _make_handler(recorded_old))
+
+    # 2. Bootstrap a proxy against it.
+    bootstrap = acquire_daemon_role()
+    assert bootstrap.role == "proxy"
+    assert bootstrap.client is not None
+    runtime = ProxyRuntime(bootstrap.client)
+
+    new_listener: DaemonListener | None = None
+    new_endpoint: DaemonEndpoint | None = None
+    try:
+        # 3. Simulate the old primary dying, and a NEW primary (different
+        #    endpoint) taking over the lockfile.
+        old_listener.stop()
+        release_daemon_lock(old_endpoint)
+        bootstrap.client.close()
+
+        # Hand-roll a second primary on a fresh endpoint + lockfile to mimic
+        # a different process winning the promotion race.
+        new_listener, new_endpoint = _start_primary(storage_env, _make_handler(recorded_new))
+
+        # 4. The proxy's next call must fail-over to the new primary.
+        reply = runtime("echo_tool", {"phase": "post_failover"})
+        assert reply["echo"] == "echo_tool"
+        assert runtime.is_primary is False, (
+            "proxy should reconnect to the new primary, not promote itself"
+        )
+        # The NEW primary's handler was the one that saw the call.
+        assert recorded_new, "new primary should have received the re-dispatched call"
+    finally:
+        runtime.shutdown()
+        if new_listener is not None:
+            new_listener.stop()
+        if new_endpoint is not None:
+            release_daemon_lock(new_endpoint)
+
+
+def test_proxy_runtime_preserves_midcall_connection_error(
+    storage_env: dict[str, str],
+) -> None:
+    """Mid-call ConnectionError (send ok, recv failed) must NOT trigger
+    failover, because retrying could duplicate non-idempotent tools.
+
+    We simulate by having the server crash between receiving the call and
+    sending the reply; the listener swallows that as a RuntimeError reply
+    (since the handler raised). That's reported to the caller without
+    failover, which is the desired semantics for non-idempotent tools.
+    """
+
+    from turbo_memory_mcp.server import ProxyRuntime
+
+    handler_calls = {"n": 0}
+
+    def _crash_handler(tool: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        handler_calls["n"] += 1
+        raise RuntimeError("handler crashed mid-processing")
+
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, _crash_handler)
+    listener.start()
+    # Write lockfile so bootstrap finds it.
+    path = lockfile_path(dict(os.environ))
+    path.write_text(__import__("json").dumps(endpoint.to_lockfile()), encoding="utf-8")
+
+    try:
+        bootstrap = acquire_daemon_role()
+        assert bootstrap.role == "proxy"
+        assert bootstrap.client is not None
+        runtime = ProxyRuntime(bootstrap.client)
+        try:
+            with pytest.raises(RuntimeError, match="handler crashed"):
+                runtime("remember_note", {"title": "x", "content": "y", "kind": "lesson"})
+            # Handler should be invoked exactly once — no silent retry.
+            assert handler_calls["n"] == 1
+            # Runtime should NOT have promoted; the primary is still alive.
+            assert runtime.is_primary is False
+        finally:
+            runtime.shutdown()
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)

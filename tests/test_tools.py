@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -42,10 +43,15 @@ def _result_payload(result: Any) -> dict[str, Any]:
 
 
 async def _collect_server_contract() -> dict[str, Any]:
+    # Disable the singleton daemon so this subprocess does not become a proxy
+    # to some unrelated daemon already running on the developer's machine
+    # (which would return that daemon's server_info, not ours).
+    env = {**os.environ, "TQMEMORY_DAEMON_DISABLE": "1"}
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "turbo_memory_mcp", "serve"],
         cwd=PROJECT_ROOT,
+        env=env,
     )
 
     async with stdio_client(params) as (read, write):

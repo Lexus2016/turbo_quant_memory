@@ -28,6 +28,7 @@ from .daemon import (
     BootstrapResult,
     DaemonClient,
     DaemonListener,
+    PrimaryUnreachable,
     acquire_daemon_role,
     release_daemon_lock,
 )
@@ -357,6 +358,143 @@ def make_proxy_dispatcher(client: DaemonClient) -> Dispatcher:
     return _dispatch
 
 
+class ProxyRuntime:
+    """Dispatcher-shaped wrapper around a DaemonClient with auto-failover.
+
+    When the primary process dies, all proxy processes detect the loss via
+    :class:`PrimaryUnreachable` (raised by :meth:`DaemonClient.call` when the
+    connect/send phase fails — i.e. the RPC provably never reached the primary
+    and is safe to replay).
+
+    On detection, the runtime re-runs :func:`acquire_daemon_role`:
+
+    * If this process wins the promotion race (O_EXCL claim on the lockfile),
+      it starts its own :class:`DaemonListener` and swaps the active dispatcher
+      to an in-process local dispatcher. Subsequent calls execute directly,
+      and other orphaned proxies can now connect to us as the new primary.
+    * If another process already promoted, we replace our client with a fresh
+      one bound to the new primary's endpoint.
+    * Otherwise we fall back to standalone local dispatch (same as
+      ``TQMEMORY_DAEMON_DISABLE``).
+
+    A mid-call ``ConnectionError`` (send succeeded but recv failed) is NOT
+    recovered from — retrying risks duplicating non-idempotent tools like
+    ``remember_note``. Those errors surface to the MCP host.
+    """
+
+    def __init__(self, initial_client: DaemonClient) -> None:
+        self._state_lock = threading.RLock()
+        self._dispatch_lock = threading.RLock()
+        self._client: DaemonClient | None = initial_client
+        self._active_dispatcher: Dispatcher = make_proxy_dispatcher(initial_client)
+        self._listener: DaemonListener | None = None
+        self._endpoint: Any = None
+
+    def __call__(self, tool: str, kwargs: Mapping[str, Any]) -> Any:
+        with self._state_lock:
+            active = self._active_dispatcher
+        try:
+            return active(tool, kwargs)
+        except PrimaryUnreachable:
+            self._failover()
+            with self._state_lock:
+                active = self._active_dispatcher
+            return active(tool, kwargs)
+
+    @property
+    def is_primary(self) -> bool:
+        with self._state_lock:
+            return self._listener is not None
+
+    def _failover(self) -> None:
+        """Re-bootstrap after the primary died. Idempotent under concurrent calls."""
+
+        with self._state_lock:
+            if self._listener is not None:
+                # Already promoted ourselves; nothing to do.
+                return
+
+            dead_client = self._client
+            self._client = None
+
+        if dead_client is not None:
+            try:
+                dead_client.close()
+            except Exception:
+                pass
+
+        bootstrap = acquire_daemon_role()
+
+        with self._state_lock:
+            if self._listener is not None:
+                # Another call promoted us between the unlocked bootstrap and
+                # now. Discard this bootstrap's resources to avoid double-claim.
+                if bootstrap.client is not None:
+                    try:
+                        bootstrap.client.close()
+                    except Exception:
+                        pass
+                if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+                    try:
+                        release_daemon_lock(bootstrap.endpoint)
+                    except Exception:
+                        pass
+                return
+
+            if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+                local_dispatcher = make_local_dispatcher(
+                    dispatch_lock=self._dispatch_lock,
+                )
+
+                def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
+                    return local_dispatcher(tool, kwargs)
+
+                listener = DaemonListener(
+                    bootstrap.endpoint,
+                    _listener_handler,
+                    dispatch_lock=self._dispatch_lock,
+                )
+                listener.start()
+                self._listener = listener
+                self._endpoint = bootstrap.endpoint
+                self._active_dispatcher = local_dispatcher
+            elif bootstrap.role == "proxy" and bootstrap.client is not None:
+                self._client = bootstrap.client
+                self._active_dispatcher = make_proxy_dispatcher(bootstrap.client)
+            else:
+                # Standalone fallback (retries exhausted or daemon disabled).
+                self._active_dispatcher = make_local_dispatcher(
+                    dispatch_lock=self._dispatch_lock,
+                )
+
+    def shutdown(self) -> None:
+        """Release network/file resources. Safe to call multiple times."""
+
+        with self._state_lock:
+            listener = self._listener
+            endpoint = self._endpoint
+            client = self._client
+            self._listener = None
+            self._endpoint = None
+            self._client = None
+
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                pass
+        if endpoint is not None:
+            try:
+                release_daemon_lock(endpoint)
+            except Exception:
+                pass
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
 def run_stdio_server() -> None:
     """Entry point used by the CLI. Handles daemon bootstrap transparently."""
 
@@ -391,11 +529,11 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
 def _run_proxy(bootstrap: BootstrapResult) -> None:
     client = bootstrap.client
     assert client is not None
-    dispatcher = make_proxy_dispatcher(client)
+    runtime = ProxyRuntime(client)
     try:
-        build_server(dispatcher).run(transport="stdio")
+        build_server(runtime).run(transport="stdio")
     finally:
-        client.close()
+        runtime.shutdown()
 
 
 def _run_standalone() -> None:
@@ -1014,6 +1152,7 @@ __all__ = [
     "Dispatcher",
     "MCPServer",
     "PRODUCT_NAME",
+    "ProxyRuntime",
     "SERVER_ID",
     "TOOL_HANDLERS",
     "build_server",

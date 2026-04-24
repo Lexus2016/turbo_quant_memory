@@ -138,6 +138,12 @@ Why this is a practical advantage:
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
 
+## New In v0.4.1
+
+- Automatic proxy failover when the primary dies. Previously, if the first `turbo-memory-mcp` process (the primary holding the model + LanceDB handles) shut down, the remaining proxy processes in other MCP clients lost their RPC link and `tqmemory` became silently unavailable for those clients.
+- Proxies now detect a lost primary via `PrimaryUnreachable` on their next RPC call and transparently re-bootstrap: one surviving proxy atomically claims the lockfile and promotes itself to primary (starting its own `DaemonListener`), and every other orphaned proxy reconnects to the new primary. No MCP client restart required.
+- Phase-aware RPC error handling: connect/send-phase failures are translated into `PrimaryUnreachable` (safe to replay), while mid-call failures (send succeeded, recv failed) surface to the host unchanged so non-idempotent tools like `remember_note` are never silently duplicated.
+
 ## New In v0.4.0
 
 - Singleton daemon transport: only one `turbo-memory-mcp` process per machine keeps the sentence-transformers model and LanceDB handles resident. Every additional MCP-client launch becomes a thin stdio↔socket proxy that forwards tool calls to the primary.

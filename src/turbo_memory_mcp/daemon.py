@@ -271,6 +271,17 @@ def _reconstruct_error(error_type: str, message: str) -> BaseException:
     return cls(message)
 
 
+class PrimaryUnreachable(ConnectionError):
+    """Raised when the RPC payload provably never reached the primary.
+
+    Safe for callers to failover (re-bootstrap to a new primary or promote
+    self) and retry the call, because no state has been mutated on the other
+    side yet. Distinguished from plain ``ConnectionError`` which carries
+    ambiguous "mid-call" semantics (send succeeded, receive failed — the
+    primary may or may not have executed the tool).
+    """
+
+
 class DaemonClient:
     """Thin RPC client used by proxy processes to reach the primary."""
 
@@ -331,25 +342,51 @@ class DaemonClient:
     def call(self, tool: str, kwargs: Mapping[str, Any]) -> Any:
         """Send an RPC call and return the daemon's reply.
 
-        We deliberately do NOT retry on transport errors: once the payload has
-        been written to the socket we cannot know whether the primary observed
-        it (and mutated state) before the link dropped. Silent retry would
-        duplicate non-idempotent tools like remember_note. Callers that want
-        retry semantics can handle it themselves on top of a fresh client.
+        Error semantics are split by call phase so callers can do safe
+        failover:
+
+        * ``PrimaryUnreachable`` (subclass of ``ConnectionError``) — the
+          payload provably never reached the primary (failure during connect
+          handshake or during ``_send``). Safe for the caller to re-bootstrap
+          (promote self or reconnect to a new primary) and retry.
+        * ``ConnectionError`` — the send succeeded but the recv failed. The
+          primary may or may not have executed the tool; retrying a
+          non-idempotent tool (``remember_note`` etc.) would risk duplicating
+          state. Callers should surface this to the MCP host.
         """
 
         payload = {"kind": MESSAGE_CALL, "tool": tool, "kwargs": dict(kwargs)}
         with self._lock:
-            conn = self._ensure_conn()
+            try:
+                conn = self._ensure_conn()
+            except Exception as exc:
+                # Any connect/handshake failure (socket gone, authkey mismatch
+                # after primary turnover, protocol mismatch, etc.) means the
+                # payload never reached the primary — safe to failover+retry.
+                self._conn = None
+                raise PrimaryUnreachable(
+                    f"daemon RPC {tool!r}: connect/hello failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
+            sent = False
             try:
                 _send(conn, payload)
+                sent = True
                 reply = _recv(conn, RPC_TIMEOUT_SECONDS)
             except (BrokenPipeError, ConnectionError, EOFError, OSError, TimeoutError) as exc:
-                # Connection died mid-call. Drop the cached connection so the
-                # next call reopens; surface the error to the caller.
                 self._conn = None
-                raise ConnectionError(
-                    f"daemon RPC {tool!r} failed mid-call: {type(exc).__name__}: {exc}"
+                if sent:
+                    # Payload may have reached the primary before the link
+                    # dropped. Don't invite silent retries of non-idempotent
+                    # tools.
+                    raise ConnectionError(
+                        f"daemon RPC {tool!r} mid-call failure after send: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                raise PrimaryUnreachable(
+                    f"daemon RPC {tool!r}: send failed before reaching primary: "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
         if not isinstance(reply, Mapping):
             raise RuntimeError(f"Unexpected reply shape: {reply!r}")
@@ -597,6 +634,7 @@ __all__ = [
     "MESSAGE_HELLO",
     "MESSAGE_HELLO_ACK",
     "MESSAGE_OK",
+    "PrimaryUnreachable",
     "acquire_daemon_role",
     "daemon_is_disabled",
     "lockfile_path",
