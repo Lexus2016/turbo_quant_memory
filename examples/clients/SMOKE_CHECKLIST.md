@@ -8,8 +8,8 @@ Install the packaged CLI before wiring the MCP server into a client.
 
 | Method | Command |
 |---|---|
-| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
-| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
+| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2` |
+| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2` |
 | Runtime | `turbo-memory-mcp serve` |
 
 ## Shared Validation Flow
@@ -64,6 +64,7 @@ Expected pass signals:
 - Tier: `Tier 1`
 - Fixture: [examples/clients/gemini.settings.json](gemini.settings.json)
 - Load: merge the fixture into `~/.gemini/settings.json`, or run `gemini mcp add tqmemory turbo-memory-mcp serve`
+- Prompt pickup: keep the fixture's `"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}` block on merge — without it Gemini CLI loads only `GEMINI.md` and silently misses `AGENTS.md`
 - Root note: launch Gemini CLI in the target repository, or set `TQMEMORY_PROJECT_ROOT` if the MCP process starts elsewhere
 - Trust note: if Gemini shows the server as configured but not connected, trust the current folder and run `gemini mcp list` again
 - Confirm: `gemini mcp list` or `/mcp list` shows `tqmemory`, and `server_info.current_project.project_root` points to the target repository

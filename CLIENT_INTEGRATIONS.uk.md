@@ -43,6 +43,7 @@
 - Підтримує `~/.gemini/settings.json`, `gemini mcp add ...` і `gemini mcp list`.
 - Gemini CLI слід запускати в цільовому репозиторії або явно задавати `TQMEMORY_PROJECT_ROOT`, якщо MCP стартує в іншому місці.
 - Якщо Gemini показує сервер як налаштований, але не підключений, потрібно довірити поточну папку для stdio MCP-підключення.
+- Підхоплює project-промпти з `AGENTS.md` і `GEMINI.md`, коли при merge збережено блок `context.fileName` із фікстури; готова фікстура вже перелічує обидва імені, тож multi-agent контракти з `AGENTS.md` доходять до Gemini CLI без дублікату `GEMINI.md`.
 
 ### Cursor
 

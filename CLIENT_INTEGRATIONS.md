@@ -43,6 +43,7 @@ Shared runtime contract:
 - Supports `~/.gemini/settings.json`, `gemini mcp add ...`, and `gemini mcp list`.
 - Start Gemini CLI in the target repository, or set `TQMEMORY_PROJECT_ROOT` explicitly if the MCP process starts elsewhere.
 - For stdio MCP visibility, trust the current folder if Gemini reports the server as configured but not connected.
+- Picks up project prompts from `AGENTS.md` and `GEMINI.md` when the fixture's `context.fileName` block is preserved on merge; the supplied fixture already lists both names so multi-agent contracts in `AGENTS.md` reach Gemini CLI without a duplicate `GEMINI.md`.
 
 ### Cursor
 

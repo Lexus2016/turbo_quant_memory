@@ -8,8 +8,8 @@
 
 | Способ | Команда |
 |---|---|
-| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
-| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1` |
+| Основной | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2` |
+| Резервный | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2` |
 | Запуск | `turbo-memory-mcp serve` |
 
 ## Общий Поток Проверки
@@ -64,6 +64,7 @@
 - Уровень: `Tier 1`
 - Фикстура: [examples/clients/gemini.settings.json](gemini.settings.json)
 - Подключение: смержить фикстуру в `~/.gemini/settings.json` или выполнить `gemini mcp add tqmemory turbo-memory-mcp serve`
+- Подхват промптов: при merge сохранять блок `"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}` из фикстуры — без него Gemini CLI читает только `GEMINI.md` и тихо пропускает `AGENTS.md`
 - Примечание о repo root: запускать Gemini CLI в целевом репозитории или явно задать `TQMEMORY_PROJECT_ROOT`, если MCP запускается в другом месте
 - Примечание о доверии: если Gemini показывает сервер как настроенный, но не подключённый, доверьте текущую папку и ещё раз выполните `gemini mcp list`
 - Подтверждение: `gemini mcp list` или `/mcp list` показывает `tqmemory`, а `server_info.current_project.project_root` указывает на целевой репозиторий

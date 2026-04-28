@@ -1,4 +1,7 @@
 {
+  "context": {
+    "fileName": ["AGENTS.md", "GEMINI.md"]
+  },
   "mcpServers": {
     "tqmemory": {
       "command": "turbo-memory-mcp",

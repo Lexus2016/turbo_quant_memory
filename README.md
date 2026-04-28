@@ -50,7 +50,7 @@ Use this 60-second flow:
 
 1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.3.1
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2
 ```
 
 2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
@@ -69,6 +69,22 @@ claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
 3. Restart the client and run any `tqmemory` tool.
 
 Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
+
+### Upgrading
+
+To pull a new release into an existing install, re-run the install command with `--reinstall`:
+
+```bash
+uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2
+```
+
+If you already have `~/.gemini/settings.json` from before v0.4.2, also merge this block once so Gemini CLI starts reading `AGENTS.md` alongside `GEMINI.md`:
+
+```jsonc
+{
+  "context": { "fileName": ["AGENTS.md", "GEMINI.md"] }
+}
+```
 
 ## Ignoring Files During Indexing
 
@@ -138,11 +154,19 @@ Why this is a practical advantage:
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
 
+## New In v0.4.2
+
+- Gemini CLI fixture and the bundled `.gemini/settings.json` now ship `"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}`, so Gemini CLI picks up the same `AGENTS.md` project prompts the rest of the agents already use — no duplicate `GEMINI.md` mirror required.
+- README and SMOKE checklist install commands now point at the actual current release, with a new `Upgrading` subsection covering `uv tool install --reinstall` and the one-time `~/.gemini/settings.json` migration.
+- New SMOKE checklist step warns operators that merging the Gemini fixture into an existing `settings.json` must preserve the `context` block — without it Gemini CLI silently falls back to `GEMINI.md`-only and skips `AGENTS.md`.
+- Filed `.planning/todos/2026-04-28-lint-false-positives.md` tracking two `lint_knowledge_base` issues for the next code release: ASCII-only title-key normalization that collapses Cyrillic / non-ASCII H1s into `untitled`, and `broken_link` reports for files inside `DEFAULT_IGNORED_DIR_NAMES` (e.g. `benchmarks/latest.md`) that exist on disk.
+
 ## New In v0.4.1
 
 - Automatic proxy failover when the primary dies. Previously, if the first `turbo-memory-mcp` process (the primary holding the model + LanceDB handles) shut down, the remaining proxy processes in other MCP clients lost their RPC link and `tqmemory` became silently unavailable for those clients.
 - Proxies now detect a lost primary via `PrimaryUnreachable` on their next RPC call and transparently re-bootstrap: one surviving proxy atomically claims the lockfile and promotes itself to primary (starting its own `DaemonListener`), and every other orphaned proxy reconnects to the new primary. No MCP client restart required.
 - Phase-aware RPC error handling: connect/send-phase failures are translated into `PrimaryUnreachable` (safe to replay), while mid-call failures (send succeeded, recv failed) surface to the host unchanged so non-idempotent tools like `remember_note` are never silently duplicated.
+- Gemini CLI fixture now ships `context.fileName: ["AGENTS.md", "GEMINI.md"]` so Gemini CLI picks up the same `AGENTS.md` project prompts that Codex, Cursor, and other agents already use, without forcing a duplicate `GEMINI.md` mirror file.
 
 ## New In v0.4.0
 
