@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -42,6 +43,7 @@ from .identity import (
 )
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
+from .migrations import format_pending_warning
 from .retrieval import semantic_search
 from .retrieval_index import RetrievalIndex
 from .store import (
@@ -490,15 +492,32 @@ class ProxyRuntime:
                 pass
 
 
+def _warn_about_pending_migrations() -> None:
+    """Detect pending schema migrations and surface a warning on stderr.
+
+    Called only in primary/standalone (we own the storage in those roles).
+    Never raises — detection failure must not block daemon startup.
+    """
+    try:
+        _, store = build_runtime_context()
+        msg = format_pending_warning(store)
+        if msg:
+            print(msg, file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_stdio_server() -> None:
     """Entry point used by the CLI. Handles daemon bootstrap transparently."""
 
     bootstrap = acquire_daemon_role()
     if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+        _warn_about_pending_migrations()
         _run_primary(bootstrap)
     elif bootstrap.role == "proxy" and bootstrap.client is not None:
         _run_proxy(bootstrap)
     else:
+        _warn_about_pending_migrations()
         _run_standalone()
 
 
