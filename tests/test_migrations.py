@@ -849,3 +849,107 @@ def test_notes_bump_writes_format_version_to_both_manifests(
 
     assert store.read_project_manifest()["format_version"] == 2
     assert store.read_global_manifest()["format_version"] == 2
+
+
+def test_notes_migration_runs_end_to_end_via_runner(store: MemoryStore) -> None:
+    """The full path: legacy v1 state -> runner.apply_pending -> v2 manifest
+    AND every note re-tagged. Re-importing the package so the
+    autouse fixture's clear_registry() does not blow away the real
+    upgrade registration in upgrades.py.
+    """
+    from turbo_memory_mcp.migrations import (
+        Subsystem,
+        apply_pending,
+        detect_status,
+        upgrades as _upgrades,  # re-import to re-register after clear_registry
+    )
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+    from turbo_memory_mcp.migrations.registry import REGISTRY
+    from turbo_memory_mcp.store import (
+        NOTE_TIER_DURABLE,
+        NOTE_TIER_EPISODIC,
+    )
+
+    # Re-execute the @migration decorators that the autouse fixture
+    # cleared by reloading upgrades.py. importlib.reload gives us the
+    # decorator side-effects back in REGISTRY.
+    import importlib
+
+    importlib.reload(_upgrades)
+    assert any(m.subsystem is Subsystem.NOTES for m in REGISTRY)
+
+    # Simulate a legacy install: notes WITHOUT tier + manifests WITHOUT
+    # format_version. This is exactly what pre-Phase-2 storage looks
+    # like on disk.
+    note_a = store.project_note_path("legacy-a")
+    note_b = store.project_note_path("legacy-b")
+    write_json_atomic(
+        note_a,
+        {
+            "note_id": "legacy-a",
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "project_name": store.project.project_name,
+            "title": "old handoff",
+            "content": "x",
+            "note_kind": "handoff",
+            "tags": [],
+            "source_refs": [],
+            "source_kind": "memory_note",
+            "note_status": "active",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    write_json_atomic(
+        note_b,
+        {
+            "note_id": "legacy-b",
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "project_name": store.project.project_name,
+            "title": "old decision",
+            "content": "y",
+            "note_kind": "decision",
+            "tags": [],
+            "source_refs": [],
+            "source_kind": "memory_note",
+            "note_status": "active",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    write_json_atomic(
+        store.project_manifest_path(),
+        {"scope": "project", "project_id": store.project.project_id},
+    )
+    write_json_atomic(
+        store.global_manifest_path(),
+        {"scope": "global", "storage_root": str(store.storage_root)},
+    )
+
+    # Sanity: detect_status reports NOTES as pending v1 -> v2.
+    status = detect_status(store)[Subsystem.NOTES]
+    assert status.current_version == 1
+    assert status.latest_version >= 2
+    assert any(m.subsystem is Subsystem.NOTES for m in status.pending)
+
+    # Run only NOTES (RETRIEVAL upgrade would need a real LanceDB).
+    outcomes = apply_pending(store, subsystems=[Subsystem.NOTES], snapshot=False)
+    assert all(o.success for o in outcomes)
+
+    # Notes are now tiered.
+    import json
+
+    with note_a.open() as fh:
+        assert json.load(fh)["tier"] == NOTE_TIER_EPISODIC
+    with note_b.open() as fh:
+        assert json.load(fh)["tier"] == NOTE_TIER_DURABLE
+
+    # Both manifests bumped to v2.
+    assert store.read_project_manifest()["format_version"] == 2
+    assert store.read_global_manifest()["format_version"] == 2
+
+    # And re-running is a no-op (idempotency through the framework).
+    follow_up = apply_pending(store, subsystems=[Subsystem.NOTES], snapshot=False)
+    assert follow_up == []
