@@ -82,15 +82,23 @@ def build_contract_snapshot(
     return payload
 
 
-def build_health_payload() -> dict[str, object]:
+def build_health_payload(
+    *,
+    migrations_pending: bool = False,
+    migrations_hint: str | None = None,
+) -> dict[str, object]:
     payload = build_contract_snapshot()
-    return {
+    result: dict[str, object] = {
         "status": "ok",
         "transport": payload["transport"],
         "server_id": payload["server_id"],
         "package_name": payload["package_name"],
         "version": payload["version"],
+        "migrations_pending": bool(migrations_pending),
     }
+    if migrations_pending and migrations_hint:
+        result["migrations_hint"] = migrations_hint
+    return result
 
 
 def build_server_info_payload(
@@ -100,6 +108,7 @@ def build_server_info_payload(
     storage_stats: Mapping[str, Any] | None = None,
     index_status: Mapping[str, Any] | None = None,
     usage_stats: Mapping[str, Any] | None = None,
+    migrations: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     if storage_stats is not None:
@@ -108,6 +117,8 @@ def build_server_info_payload(
         payload["index_status"] = dict(index_status)
     if usage_stats is not None:
         payload["usage_stats"] = dict(usage_stats)
+    if migrations is not None:
+        payload["migrations"] = dict(migrations)
     return payload
 
 

@@ -1267,3 +1267,102 @@ def test_no_infinite_migrate_loop_after_post_migration_writes(
     status = detect_status(store)[Subsystem.NOTES]
     assert status.current_version == 2
     assert status.pending == []
+
+
+# --------------------------------------------------------------------------- #
+# v0.5.1 — pending-migration signal exposed to MCP clients
+# --------------------------------------------------------------------------- #
+
+
+def test_health_payload_shape_default() -> None:
+    """Default `build_health_payload` reports no pending migrations."""
+    from turbo_memory_mcp.contracts import build_health_payload
+
+    payload = build_health_payload()
+    assert payload["status"] == "ok"
+    assert payload["migrations_pending"] is False
+    assert "migrations_hint" not in payload
+
+
+def test_health_payload_includes_hint_when_pending() -> None:
+    from turbo_memory_mcp.contracts import build_health_payload
+
+    payload = build_health_payload(
+        migrations_pending=True,
+        migrations_hint="Run turbo-memory-mcp migrate --apply",
+    )
+    assert payload["migrations_pending"] is True
+    assert "migrate --apply" in str(payload["migrations_hint"])
+
+
+def test_server_info_payload_includes_migrations_field() -> None:
+    """build_server_info_payload propagates the migrations dict so agents can
+    detect pending upgrades from a single MCP probe."""
+    from turbo_memory_mcp.contracts import build_server_info_payload
+
+    payload = build_server_info_payload(
+        storage_root="/tmp/x",
+        current_project={"project_id": "p", "project_name": "P", "project_root": "/tmp/p", "identity_kind": "local_path"},
+        migrations={
+            "pending": True,
+            "subsystems": [
+                {"subsystem": "notes", "current_version": 1, "latest_version": 2, "pending": True, "step_count": 1},
+            ],
+            "hint": "Stop clients and run migrate --apply",
+        },
+    )
+    assert payload["migrations"]["pending"] is True
+    assert payload["migrations"]["subsystems"][0]["subsystem"] == "notes"
+    assert "migrate --apply" in payload["migrations"]["hint"]
+
+
+def test_server_info_migration_collection_against_legacy_store(
+    store: MemoryStore,
+) -> None:
+    """Integration: a store with legacy (no format_version) manifests gets
+    `migrations.pending=True` from _collect_migrations_status."""
+    from turbo_memory_mcp.migrations import Subsystem, migration
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+    from turbo_memory_mcp.migrations.upgrades import upgrade_notes_v1_to_v2
+    from turbo_memory_mcp.server import _collect_migrations_status
+
+    # Register the real NOTES upgrade so latest_version returns 2 (the
+    # autouse fixture cleared the registry before this test ran).
+    @migration(Subsystem.NOTES, from_version=1, to_version=2)
+    def _proxy(store_arg):
+        upgrade_notes_v1_to_v2(store_arg)
+
+    # Simulate pre-Phase-2 install.
+    write_json_atomic(
+        store.project_manifest_path(),
+        {"scope": "project", "project_id": store.project.project_id},
+    )
+    write_json_atomic(
+        store.global_manifest_path(),
+        {"scope": "global", "storage_root": str(store.storage_root)},
+    )
+
+    result = _collect_migrations_status(store)
+    assert result["pending"] is True
+    notes_entry = next(s for s in result["subsystems"] if s["subsystem"] == "notes")
+    assert notes_entry["current_version"] == 1
+    assert notes_entry["latest_version"] >= 2
+    assert notes_entry["pending"] is True
+    assert "migrate --apply" in result["hint"]
+
+
+def test_server_info_migration_collection_clean_store(store: MemoryStore) -> None:
+    """A freshly-written store at the current code baseline reports nothing
+    pending (so agents do not nag operators on green installs)."""
+    from turbo_memory_mcp.server import _collect_migrations_status
+
+    # Pump every manifest writer at the in-code baseline.
+    store.write_project_manifest()
+    store.write_global_manifest()
+    store.write_markdown_manifest()
+    store.write_project_retrieval_manifest()
+    store.write_global_retrieval_manifest()
+
+    result = _collect_migrations_status(store)
+    assert result["pending"] is False
+    assert all(not s["pending"] for s in result["subsystems"])

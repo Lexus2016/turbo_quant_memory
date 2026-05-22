@@ -208,11 +208,43 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
 
 
 def _tool_health(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
-    return build_health_payload()
+    pending, hint = _migration_pending_signal(cwd=cwd, environ=environ)
+    return build_health_payload(migrations_pending=pending, migrations_hint=hint)
 
 
 def _tool_server_info(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     return server_info_impl(cwd=cwd, environ=environ)
+
+
+def _migration_pending_signal(
+    *, cwd: Any = None, environ: Any = None
+) -> tuple[bool, str | None]:
+    """Cheap detection of pending schema migrations for client-visible payloads.
+
+    Returns ``(pending, hint)``. ``hint`` is a one-line operator instruction
+    safe to surface in MCP responses; ``None`` if nothing is pending.
+    Detection failures are swallowed and reported as "no pending" so a
+    broken status check never blocks a legitimate tool call.
+    """
+    try:
+        from .migrations import detect_status
+
+        _, store = build_runtime_context(cwd=cwd, environ=environ)
+        statuses = detect_status(store)
+        pending_subs = [s.subsystem.value for s in statuses.values() if s.needs_upgrade]
+        if not pending_subs:
+            return False, None
+        hint = (
+            "Pending tqmemory schema upgrade(s): "
+            + ", ".join(pending_subs)
+            + ". Stop all MCP clients, then run "
+            "`turbo-memory-mcp migrate --apply`. A rolling snapshot is taken "
+            "automatically; on failure the CLI prints the exact "
+            "`--restore-from` command."
+        )
+        return True, hint
+    except Exception:  # noqa: BLE001
+        return False, None
 
 
 def _tool_list_scopes(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
@@ -574,13 +606,55 @@ def server_info_impl(
         project_name=project.project_name,
         environ=environ,
     )
+    migrations = _collect_migrations_status(store)
     return build_server_info_payload(
         storage_root=str(store.storage_root),
         current_project=build_current_project_payload(project),
         storage_stats=storage_stats,
         index_status=index_status,
         usage_stats=usage_stats,
+        migrations=migrations,
     )
+
+
+def _collect_migrations_status(store: Any) -> dict[str, Any]:
+    """Detailed per-subsystem migration state for server_info responses.
+
+    Lets agents decide on session start whether they should ask the user to
+    run `turbo-memory-mcp migrate --apply`. Always returns a dict so clients
+    can rely on the field being present; on detection failure the dict
+    carries `pending=False` so callers can branch on a single flag.
+    """
+    try:
+        from .migrations import detect_status
+
+        statuses = detect_status(store)
+        items = []
+        any_pending = False
+        for status in statuses.values():
+            entry = {
+                "subsystem": status.subsystem.value,
+                "current_version": int(status.current_version),
+                "latest_version": int(status.latest_version),
+                "pending": status.needs_upgrade,
+                "step_count": len(status.pending),
+            }
+            if status.error:
+                entry["error"] = status.error
+            if status.needs_upgrade:
+                any_pending = True
+            items.append(entry)
+        result: dict[str, Any] = {"pending": any_pending, "subsystems": items}
+        if any_pending:
+            result["hint"] = (
+                "Stop all MCP clients, then run "
+                "`turbo-memory-mcp migrate --apply` to upgrade. A rolling "
+                "snapshot is taken automatically; on failure the CLI prints "
+                "the exact `--restore-from` command."
+            )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        return {"pending": False, "subsystems": [], "error": str(exc)}
 
 
 def self_test_impl(

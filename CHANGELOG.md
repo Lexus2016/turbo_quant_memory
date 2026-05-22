@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-22
+
+Agent-visible pending-migration signal. Closes the UX gap from v0.5.0:
+the stderr warning at daemon startup is only visible to humans reading
+client logs. After upgrading the binary, agents still ran against the
+legacy v1 schema silently. v0.5.1 surfaces the same detection through
+two MCP probes every agent calls at session start.
+
+### Added
+- `mcp__tqmemory__health` payload now includes:
+  - `migrations_pending: bool` — single flag so agents can branch cheaply.
+  - `migrations_hint: str` (only when pending) — one-line operator
+    instruction safe to surface in a tool response.
+- `mcp__tqmemory__server_info` payload now includes a `migrations`
+  block with per-subsystem detail:
+  ```json
+  "migrations": {
+    "pending": true,
+    "subsystems": [
+      {"subsystem": "notes", "current_version": 1, "latest_version": 2,
+       "pending": true, "step_count": 1},
+      ...
+    ],
+    "hint": "Stop all MCP clients, then run `turbo-memory-mcp migrate --apply` ..."
+  }
+  ```
+- Tests cover both the payload shape and the live store -> probe path
+  (legacy manifest yields `pending=true`; clean store yields
+  `pending=false`).
+
+### Agent integration recommendation
+Agents (Claude Code / Codex / Gemini CLI / Cursor / OpenCode / etc.)
+should query `mcp__tqmemory__server_info` (or the cheaper
+`mcp__tqmemory__health`) on session start. If `migrations.pending`
+(or `migrations_pending`) is true, surface the included `hint`
+verbatim to the user — it already names the exact command and
+notes the lockfile requirement.
+
 ## [0.5.0] - 2026-05-22
 
 Phase A (migration framework) and Phase 2 (tier separation) of the
@@ -210,6 +248,7 @@ Maintenance baseline before the next architecture cycle. No behavioral changes.
 - Hydration paths and benchmark suite.
 - Trilingual documentation (English, Ukrainian, Russian).
 
+[0.5.1]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.1...v0.4.2
