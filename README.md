@@ -156,6 +156,25 @@ Why this is a practical advantage:
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
 
+## New In v0.6.0
+
+Phase 3 of the Memory Quality v1 milestone — **hybrid retrieval**: dense-vector search plus BM25 (full-text-search) merged via Reciprocal Rank Fusion. Particularly fixes the short-content overhead problem from v0.5.x: exact-term hits (function names, file paths, IDs) now reach the top even when their vector signal is weak.
+
+- **Hybrid BM25 + vector via RRF.** Every `semantic_search` query now hits both lanes in parallel. Reciprocal Rank Fusion (`k=60`) combines the top-K from each; items that rank well in either lane bubble up.
+- **Idempotent FTS index** on the `content_search` column. New migration `RETRIEVAL v2 → v3` adds it without touching data — fast on any corpus size.
+- **Graceful fallback** on legacy LanceDB tables that lack the FTS index — search degrades to vector-only, never breaks.
+- **Defensive lane wrappers** (`_safe_vector_search` / `_safe_fts_search`) — one broken lane no longer takes down the whole query.
+
+To upgrade: `uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0`, stop MCP clients, then `turbo-memory-mcp migrate --apply`.
+
+## New In v0.5.1
+
+Closes the agent-visibility gap from v0.5.0. The stderr migration warning at daemon startup is only seen by humans reading client logs — agents stayed silent on legacy schemas. v0.5.1 surfaces the same detection through MCP probes every agent calls at session start.
+
+- **`mcp__tqmemory__health`** now returns `migrations_pending: bool` (always) and `migrations_hint: str` (only when pending).
+- **`mcp__tqmemory__server_info`** now returns a `migrations` block with per-subsystem `current_version`, `latest_version`, `pending`, `step_count`, plus a top-level `hint` string.
+- **Agent integration recipe** (already in this repo's `CLAUDE.md`): query either probe on session start; if pending is true, surface the hint verbatim to the user. Do NOT run `migrate --apply` from inside the agent — only the user can close MCP clients that hold the daemon lockfile.
+
 ## New In v0.5.0
 
 This release ships the first two phases of the Memory Quality v1 milestone: the schema-migration framework (Phase A) and tier separation (Phase 2). Existing v0.4.x installs upgrade in place — backward-compatible and recoverable from a rolling snapshot.

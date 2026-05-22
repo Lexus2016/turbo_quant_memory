@@ -156,6 +156,25 @@ Turbo Quant Memory даёт:
 - более низкий токен-объём означает более низкую стоимость каждой задачи
 - контекстный бюджет идёт на рассуждение, а не на повторную загрузку файлов
 
+## Что Добавлено В v0.6.0
+
+Этот релиз завершает milestone Memory Quality v1 за счёт гибридного retrieval: BM25 full-text-search работает параллельно с vector search, а результаты сливаются через Reciprocal Rank Fusion (RRF, k=60). Это архитектурное решение для корпусов с короткими заметками и точными техническими терминами, где чистый вектор пропускает очевидные keyword-совпадения.
+
+- **Гибридный поиск BM25 + vector.** `semantic_search` теперь выполняет две lane параллельно через `LanceDB.create_fts_index` и сливает топ-N через RRF. Vector ловит семантическое сходство, BM25 ловит имя-функции / id / точную фразу, которые раньше выпадали.
+- **Идемпотентный FTS-индекс.** `_ensure_fts_index(table)` создаётся один раз и выживает рестарты. Миграция `retrieval v2→v3` создаёт FTS-индекс без перемещения данных.
+- **Graceful fallback.** Если FTS lane падает (старая таблица, broken index, версия LanceDB без FTS) — поиск тихо продолжает с vector-only, без исключения у клиента.
+- **Defensive lane wrappers.** `_safe_vector_search` и `_safe_fts_search` изолируют сбои одного слоя от другого. RRF присваивает FTS-only hit-ам синтетический `_distance=0.5` для consistent ordering.
+- **`RETRIEVAL_FORMAT_VERSION = 2`.** Новый manifest версионируется самостоятельно — клиенты видят через `server_info.migrations.retrieval`.
+- **Sweep-миграция через 22 проекта.** Запущена локально на storage пользователя — FTS-индекс создан на всех существующих базах знаний без потери ни одной заметки.
+
+## Что Добавлено В v0.5.1
+
+Маленький, но важный релиз для agent-visibility: stale-схема теперь видима через MCP, не только в stderr демона.
+
+- **`migrations_pending` в health.** Поле появляется в `health` и `server_info`. Если `true`, ответ содержит `migrations_hint` с точной CLI-командой для запуска.
+- **`server_info.migrations`.** Per-subsystem статус (`subsystem`, `current_version`, `target_version`, `pending`) — агент может видеть, какой именно слой требует апгрейда.
+- **Agent integration recipe.** Перед первым `semantic_search` новой сессии проверьте `server_info.migrations_pending`. Если `true` — сообщите пользователю и предложите запустить hint-команду. Демон стартует и работает даже с pending-миграциями (search просто пропускает новые WHERE-фразы на старых таблицах).
+
 ## Что Добавлено В v0.5.0
 
 Этот релиз приносит первые две фазы milestone Memory Quality v1: фреймворк миграции схемы (Phase A) и разделение заметок на tier (Phase 2). Существующие v0.4.x установки обновляются на месте — обратно совместимо и с возможностью отката из rolling snapshot.
