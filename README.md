@@ -50,7 +50,7 @@ Use this 60-second flow:
 
 1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.5.1
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0
 ```
 
 2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
@@ -75,7 +75,7 @@ Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIEN
 To pull a new release into an existing install, re-run the install command with `--reinstall`:
 
 ```bash
-uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.5.1
+uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0
 ```
 
 After upgrading from v0.4.x, run `turbo-memory-mcp migrate --status` to see the pending Phase 2 upgrade (`notes` v1→v2 + `retrieval` v1→v2). Stop your MCP clients first (the daemon lockfile blocks `--apply` while a primary is running), then run `turbo-memory-mcp migrate --apply`. A rolling snapshot is taken automatically; on failure the CLI prints the exact `--restore-from` command. See `New In v0.5.0` below for the full list.

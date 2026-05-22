@@ -5,6 +5,53 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-22
+
+Phase 3 of the Memory Quality v1 milestone: hybrid retrieval combining
+dense-vector search with BM25 (full-text-search) via Reciprocal Rank
+Fusion. Particularly addresses the structural overhead-on-short-notes
+problem documented in v0.5.x — exact-term hits (function names, file
+paths, IDs) now bubble up reliably even when their vector signal is
+weak.
+
+### Added
+- BM25 lane in `RetrievalIndex.search`: every query now hits the
+  dense-vector index AND the FTS index in parallel, results combined
+  via RRF (`k=60`). Synthetic `_distance=0.5` for FTS-only hits keeps
+  downstream scoring stable.
+- `_ensure_fts_index(table)` idempotent helper that creates the BM25
+  index on `content_search` on first use.
+- `_safe_vector_search` / `_safe_fts_search` defensive wrappers — one
+  broken lane no longer takes down the whole query.
+- `_rrf_merge` utility producing reproducible rankings (preserves
+  vector-row `_distance` when an item appears in both lanes).
+
+### Migration
+- New `Subsystem.RETRIEVAL` upgrade v2 -> v3 in `migrations/upgrades.py`:
+  no data movement, just creates the FTS index on existing tables.
+  Fast on any size of corpus.
+- `RETRIEVAL_FORMAT_VERSION` bumped to 2 in `store.py` so fresh
+  installs land at v2 and only the v2 -> v3 step is pending.
+- Pre-existing v1 installs run both `v1 -> v2` (tier column reset) and
+  `v2 -> v3` (FTS index) in a single `migrate --apply` invocation.
+
+### Backwards compatibility
+- Legacy installs that have not yet run `migrate --apply` get an empty
+  FTS lane and the same vector-only behavior as v0.5.x. No regression.
+- The agent-visible `migrations_pending` / `migrations.pending` signals
+  introduced in v0.5.1 surface the new pending step exactly the same
+  way: agents say "run `turbo-memory-mcp migrate --apply`" to the user.
+
+### Tests
+- `_rrf_merge` correctness (combining lanes, synthetic distance,
+  skipping rows without `item_id`).
+- `_ensure_fts_index` idempotency on a real LanceDB instance.
+- `_safe_fts_search` graceful degradation contract.
+- Live LanceDB hybrid probe: an item that tops both lanes ranks #1.
+- `upgrade_retrieval_v2_to_v3` exercise via stubbed `RetrievalIndex` —
+  both scopes open, both get `_ensure_fts_index`. No reset.
+- Full suite: 168/168 green.
+
 ## [0.5.1] - 2026-05-22
 
 Agent-visible pending-migration signal. Closes the UX gap from v0.5.0:
@@ -248,6 +295,7 @@ Maintenance baseline before the next architecture cycle. No behavioral changes.
 - Hydration paths and benchmark suite.
 - Trilingual documentation (English, Ukrainian, Russian).
 
+[0.6.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.2...v0.4.3

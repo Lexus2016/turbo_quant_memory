@@ -40,14 +40,14 @@ NOTE_TIER_REFERENCE = "reference"
 NOTE_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_EPISODIC, NOTE_TIER_REFERENCE)
 DEFAULT_SEARCH_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_REFERENCE)
 MARKDOWN_FORMAT_VERSION = 1
-RETRIEVAL_FORMAT_VERSION = 1
+RETRIEVAL_FORMAT_VERSION = 2
 USAGE_STATS_FORMAT_VERSION = 2
 NOTES_FORMAT_VERSION = 1
-# RETRIEVAL and NOTES stay at 1 in the in-code constant on purpose: the
-# Phase 2 @migration v1->v2 is what bumps these manifests to v2 the
-# first time `migrate --apply` runs. Fresh installs land at v1 too, and
-# the framework detects the pending upgrade and runs the (idempotent)
-# migration once — see migrations/upgrades.py.
+# RETRIEVAL is at 2 (post Phase 2 tier column). The Phase 3 @migration
+# v2->v3 adds the BM25 FTS index on top of that schema; latest_version
+# resolves to 3 via the registry, so fresh installs detect the pending
+# Phase 3 step on first daemon launch. NOTES still ships at 1 because
+# legacy installs need the v1->v2 reclass to run before manifests bump.
 
 
 def tier_for_kind(note_kind: str | None) -> str:

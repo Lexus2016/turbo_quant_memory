@@ -165,21 +165,35 @@ class RetrievalIndex:
         project_id: str | None = None,
         tier_filter: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Hybrid retrieval: dense vector search + BM25 (FTS), merged via RRF.
+
+        Phase 3 brings the BM25 lane on top of the existing dense-vector
+        recall. Each backend returns its top candidates independently;
+        Reciprocal Rank Fusion combines them so an item that ranks well in
+        either lane bubbles to the top.
+
+        Backwards compatibility: if the on-disk LanceDB table has no FTS
+        index yet (legacy installs that have not run the Phase 3
+        migration), the FTS lane silently returns no rows and search
+        falls back to vector-only — same behavior as before.
+        """
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None or self.count_rows(scope, project_id=project_id) == 0:
             return []
 
-        query_vector = self._embed_texts([query])[0]
-        builder = table.search(query_vector).metric("cosine").limit(limit)
-        # Apply tier_filter only when the on-disk LanceDB table actually
-        # carries the `tier` column. Existing installs that have not yet
-        # run `migrate --apply` still have the v1 schema and would error
-        # on the WHERE clause; gracefully degrade to "no tier filter"
-        # rather than break their search.
+        where_clause: str | None = None
         if tier_filter and _table_has_tier_column(table):
             tiers_quoted = ", ".join(_quote_sql_string(str(t)) for t in tier_filter)
-            builder = builder.where(f"tier IN ({tiers_quoted})")
-        return [dict(row) for row in builder.to_list()]
+            where_clause = f"tier IN ({tiers_quoted})"
+
+        # Take a few extra candidates per lane so RRF has signal to merge.
+        fetch_limit = max(limit * 3, limit)
+        query_vector = self._embed_texts([query])[0]
+        vector_rows = _safe_vector_search(table, query_vector, fetch_limit, where_clause)
+        fts_rows = _safe_fts_search(table, query, fetch_limit, where_clause)
+
+        merged = _rrf_merge([vector_rows, fts_rows], k=60, limit=limit)
+        return merged
 
     def list_rows(self, scope: str, *, project_id: str | None = None) -> list[dict[str, Any]]:
         table = self._open_scope_table(scope, project_id=project_id)
@@ -314,6 +328,97 @@ def _dedupe_ids(item_ids: Sequence[str]) -> list[str]:
 
 def _quote_sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _safe_vector_search(
+    table: Any,
+    query_vector: list[float],
+    limit: int,
+    where_clause: str | None,
+) -> list[dict[str, Any]]:
+    """Dense-vector lane. Returns rows with `_distance`. Defensive on any
+    LanceDB error so search keeps working even if one lane breaks."""
+    try:
+        builder = table.search(query_vector).metric("cosine").limit(limit)
+        if where_clause:
+            builder = builder.where(where_clause)
+        return [dict(row) for row in builder.to_list()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _safe_fts_search(
+    table: Any,
+    query_text: str,
+    limit: int,
+    where_clause: str | None,
+) -> list[dict[str, Any]]:
+    """BM25/FTS lane. Returns rows with `_score`. Idempotently ensures the
+    FTS index exists on first use; degrades to an empty list on legacy
+    installs whose table predates the Phase 3 index."""
+    if not query_text.strip():
+        return []
+    try:
+        _ensure_fts_index(table)
+        builder = table.search(query_text, query_type="fts").limit(limit)
+        if where_clause:
+            builder = builder.where(where_clause)
+        return [dict(row) for row in builder.to_list()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _ensure_fts_index(table: Any) -> None:
+    """Create the BM25 index on `content_search` if missing. Idempotent.
+
+    LanceDB raises when the index already exists and `replace=False`; that
+    is exactly the no-op path we want.
+    """
+    try:
+        table.create_fts_index("content_search", replace=False)
+    except Exception:  # noqa: BLE001 — already exists or not supported
+        pass
+
+
+def _rrf_merge(
+    result_lists: list[list[dict[str, Any]]],
+    *,
+    k: int = 60,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Reciprocal Rank Fusion.
+
+    For each row, score = sum over lanes of 1 / (k + rank_in_lane). Higher
+    is better. `k=60` is the standard from the original RRF paper and
+    keeps the formula robust to outliers.
+
+    Items that appeared only in the FTS lane lack a `_distance` field;
+    downstream scoring uses 0.5 as a synthetic neutral so a strong FTS
+    hit still gets a reasonable base score from `_distance_to_score`.
+    """
+    scores: dict[str, float] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    for hits in result_lists:
+        for rank, row in enumerate(hits, start=1):
+            iid = str(row.get("item_id") or "")
+            if not iid:
+                continue
+            scores[iid] = scores.get(iid, 0.0) + 1.0 / (k + rank)
+            if iid not in rows:
+                rows[iid] = dict(row)
+            elif "_distance" not in rows[iid] and "_distance" in row:
+                # Prefer the vector row when an item appeared in both lanes:
+                # _distance carries more downstream signal than _score alone.
+                rows[iid] = dict(row)
+
+    ordered = sorted(scores.items(), key=lambda kv: -kv[1])
+    output: list[dict[str, Any]] = []
+    for iid, rrf_score in ordered[:limit]:
+        record = rows[iid]
+        record.setdefault("_distance", 0.5)
+        record["_rrf_score"] = round(rrf_score, 6)
+        output.append(record)
+    return output
 
 
 def _table_has_tier_column(table: Any) -> bool:

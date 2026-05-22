@@ -70,6 +70,35 @@ def upgrade_retrieval_v1_to_v2(store: MemoryStore) -> None:
     index.sync_global()
 
 
+@migration(
+    Subsystem.RETRIEVAL,
+    from_version=2,
+    to_version=3,
+    description="create BM25 full-text-search index on `content_search` for hybrid retrieval",
+)
+def upgrade_retrieval_v2_to_v3(store: MemoryStore) -> None:
+    """Add the FTS index on project + global retrieval tables.
+
+    No data change — existing rows stay where they are. The FTS index is
+    built over the `content_search` column already populated by
+    `mirror_note_record` and `mirror_markdown_block`. After this
+    migration `RetrievalIndex.search` automatically combines the BM25
+    lane with the dense-vector lane via RRF.
+    """
+    from ..retrieval_index import RetrievalIndex, _ensure_fts_index
+    from ..store import GLOBAL_SCOPE, PROJECT_SCOPE
+
+    index = RetrievalIndex(store)
+    for scope, project_id in (
+        (PROJECT_SCOPE, store.project.project_id),
+        (GLOBAL_SCOPE, None),
+    ):
+        table = index._open_scope_table(scope, project_id=project_id)
+        if table is None:
+            continue
+        _ensure_fts_index(table)
+
+
 # --------------------------------------------------------------------------- #
 # Internals
 # --------------------------------------------------------------------------- #

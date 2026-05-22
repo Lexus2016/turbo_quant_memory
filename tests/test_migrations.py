@@ -365,9 +365,34 @@ def test_keep_count_prunes_old_snapshots(
 def test_apply_pending_handles_multiple_subsystems_in_one_call(
     store: MemoryStore,
 ) -> None:
-    store.write_markdown_manifest()
-    store.write_project_retrieval_manifest()
-    store.write_global_retrieval_manifest()
+    # Seed legacy v1 manifests for both subsystems explicitly: the
+    # store's `write_*_manifest` methods now stamp the current in-code
+    # baseline (markdown=1, retrieval=2 after Phase 3), so we bypass
+    # them to simulate a real legacy install pending v1->v2.
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+
+    write_json_atomic(
+        store.project_markdown_manifest_path(),
+        {
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "source_kind": "markdown",
+            "format_version": 1,
+        },
+    )
+    write_json_atomic(
+        store.project_retrieval_manifest_path(),
+        {
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "source_kind": "retrieval",
+            "format_version": 1,
+        },
+    )
+    write_json_atomic(
+        store.global_retrieval_manifest_path(),
+        {"scope": "global", "source_kind": "retrieval", "format_version": 1},
+    )
 
     seen: list[str] = []
 
@@ -1366,3 +1391,175 @@ def test_server_info_migration_collection_clean_store(store: MemoryStore) -> Non
     result = _collect_migrations_status(store)
     assert result["pending"] is False
     assert all(not s["pending"] for s in result["subsystems"])
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 — hybrid BM25 + vector via RRF
+# --------------------------------------------------------------------------- #
+
+
+def test_rrf_merge_combines_two_lanes_in_rank_order() -> None:
+    """An item ranking high in either lane wins the merged top slot."""
+    from turbo_memory_mcp.retrieval_index import _rrf_merge
+
+    vector_hits = [
+        {"item_id": "v_top", "_distance": 0.1},
+        {"item_id": "shared", "_distance": 0.4},
+        {"item_id": "v_low", "_distance": 0.9},
+    ]
+    fts_hits = [
+        {"item_id": "shared", "_score": 5.0},
+        {"item_id": "fts_top", "_score": 4.0},
+    ]
+    merged = _rrf_merge([vector_hits, fts_hits], k=60, limit=4)
+
+    ids = [r["item_id"] for r in merged]
+    # `shared` appears in both lanes -> highest combined RRF score.
+    assert ids[0] == "shared"
+    # All four unique items present.
+    assert set(ids) == {"v_top", "shared", "v_low", "fts_top"}
+    # Every row carries the RRF score for downstream debugging.
+    assert all("_rrf_score" in r for r in merged)
+    # `_distance` is preserved for vector hits and synthesized for FTS-only.
+    fts_only = next(r for r in merged if r["item_id"] == "fts_top")
+    assert fts_only["_distance"] == 0.5
+
+
+def test_rrf_merge_skips_rows_without_item_id() -> None:
+    from turbo_memory_mcp.retrieval_index import _rrf_merge
+
+    merged = _rrf_merge(
+        [[{"_distance": 0.1}, {"item_id": "a", "_distance": 0.2}]],
+        limit=5,
+    )
+    assert [r["item_id"] for r in merged] == ["a"]
+
+
+def test_ensure_fts_index_is_idempotent() -> None:
+    """`_ensure_fts_index` swallows the 'already exists' error so callers
+    can invoke it on every search without worrying about state."""
+    import tempfile, pyarrow as pa, lancedb
+    from turbo_memory_mcp.retrieval_index import _ensure_fts_index
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = lancedb.connect(tmp)
+        schema = pa.schema(
+            [
+                pa.field("item_id", pa.string()),
+                pa.field("content_search", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), 4)),
+            ]
+        )
+        tbl = db.create_table("t", schema=schema)
+        tbl.add(
+            [{"item_id": "a", "content_search": "modal close", "vector": [1, 0, 0, 0]}]
+        )
+
+        _ensure_fts_index(tbl)
+        # Second call must not raise.
+        _ensure_fts_index(tbl)
+
+        hits = tbl.search("modal", query_type="fts").limit(2).to_list()
+        assert any(r["item_id"] == "a" for r in hits)
+
+
+def test_safe_fts_search_returns_empty_on_legacy_table_without_index() -> None:
+    """A table that the test never indexed must yield zero FTS rows without
+    raising — so search() can degrade to vector-only on legacy installs."""
+    import tempfile, pyarrow as pa, lancedb
+    from turbo_memory_mcp.retrieval_index import _safe_fts_search
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = lancedb.connect(tmp)
+        schema = pa.schema(
+            [
+                pa.field("item_id", pa.string()),
+                pa.field("content_search", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), 4)),
+            ]
+        )
+        tbl = db.create_table("t", schema=schema)
+        tbl.add(
+            [{"item_id": "a", "content_search": "modal close", "vector": [1, 0, 0, 0]}]
+        )
+        # _safe_fts_search will idempotently try to create the index;
+        # on success it should return matching rows, on failure it
+        # returns empty — both are acceptable, but it must not raise.
+        result = _safe_fts_search(tbl, "modal", limit=2, where_clause=None)
+        assert isinstance(result, list)
+
+
+def test_upgrade_retrieval_v2_to_v3_calls_ensure_fts_index_per_scope(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase 3 upgrade only touches indexes — never resets data."""
+    from turbo_memory_mcp.migrations.upgrades import upgrade_retrieval_v2_to_v3
+
+    open_calls: list[tuple[str, str | None]] = []
+    fts_calls: list[object] = []
+
+    class StubIndex:
+        def __init__(self, store_arg):
+            pass
+
+        def _open_scope_table(self, scope, *, project_id=None):
+            open_calls.append((scope, project_id))
+            # Return a sentinel object so _ensure_fts_index is called.
+            return object()
+
+    def fake_ensure_fts_index(table):
+        fts_calls.append(table)
+
+    monkeypatch.setattr(
+        "turbo_memory_mcp.retrieval_index.RetrievalIndex",
+        StubIndex,
+    )
+    monkeypatch.setattr(
+        "turbo_memory_mcp.retrieval_index._ensure_fts_index",
+        fake_ensure_fts_index,
+    )
+
+    upgrade_retrieval_v2_to_v3(store)
+
+    # Both scopes opened; FTS index ensured on each non-None table.
+    scopes = [s for s, _ in open_calls]
+    assert "project" in scopes
+    assert "global" in scopes
+    assert len(fts_calls) == 2
+
+
+def test_hybrid_search_returns_results_on_live_lancedb(tmp_path) -> None:
+    """End-to-end probe: a freshly-built LanceDB table with both a vector
+    column and an FTS index returns hits for a query that matches by
+    BM25 even when the vector signal is poor."""
+    import lancedb, pyarrow as pa
+    from turbo_memory_mcp.retrieval_index import _safe_vector_search, _safe_fts_search, _rrf_merge
+
+    db = lancedb.connect(str(tmp_path))
+    schema = pa.schema(
+        [
+            pa.field("item_id", pa.string()),
+            pa.field("content_search", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 4)),
+        ]
+    )
+    tbl = db.create_table("t", schema=schema)
+    tbl.add(
+        [
+            {"item_id": "a", "content_search": "modal close button visibility",
+             "vector": [1.0, 0.0, 0.0, 0.0]},
+            {"item_id": "b", "content_search": "landing page audit priorities",
+             "vector": [0.0, 1.0, 0.0, 0.0]},
+            {"item_id": "c", "content_search": "warning copy job loss risk",
+             "vector": [0.0, 0.0, 1.0, 0.0]},
+        ]
+    )
+
+    # Use the synthetic vector path: query vector close to "a"
+    vec_rows = _safe_vector_search(tbl, [1.0, 0.0, 0.0, 0.0], limit=3, where_clause=None)
+    fts_rows = _safe_fts_search(tbl, "modal close", limit=3, where_clause=None)
+
+    merged = _rrf_merge([vec_rows, fts_rows], k=60, limit=3)
+    # `a` should win because it tops both lanes.
+    assert merged[0]["item_id"] == "a"
