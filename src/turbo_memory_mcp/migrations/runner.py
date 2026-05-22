@@ -281,6 +281,14 @@ def _bump_manifest(store: MemoryStore, subsystem: Subsystem, new_version: int) -
         _bump_one(path, store.read_usage_stats(), new_version, timestamp)
         return
     if subsystem is Subsystem.NOTES:
+        # If a manifest is missing, ask the store to create the proper
+        # full payload (scope, project identity, storage_root, etc.)
+        # so we never leave a stripped {format_version, updated_at}
+        # behind. Then bump the version atomically.
+        if store.read_project_manifest() is None:
+            store.write_project_manifest()
+        if store.read_global_manifest() is None:
+            store.write_global_manifest()
         proj_path = store.project_manifest_path()
         glob_path = store.global_manifest_path()
         _bump_one(proj_path, store.read_project_manifest(), new_version, timestamp)

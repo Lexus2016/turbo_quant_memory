@@ -155,10 +155,17 @@ class MemoryStore:
 
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
+        existing = self.read_project_manifest() or {}
+        # Preserve any format_version already on disk (e.g. bumped by the
+        # NOTES migration to 2). Otherwise fall back to the in-code
+        # baseline. Without this, every remember_note would silently
+        # revert format_version to the constant and re-trigger the
+        # detect/apply loop after each migration.
+        format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
         manifest = {
             "scope": PROJECT_SCOPE,
             **self.project.as_dict(),
-            "format_version": NOTES_FORMAT_VERSION,
+            "format_version": format_version,
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.project_manifest_path(), manifest)
@@ -169,10 +176,12 @@ class MemoryStore:
 
     def write_global_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
+        existing = self.read_global_manifest() or {}
+        format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
         manifest = {
             "scope": GLOBAL_SCOPE,
             "storage_root": str(self.storage_root),
-            "format_version": NOTES_FORMAT_VERSION,
+            "format_version": format_version,
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.global_manifest_path(), manifest)
@@ -184,11 +193,13 @@ class MemoryStore:
     def write_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any]:
         resolved_project_id = project_id or self.project.project_id
         self.ensure_markdown_layout(resolved_project_id)
+        existing = self.read_markdown_manifest(resolved_project_id) or {}
+        format_version = max(int(existing.get("format_version", 0)), MARKDOWN_FORMAT_VERSION)
         manifest = {
             "scope": PROJECT_SCOPE,
             "project_id": resolved_project_id,
             "source_kind": MARKDOWN_SOURCE_KIND,
-            "format_version": MARKDOWN_FORMAT_VERSION,
+            "format_version": format_version,
             "package_version": __version__,
             "updated_at": utc_now(),
         }
@@ -201,11 +212,13 @@ class MemoryStore:
     def write_project_retrieval_manifest(self, project_id: str | None = None) -> dict[str, Any]:
         resolved_project_id = project_id or self.project.project_id
         self.ensure_retrieval_layout(resolved_project_id)
+        existing = self.read_project_retrieval_manifest(resolved_project_id) or {}
+        format_version = max(int(existing.get("format_version", 0)), RETRIEVAL_FORMAT_VERSION)
         manifest = {
             "scope": PROJECT_SCOPE,
             "project_id": resolved_project_id,
             "source_kind": "retrieval",
-            "format_version": RETRIEVAL_FORMAT_VERSION,
+            "format_version": format_version,
             "package_version": __version__,
             "updated_at": utc_now(),
         }
@@ -217,10 +230,12 @@ class MemoryStore:
 
     def write_global_retrieval_manifest(self) -> dict[str, Any]:
         self.ensure_retrieval_layout()
+        existing = self.read_global_retrieval_manifest() or {}
+        format_version = max(int(existing.get("format_version", 0)), RETRIEVAL_FORMAT_VERSION)
         manifest = {
             "scope": GLOBAL_SCOPE,
             "source_kind": "retrieval",
-            "format_version": RETRIEVAL_FORMAT_VERSION,
+            "format_version": format_version,
             "package_version": __version__,
             "updated_at": utc_now(),
         }

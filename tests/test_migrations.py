@@ -1064,3 +1064,157 @@ def test_promote_note_preserves_explicit_tier_override(store: MemoryStore) -> No
 
     global_note = store.promote_note(project_note["note_id"])
     assert global_note["tier"] == NOTE_TIER_DURABLE
+
+
+def test_write_project_manifest_preserves_existing_format_version(
+    store: MemoryStore,
+) -> None:
+    """Bug regression: write_project_manifest must NOT overwrite a bumped
+    format_version. Otherwise every remember_note call after a migration
+    silently reverts the manifest version and re-triggers detect/apply.
+    """
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+
+    # Simulate a post-migration manifest at v2.
+    write_json_atomic(
+        store.project_manifest_path(),
+        {
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "format_version": 2,
+        },
+    )
+    # Trigger a normal manifest re-write (the path every remember_note hits).
+    written = store.write_project_manifest()
+    assert written["format_version"] == 2
+    # Read back from disk to be extra sure nothing was stripped.
+    on_disk = store.read_project_manifest()
+    assert on_disk is not None
+    assert on_disk["format_version"] == 2
+
+
+def test_write_global_manifest_preserves_existing_format_version(
+    store: MemoryStore,
+) -> None:
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+
+    write_json_atomic(
+        store.global_manifest_path(),
+        {
+            "scope": "global",
+            "storage_root": str(store.storage_root),
+            "format_version": 2,
+        },
+    )
+    written = store.write_global_manifest()
+    assert written["format_version"] == 2
+    on_disk = store.read_global_manifest()
+    assert on_disk is not None
+    assert on_disk["format_version"] == 2
+
+
+def test_write_manifest_falls_back_to_constant_when_no_existing_version() -> None:
+    """Fresh installs (no manifest yet) still record the in-code baseline."""
+    import tempfile
+    from pathlib import Path
+
+    from turbo_memory_mcp.identity import ProjectIdentity
+    from turbo_memory_mcp.store import (
+        MemoryStore,
+        NOTES_FORMAT_VERSION,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fresh = MemoryStore(
+            ProjectIdentity(
+                project_id="fresh1",
+                project_name="Fresh",
+                project_root=root / "repo",
+                identity_source="local",
+                identity_kind="local_path",
+                remote_url=None,
+            ),
+            storage_root=root / "store",
+        )
+        proj = fresh.write_project_manifest()
+        glob = fresh.write_global_manifest()
+        assert proj["format_version"] == NOTES_FORMAT_VERSION
+        assert glob["format_version"] == NOTES_FORMAT_VERSION
+
+
+def test_write_markdown_manifest_preserves_existing_format_version(
+    store: MemoryStore,
+) -> None:
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+
+    write_json_atomic(
+        store.project_markdown_manifest_path(),
+        {
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "source_kind": "markdown",
+            "format_version": 2,
+        },
+    )
+    written = store.write_markdown_manifest()
+    assert written["format_version"] == 2
+    assert store.read_markdown_manifest()["format_version"] == 2
+
+
+def test_write_retrieval_manifests_preserve_existing_format_version(
+    store: MemoryStore,
+) -> None:
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+
+    write_json_atomic(
+        store.project_retrieval_manifest_path(),
+        {
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "source_kind": "retrieval",
+            "format_version": 2,
+        },
+    )
+    write_json_atomic(
+        store.global_retrieval_manifest_path(),
+        {
+            "scope": "global",
+            "source_kind": "retrieval",
+            "format_version": 2,
+        },
+    )
+    proj = store.write_project_retrieval_manifest()
+    glob = store.write_global_retrieval_manifest()
+    assert proj["format_version"] == 2
+    assert glob["format_version"] == 2
+
+
+def test_bump_notes_manifest_writes_full_payload_when_manifest_missing(
+    store: MemoryStore,
+) -> None:
+    """When _bump_manifest fires on a NOTES install that has no manifests
+    yet, it must write the full payload (scope, project identity, etc.)
+    not a stripped {format_version, updated_at} dict."""
+    from turbo_memory_mcp.migrations import Subsystem
+    from turbo_memory_mcp.migrations.runner import _bump_manifest
+
+    # Sanity: no manifests yet (fixture's ensure_layout created dirs only).
+    store.project_manifest_path().unlink(missing_ok=True)
+    store.global_manifest_path().unlink(missing_ok=True)
+    assert store.read_project_manifest() is None
+    assert store.read_global_manifest() is None
+
+    _bump_manifest(store, Subsystem.NOTES, 2)
+
+    proj = store.read_project_manifest()
+    glob = store.read_global_manifest()
+    assert proj is not None
+    assert glob is not None
+    # Full payload preserved alongside the bumped version.
+    assert proj["scope"] == "project"
+    assert proj["project_id"] == store.project.project_id
+    assert proj["format_version"] == 2
+    assert glob["scope"] == "global"
+    assert glob["storage_root"] == str(store.storage_root)
+    assert glob["format_version"] == 2

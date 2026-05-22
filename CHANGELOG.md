@@ -44,6 +44,18 @@ no longer pollute default semantic_search.
   by tier without re-fetching the source record. `tier` is omitted on
   legacy hits that pre-date Phase 2; markdown blocks always carry
   `tier="reference"`.
+- All manifest writers (`write_project_manifest`, `write_global_manifest`,
+  `write_markdown_manifest`, `write_*_retrieval_manifest`) now preserve
+  any bumped `format_version` on disk instead of overwriting it with
+  the in-code constant. Without this every `remember_note` /
+  `index_paths` after a `migrate --apply` would silently revert the
+  manifest and re-trigger the detect/apply loop forever. Auto-repair
+  of stale `format_version=0` manifests still works because the
+  effective value is `max(existing, in_code_baseline)`.
+- `_bump_manifest` for `NOTES` now creates the proper full project /
+  global manifest payloads (scope, identity, storage_root) when they
+  do not exist on disk, instead of writing a stripped
+  `{format_version, updated_at}` dict.
 
 ### Phase A — Migration framework foundation
 
