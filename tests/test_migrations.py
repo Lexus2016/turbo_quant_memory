@@ -1045,3 +1045,22 @@ def test_table_has_tier_column_handles_missing_schema_attribute() -> None:
         pass
 
     assert _table_has_tier_column(_Table()) is False
+
+
+def test_promote_note_preserves_explicit_tier_override(store: MemoryStore) -> None:
+    """An explicit `tier` set on the project note must survive promote()."""
+    from turbo_memory_mcp.store import NOTE_TIER_DURABLE
+
+    # kind='handoff' would normally land in 'episodic' tier; override to
+    # 'durable' so we can detect whether promote() preserves it or
+    # silently re-derives the tier from `kind`.
+    project_note = store.write_project_note(
+        "important handoff",
+        "we want this in durable retrieval despite the kind",
+        note_kind="handoff",
+        tier=NOTE_TIER_DURABLE,
+    )
+    assert project_note["tier"] == NOTE_TIER_DURABLE
+
+    global_note = store.promote_note(project_note["note_id"])
+    assert global_note["tier"] == NOTE_TIER_DURABLE

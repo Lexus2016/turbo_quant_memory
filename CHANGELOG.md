@@ -29,6 +29,16 @@ no longer pollute default semantic_search.
   on first run so the new `tier` column appears in the vector index.
 - Migration framework: project + global manifests now record
   `format_version` (was absent before Phase 2).
+- MCP wrapper `semantic_search_impl` exposes `tier_filter` so MCP
+  clients can opt into episodic search (e.g. `tier_filter=("episodic",)`)
+  when needed; default still excludes episodic.
+- `promote_note` preserves an explicit `tier` set on the project note
+  when copying it to global scope (previously the tier was silently
+  re-derived from `kind` on the global side).
+- Graceful upgrade path: until `migrate --apply` runs, existing LanceDB
+  tables stay on the v1 schema (no `tier` column). `RetrievalIndex.search`
+  introspects the live table and skips the WHERE clause when the column
+  is missing, so search keeps working between upgrade and migrate.
 
 ### Phase A — Migration framework foundation
 

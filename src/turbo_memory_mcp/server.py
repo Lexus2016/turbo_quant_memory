@@ -8,7 +8,7 @@ import sys
 import threading
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -703,6 +703,7 @@ def semantic_search_impl(
     *,
     scope: str = DEFAULT_QUERY_MODE,
     limit: int = 5,
+    tier_filter: Sequence[str] | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
@@ -712,7 +713,9 @@ def semantic_search_impl(
         _refresh_project_indexes_if_needed(store)
     if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
         _refresh_global_retrieval_if_needed(store)
-    payload = semantic_search(store, query, scope=scope, limit=limit)
+    payload = semantic_search(
+        store, query, scope=scope, limit=limit, tier_filter=tier_filter
+    )
     milestone = record_semantic_search_usage(
         store,
         project_id=store.project.project_id,

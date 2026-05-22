@@ -250,6 +250,7 @@ class MemoryStore:
         note_id: str | None = None,
         created_at: str | None = None,
         promoted_from: dict[str, Any] | None = None,
+        tier: str | None = None,
     ) -> dict[str, Any]:
         note = self._build_note_record(
             scope=PROJECT_SCOPE,
@@ -261,6 +262,7 @@ class MemoryStore:
             note_id=note_id,
             created_at=created_at,
             promoted_from=promoted_from,
+            tier=tier,
         )
         self.write_project_manifest()
         _write_json_atomic(self.project_note_path(note["note_id"]), note)
@@ -279,6 +281,7 @@ class MemoryStore:
         project_id: str | None = None,
         project_name: str | None = None,
         promoted_from: dict[str, Any] | None = None,
+        tier: str | None = None,
     ) -> dict[str, Any]:
         note = self._build_note_record(
             scope=GLOBAL_SCOPE,
@@ -292,6 +295,7 @@ class MemoryStore:
             project_id=project_id,
             project_name=project_name,
             promoted_from=promoted_from,
+            tier=tier,
         )
         self.write_global_manifest()
         _write_json_atomic(self.global_note_path(note["note_id"]), note)
@@ -354,6 +358,7 @@ class MemoryStore:
             project_id=project_note["project_id"],
             project_name=project_note["project_name"],
             promoted_from=promoted_from,
+            tier=project_note.get("tier"),
         )
 
     def deprecate_note(

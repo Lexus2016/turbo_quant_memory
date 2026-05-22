@@ -408,3 +408,41 @@ def test_default_search_returns_durable_notes(tmp_path: Path) -> None:
     # The lesson lives in the durable tier and surfaces in the default search.
     assert payload["items"][0]["title"] == "Auth lesson"
     assert payload["items"][0]["source_kind"] == "memory_note"
+
+
+def test_semantic_search_impl_episodic_filter_returns_handoffs(tmp_path: Path) -> None:
+    """The MCP wrapper now exposes tier_filter; ('episodic',) yields only handoffs."""
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Session handoff",
+        "auth refresh login work paused",
+        kind="handoff",
+        tags=["auth"],
+        environ=env,
+    )
+    remember_note_impl(
+        "Auth lesson",
+        "auth refresh login canonical implementation",
+        kind="lesson",
+        tags=["auth"],
+        environ=env,
+    )
+
+    # Default search -> only the lesson (durable).
+    default_payload = semantic_search_impl(
+        "auth refresh login", scope="project", environ=env
+    )
+    titles_default = [it["title"] for it in default_payload["items"]]
+    assert "Session handoff" not in titles_default
+    assert "Auth lesson" in titles_default
+
+    # Explicit episodic filter -> only the handoff.
+    episodic_payload = semantic_search_impl(
+        "auth refresh login",
+        scope="project",
+        tier_filter=("episodic",),
+        environ=env,
+    )
+    titles_episodic = [it["title"] for it in episodic_payload["items"]]
+    assert "Session handoff" in titles_episodic
+    assert "Auth lesson" not in titles_episodic
