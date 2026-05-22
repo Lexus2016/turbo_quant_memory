@@ -16,8 +16,14 @@ Imagine you are working with an AI coding assistant (like Claude Code, Gemini CL
 
 ### 💰 Cost-Saving Magic
 Instead of reading massive files every time, your AI agent uses **Compact Retrieval** to query its memory and fetch only highly-relevant 600-token summaries.
-* **`semantic_search` only**: **63.96% fewer bytes** sent to the model on average!
-* **Ultra-low latency**: searches take under **70 ms** locally.
+
+| Metric | Value | Benefit for You |
+| :--- | :--- | :--- |
+| **Context Savings** | 📉 **~63.96% fewer bytes** | Reduced API costs, longer context windows |
+| **Search Latency** | ⚡ **<70 ms** | Instant AI responses with zero lag |
+| **Architectural Focus** | 🎯 **Dynamic Pruning** | AI sees only what matters, ignoring session noise |
+| **Linked Knowledge** | 🕸️ **Knowledge Graph** | AI understands relationships between code, tasks, and decisions |
+| **Self-Cleaning Graph** | 🔄 **Dynamic Lifecycle** | Stale relationships are deprecated or unlinked automatically |
 
 ---
 
@@ -70,6 +76,28 @@ Every query searches both dense-vector spaces (for semantic meaning) and BM25 fu
 
 ### 2. Knowledge Graph Relations
 You can build associations between notes, source files, issues, or tasks using directed relations. The memory server automatically enriches search and hydration results with these relations, letting AI agents browse associated context effortlessly.
+
+#### 🔄 Dynamic Relation Lifecycle (Core Strength):
+* **Aging & Syncing:** Relations are created with a `created_at` timestamp and dynamically inherit entity state. If a linked note grows stale and is deprecated via `deprecate_note()`, the entire connected graph path is smartly flagged as outdated for AI agents.
+* **Flexible Decoupling (Unlinking):** Any relation can be easily severed using the `unlink_entities()` tool. This gives the agent memory absolute flexibility to adapt to refactorings and design changes.
+* **Auto-Diagnostics:** When calling `lint_knowledge_base()`, the system automatically runs integrity checks on the graph, pinpointing "orphan" relations and helping prevent stale-context build-up.
+
+#### 📊 Visual Memory Architecture:
+```mermaid
+graph TD
+    A[AI Agent / Query] -->|1. semantic_search| B[tqmemory Server]
+    B -->|2. Vector Index| C[Dense Vector Search]
+    B -->|2. Full-Text Index| D[BM25 FTS Search]
+    C -->|3. RRF Fusion| E[Knowledge Candidates]
+    D -->|3. RRF Fusion| E
+    E -->|4. Graph Enrichment| F[Knowledge Graph / Associations]
+    F -->|5. Enriched Context| A
+    
+    subgraph Relation Lifecycle
+        G[Create Link: link_entities] -->|Knowledge Evolution| H[Deprecate Note: deprecate_note]
+        H -->|Diagnosis: lint_knowledge_base| I[Sever Link: unlink_entities]
+    end
+```
 
 ### 3. Tiered Memory Architecture
 Memory notes are separated into logical tiers:
