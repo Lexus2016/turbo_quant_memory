@@ -1,14 +1,14 @@
 """Schema migration framework for Turbo Quant Memory.
 
 Activates the existing format-version constants (MARKDOWN_FORMAT_VERSION,
-RETRIEVAL_FORMAT_VERSION, USAGE_STATS_FORMAT_VERSION) as a real upgrade
-system. Each subsystem keeps its own linear chain of upgrades. The runner
-detects gaps and applies them in order; a snapshot is taken before any
-mutation. Daemon startup only detects-and-warns — opt-in apply is via
-`turbo-memory-mcp migrate --apply`.
+RETRIEVAL_FORMAT_VERSION, USAGE_STATS_FORMAT_VERSION, NOTES_FORMAT_VERSION)
+as a real upgrade system. Each subsystem keeps its own linear chain of
+upgrades. The runner detects gaps and applies them in order; a snapshot
+is taken before any mutation. Daemon startup only detects-and-warns —
+opt-in apply is via `turbo-memory-mcp migrate --apply`.
 
-Phase A (this file) only ships the framework. Real upgrade functions are
-registered by later phases (Phase 1 offsets, Phase 2 tiers, etc.).
+Real upgrade functions live in `upgrades.py` and are registered on
+package import.
 """
 from __future__ import annotations
 
@@ -31,6 +31,11 @@ from .runner import (
 from .snapshot import create_snapshot, list_snapshots, restore_snapshot
 from .log import log_event, log_path
 
+# Import upgrades last so @migration decorators run against a fully
+# loaded registry module. This is the canonical place to register
+# real upgrade steps for every phase.
+from . import upgrades  # noqa: F401 — import for side effects
+
 __all__ = [
     "REGISTRY",
     "Migration",
@@ -49,4 +54,5 @@ __all__ = [
     "log_path",
     "migration",
     "restore_snapshot",
+    "upgrades",
 ]

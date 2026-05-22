@@ -156,13 +156,25 @@ class RetrievalIndex:
         self._write_scope_manifest(scope, project_id=project_id)
         return len(normalized_ids)
 
-    def search(self, query: str, scope: str, *, limit: int, project_id: str | None = None) -> list[dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        scope: str,
+        *,
+        limit: int,
+        project_id: str | None = None,
+        tier_filter: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None or self.count_rows(scope, project_id=project_id) == 0:
             return []
 
         query_vector = self._embed_texts([query])[0]
-        return [dict(row) for row in table.search(query_vector).metric("cosine").limit(limit).to_list()]
+        builder = table.search(query_vector).metric("cosine").limit(limit)
+        if tier_filter:
+            tiers_quoted = ", ".join(_quote_sql_string(str(t)) for t in tier_filter)
+            builder = builder.where(f"tier IN ({tiers_quoted})")
+        return [dict(row) for row in builder.to_list()]
 
     def list_rows(self, scope: str, *, project_id: str | None = None) -> list[dict[str, Any]]:
         table = self._open_scope_table(scope, project_id=project_id)
@@ -305,6 +317,8 @@ def mirror_markdown_block(
     *,
     project_id: str,
 ) -> dict[str, Any]:
+    from .store import NOTE_TIER_REFERENCE  # local import avoids cycle
+
     heading_path = [str(heading) for heading in block.get("heading_path", [])]
     title = heading_path[-1] if heading_path else str(block["source_path"])
     content_raw = str(block["content_raw"])
@@ -315,6 +329,7 @@ def mirror_markdown_block(
         "project_name": store.project.project_name,
         "source_kind": MARKDOWN_SOURCE_KIND,
         "note_kind": None,
+        "tier": NOTE_TIER_REFERENCE,
         "item_id": str(block["block_id"]),
         "block_id": str(block["block_id"]),
         "note_id": None,
@@ -329,17 +344,21 @@ def mirror_markdown_block(
 
 
 def mirror_note_record(store: MemoryStore, note: Mapping[str, Any]) -> dict[str, Any]:
+    from .store import NOTE_TIER_DURABLE, tier_for_kind  # local import avoids cycle
+
     title = str(note["title"])
     content = str(note["content"])
     note_kind = str(note["note_kind"])
     tags = [str(tag) for tag in note.get("tags", [])]
     content_search = "\n".join(part for part in [title, note_kind, " ".join(tags), content] if part)
+    tier = note.get("tier") or tier_for_kind(note_kind) or NOTE_TIER_DURABLE
     return {
         "scope": str(note["scope"]),
         "project_id": str(note["project_id"]),
         "project_name": str(note["project_name"]),
         "source_kind": NOTE_SOURCE_KIND,
         "note_kind": note_kind,
+        "tier": str(tier),
         "item_id": str(note["note_id"]),
         "block_id": None,
         "note_id": str(note["note_id"]),
@@ -363,6 +382,7 @@ def _table_schema() -> "pa.Schema":
             pa.field("project_name", pa.string()),
             pa.field("source_kind", pa.string()),
             pa.field("note_kind", pa.string()),
+            pa.field("tier", pa.string()),
             pa.field("item_id", pa.string()),
             pa.field("block_id", pa.string()),
             pa.field("note_id", pa.string()),

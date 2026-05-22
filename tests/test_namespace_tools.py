@@ -146,10 +146,13 @@ def test_semantic_search_global_scope_returns_only_global_notes(tmp_path: Path) 
 
 def test_semantic_search_hybrid_prefers_project_hits_when_relevance_is_close(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
+    # Use `lesson` (durable tier) so the note is included in the default
+    # tier_filter. With Phase 2, `handoff` would map to episodic and be
+    # excluded from default search, which would defeat this assertion.
     stored = remember_note_impl(
         "Auth Flow",
         "JWT refresh login flow for the current repository.",
-        kind="handoff",
+        kind="lesson",
         tags=["auth", "login"],
         environ=env,
     )
@@ -364,3 +367,44 @@ def test_semantic_search_rebuilds_project_retrieval_after_manifest_mismatch(tmp_
 
     assert payload["result_count"] == 1
     assert repaired_manifest["format_version"] == RETRIEVAL_FORMAT_VERSION
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 — tier separation in the live retrieval pipeline
+# --------------------------------------------------------------------------- #
+
+
+def test_default_search_excludes_episodic_handoff_notes(tmp_path: Path) -> None:
+    """A handoff (episodic tier) must not appear in default semantic_search."""
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Session handoff",
+        "auth refresh login work paused mid-flow",
+        kind="handoff",
+        tags=["auth"],
+        environ=env,
+    )
+
+    payload = semantic_search_impl("auth refresh login", scope="project", environ=env)
+    # Default tier_filter is ('durable', 'reference') -> episodic excluded.
+    assert payload["status"] == "ok"
+    assert payload["result_count"] == 0
+
+
+def test_default_search_returns_durable_notes(tmp_path: Path) -> None:
+    """Durable notes (lesson/decision/pattern) must still appear by default."""
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Auth lesson",
+        "auth refresh login canonical implementation",
+        kind="lesson",
+        tags=["auth"],
+        environ=env,
+    )
+
+    payload = semantic_search_impl("auth refresh login", scope="project", environ=env)
+    assert payload["status"] == "ok"
+    assert payload["result_count"] >= 1
+    # The lesson lives in the durable tier and surfaces in the default search.
+    assert payload["items"][0]["title"] == "Auth lesson"
+    assert payload["items"][0]["source_kind"] == "memory_note"

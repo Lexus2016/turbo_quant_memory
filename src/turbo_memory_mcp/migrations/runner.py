@@ -216,7 +216,34 @@ def _read_current_version(store: MemoryStore, subsystem: Subsystem) -> int:
     if subsystem is Subsystem.USAGE_STATS:
         usage = store.read_usage_stats()
         return _version_from(usage)
+    if subsystem is Subsystem.NOTES:
+        # NOTES uses project_manifest + global_manifest. Pre-Phase-2 those
+        # manifests had no `format_version` at all, so a manifest that
+        # exists without the field is treated as v1 (legacy, needs
+        # upgrade). Absence of both manifests means a fresh install with
+        # no notes yet -> no migration needed (v0).
+        proj = store.read_project_manifest()
+        glob = store.read_global_manifest()
+        v_proj = _legacy_v1_or_format_version(proj)
+        v_glob = _legacy_v1_or_format_version(glob)
+        present = [v for v in (v_proj, v_glob) if v > 0]
+        if not present:
+            return 0
+        return min(present)
     raise ValueError(f"Unknown subsystem: {subsystem!r}")
+
+
+def _legacy_v1_or_format_version(manifest: dict[str, Any] | None) -> int:
+    """Existing manifests without `format_version` -> 1 (legacy).
+
+    Missing manifest -> 0 (fresh install). Manifest with `format_version`
+    -> that integer.
+    """
+    if not manifest:
+        return 0
+    if "format_version" in manifest:
+        return _version_from(manifest)
+    return 1
 
 
 def _version_from(manifest: dict[str, Any] | None) -> int:
@@ -252,6 +279,12 @@ def _bump_manifest(store: MemoryStore, subsystem: Subsystem, new_version: int) -
     if subsystem is Subsystem.USAGE_STATS:
         path = store.usage_stats_path()
         _bump_one(path, store.read_usage_stats(), new_version, timestamp)
+        return
+    if subsystem is Subsystem.NOTES:
+        proj_path = store.project_manifest_path()
+        glob_path = store.global_manifest_path()
+        _bump_one(proj_path, store.read_project_manifest(), new_version, timestamp)
+        _bump_one(glob_path, store.read_global_manifest(), new_version, timestamp)
         return
     raise ValueError(f"Unknown subsystem: {subsystem!r}")
 

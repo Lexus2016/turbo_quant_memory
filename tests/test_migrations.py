@@ -680,3 +680,172 @@ def test_cli_apply_failure_prints_restore_hint(
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "--restore-from" in err
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 — tier separation
+# --------------------------------------------------------------------------- #
+
+
+def test_tier_for_kind_classifies_handoff_as_episodic() -> None:
+    from turbo_memory_mcp.store import (
+        NOTE_TIER_DURABLE,
+        NOTE_TIER_EPISODIC,
+        tier_for_kind,
+    )
+
+    assert tier_for_kind("handoff") == NOTE_TIER_EPISODIC
+    assert tier_for_kind("HANDOFF") == NOTE_TIER_EPISODIC
+    assert tier_for_kind("decision") == NOTE_TIER_DURABLE
+    assert tier_for_kind("pattern") == NOTE_TIER_DURABLE
+    assert tier_for_kind("lesson") == NOTE_TIER_DURABLE
+    assert tier_for_kind(None) == NOTE_TIER_DURABLE
+    assert tier_for_kind("") == NOTE_TIER_DURABLE
+
+
+def test_write_project_note_auto_assigns_tier_from_kind(store: MemoryStore) -> None:
+    from turbo_memory_mcp.store import (
+        NOTE_TIER_DURABLE,
+        NOTE_TIER_EPISODIC,
+    )
+
+    handoff = store.write_project_note(
+        "Session handoff", "context here", note_kind="handoff"
+    )
+    decision = store.write_project_note(
+        "Stack choice", "we picked X", note_kind="decision"
+    )
+    assert handoff["tier"] == NOTE_TIER_EPISODIC
+    assert decision["tier"] == NOTE_TIER_DURABLE
+
+
+def test_write_project_note_respects_explicit_tier_override(store: MemoryStore) -> None:
+    from turbo_memory_mcp.store import NOTE_TIER_DURABLE
+
+    # Even though kind is handoff (would normally -> episodic), an
+    # explicit tier override should win when it is a known tier.
+    note = store._build_note_record(
+        scope="project",
+        title="t",
+        content="c",
+        note_kind="handoff",
+        tags=None,
+        source_refs=None,
+        note_id=None,
+        created_at=None,
+        tier=NOTE_TIER_DURABLE,
+    )
+    assert note["tier"] == NOTE_TIER_DURABLE
+
+
+def test_upgrade_notes_v1_to_v2_adds_tier_to_existing_notes(
+    store: MemoryStore,
+) -> None:
+    """Legacy notes without tier get the right tier from their kind."""
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+    from turbo_memory_mcp.migrations.upgrades import upgrade_notes_v1_to_v2
+    from turbo_memory_mcp.store import (
+        NOTE_TIER_DURABLE,
+        NOTE_TIER_EPISODIC,
+    )
+
+    # Hand-craft legacy notes WITHOUT tier (simulating pre-Phase-2 state).
+    handoff_path = store.project_note_path("legacy-handoff")
+    decision_path = store.project_note_path("legacy-decision")
+    write_json_atomic(
+        handoff_path,
+        {
+            "note_id": "legacy-handoff",
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "project_name": store.project.project_name,
+            "title": "old handoff",
+            "content": "...",
+            "note_kind": "handoff",
+            "tags": [],
+            "source_refs": [],
+            "source_kind": "memory_note",
+            "note_status": "active",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    write_json_atomic(
+        decision_path,
+        {
+            "note_id": "legacy-decision",
+            "scope": "project",
+            "project_id": store.project.project_id,
+            "project_name": store.project.project_name,
+            "title": "old decision",
+            "content": "...",
+            "note_kind": "decision",
+            "tags": [],
+            "source_refs": [],
+            "source_kind": "memory_note",
+            "note_status": "active",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    upgrade_notes_v1_to_v2(store)
+
+    import json
+
+    with handoff_path.open() as fh:
+        assert json.load(fh)["tier"] == NOTE_TIER_EPISODIC
+    with decision_path.open() as fh:
+        assert json.load(fh)["tier"] == NOTE_TIER_DURABLE
+
+
+def test_upgrade_notes_v1_to_v2_is_idempotent(store: MemoryStore) -> None:
+    from turbo_memory_mcp.migrations.upgrades import upgrade_notes_v1_to_v2
+    from turbo_memory_mcp.store import NOTE_TIER_DURABLE
+
+    # Note already has a tier; second upgrade pass must not overwrite it.
+    store.write_project_note(
+        "Already tiered",
+        "content",
+        note_kind="decision",
+    )
+    upgrade_notes_v1_to_v2(store)
+    upgrade_notes_v1_to_v2(store)
+    notes = store.list_notes("project")
+    assert len(notes) == 1
+    assert notes[0]["tier"] == NOTE_TIER_DURABLE
+
+
+def test_notes_subsystem_treats_pre_phase2_manifest_as_v1(store: MemoryStore) -> None:
+    """Manifest written without `format_version` must read as v1, not v0,
+    so the runner triggers the v1->v2 migration on existing installs."""
+    from turbo_memory_mcp.migrations.io import write_json_atomic
+    from turbo_memory_mcp.migrations.runner import _read_current_version
+    from turbo_memory_mcp.migrations import Subsystem
+
+    # Simulate a pre-Phase-2 manifest (no format_version field).
+    write_json_atomic(
+        store.project_manifest_path(),
+        {"scope": "project", "project_id": store.project.project_id},
+    )
+    write_json_atomic(
+        store.global_manifest_path(),
+        {"scope": "global", "storage_root": str(store.storage_root)},
+    )
+
+    assert _read_current_version(store, Subsystem.NOTES) == 1
+
+
+def test_notes_bump_writes_format_version_to_both_manifests(
+    store: MemoryStore,
+) -> None:
+    from turbo_memory_mcp.migrations.runner import _bump_manifest
+    from turbo_memory_mcp.migrations import Subsystem
+
+    # Seed both manifests with the legacy shape (no format_version).
+    store.write_project_manifest()
+    store.write_global_manifest()
+    _bump_manifest(store, Subsystem.NOTES, 2)
+
+    assert store.read_project_manifest()["format_version"] == 2
+    assert store.read_global_manifest()["format_version"] == 2

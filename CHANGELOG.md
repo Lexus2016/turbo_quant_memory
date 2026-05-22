@@ -7,10 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Foundation work for the Memory Quality v1 milestone. Internal-only — no
-schema versions change yet, no user-visible behavior change. Real
-upgrades (offsets, tiers, hybrid retrieval, etc.) will register against
-this framework in later phases.
+Phase A (migration framework) and Phase 2 (tier separation) of the
+Memory Quality v1 milestone. Behavior change: episodic notes (handoffs)
+no longer pollute default semantic_search.
+
+### Phase 2 — Tier separation (this release)
+
+- Notes now carry a `tier` field: `durable` (decisions / patterns /
+  lessons), `episodic` (handoffs), or `reference` (markdown blocks).
+- `semantic_search` accepts a new `tier_filter` argument. Default is
+  `("durable", "reference")` so session handoffs no longer drown durable
+  knowledge in the default search. Opt episodic in via
+  `tier_filter=("episodic",)` or list every tier to query everything.
+- `remember_note` auto-assigns tier from `kind`: `handoff` -> episodic,
+  everything else -> durable. Explicit `tier=` overrides for tests.
+- New `Subsystem.NOTES` migration chain in the framework. Pre-Phase-2
+  manifests (without a `format_version` field) are detected as v1 and
+  the `notes v1->v2` migration tags every existing note with the right
+  tier — idempotent on re-run.
+- New `Subsystem.RETRIEVAL` v1->v2 migration resets the LanceDB tables
+  on first run so the new `tier` column appears in the vector index.
+- Migration framework: project + global manifests now record
+  `format_version` (was absent before Phase 2).
+
+### Phase A — Migration framework foundation
+
+Foundation activated earlier this cycle. Internal — surfaces only when
+the daemon detects a pending upgrade or when the operator runs
+`turbo-memory-mcp migrate`.
 
 ### Added
 - `migrations/` package: `@migration` decorator, `Subsystem` enum

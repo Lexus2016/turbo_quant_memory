@@ -30,9 +30,32 @@ NOTE_STATUSES = (
     ARCHIVED_NOTE_STATUS,
     SUPERSEDED_NOTE_STATUS,
 )
+# Phase 2: knowledge tier separation. `durable` = long-lived knowledge
+# (decisions / patterns / lessons); `episodic` = session handoffs and
+# summaries (excluded from default search); `reference` = indexed
+# markdown blocks (always durable in nature).
+NOTE_TIER_DURABLE = "durable"
+NOTE_TIER_EPISODIC = "episodic"
+NOTE_TIER_REFERENCE = "reference"
+NOTE_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_EPISODIC, NOTE_TIER_REFERENCE)
+DEFAULT_SEARCH_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_REFERENCE)
 MARKDOWN_FORMAT_VERSION = 1
 RETRIEVAL_FORMAT_VERSION = 1
 USAGE_STATS_FORMAT_VERSION = 2
+NOTES_FORMAT_VERSION = 1
+# RETRIEVAL and NOTES stay at 1 in the in-code constant on purpose: the
+# Phase 2 @migration v1->v2 is what bumps these manifests to v2 the
+# first time `migrate --apply` runs. Fresh installs land at v1 too, and
+# the framework detects the pending upgrade and runs the (idempotent)
+# migration once — see migrations/upgrades.py.
+
+
+def tier_for_kind(note_kind: str | None) -> str:
+    """Map a note kind to its default tier. `handoff` -> episodic, else durable."""
+    kind = (note_kind or "").strip().lower()
+    if kind == "handoff":
+        return NOTE_TIER_EPISODIC
+    return NOTE_TIER_DURABLE
 
 
 class MemoryStore:
@@ -135,6 +158,7 @@ class MemoryStore:
         manifest = {
             "scope": PROJECT_SCOPE,
             **self.project.as_dict(),
+            "format_version": NOTES_FORMAT_VERSION,
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.project_manifest_path(), manifest)
@@ -148,6 +172,7 @@ class MemoryStore:
         manifest = {
             "scope": GLOBAL_SCOPE,
             "storage_root": str(self.storage_root),
+            "format_version": NOTES_FORMAT_VERSION,
             "updated_at": utc_now(),
         }
         _write_json_atomic(self.global_manifest_path(), manifest)
@@ -615,8 +640,11 @@ class MemoryStore:
         project_id: str | None = None,
         project_name: str | None = None,
         promoted_from: dict[str, Any] | None = None,
+        tier: str | None = None,
     ) -> dict[str, Any]:
         resolved_created_at = created_at or utc_now()
+        resolved_kind = normalize_note_kind(note_kind)
+        resolved_tier = tier if tier in NOTE_TIERS else tier_for_kind(resolved_kind)
         note = {
             "note_id": note_id or generate_note_id(),
             "scope": scope,
@@ -624,7 +652,8 @@ class MemoryStore:
             "project_name": project_name or self.project.project_name,
             "title": title.strip(),
             "content": content.strip(),
-            "note_kind": normalize_note_kind(note_kind),
+            "note_kind": resolved_kind,
+            "tier": resolved_tier,
             "tags": list(tags or []),
             "source_refs": list(source_refs or []),
             "source_kind": NOTE_SOURCE_KIND,

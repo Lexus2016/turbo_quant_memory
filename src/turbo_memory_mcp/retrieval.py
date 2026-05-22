@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .contracts import build_search_payload, build_semantic_item_payload
 from .retrieval_index import RetrievalIndex
-from .store import GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, NOTE_SOURCE_KIND, PROJECT_SCOPE
+from .store import (
+    DEFAULT_SEARCH_TIERS,
+    GLOBAL_SCOPE,
+    MARKDOWN_SOURCE_KIND,
+    MemoryStore,
+    NOTE_SOURCE_KIND,
+    NOTE_TIERS,
+    PROJECT_SCOPE,
+)
 
 HYBRID_PROJECT_BIAS = 0.15
 MARKDOWN_KIND_BONUS = 0.02
@@ -25,6 +33,7 @@ def semantic_search(
     *,
     scope: str,
     limit: int,
+    tier_filter: Sequence[str] | None = None,
 ) -> dict[str, object]:
     query_text = query.strip()
     if not query_text:
@@ -34,18 +43,42 @@ def semantic_search(
     if resolved_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE, "hybrid"}:
         raise ValueError(f"Unsupported query scope: {scope}")
 
+    # Default tier_filter excludes `episodic` so session handoffs do not
+    # drown durable knowledge in regular searches. Callers can pass
+    # ('episodic',) to query only handoffs, or list every tier to opt
+    # everything in.
+    if tier_filter is None:
+        resolved_tiers: tuple[str, ...] = tuple(DEFAULT_SEARCH_TIERS)
+    else:
+        resolved_tiers = tuple(str(t) for t in tier_filter)
+        unknown = [t for t in resolved_tiers if t not in NOTE_TIERS]
+        if unknown:
+            raise ValueError(f"Unknown tier(s) in tier_filter: {unknown}")
+        if not resolved_tiers:
+            raise ValueError("tier_filter must be None or a non-empty sequence.")
+
     normalized_limit = max(1, min(int(limit), MAX_SEMANTIC_LIMIT))
     index = RetrievalIndex(store)
 
     if resolved_scope == PROJECT_SCOPE:
-        ranked = _query_scope(index, store, PROJECT_SCOPE, query_text, normalized_limit)
+        ranked = _query_scope(
+            index, store, PROJECT_SCOPE, query_text, normalized_limit, tier_filter=resolved_tiers
+        )
     elif resolved_scope == GLOBAL_SCOPE:
-        ranked = _query_scope(index, store, GLOBAL_SCOPE, query_text, normalized_limit)
+        ranked = _query_scope(
+            index, store, GLOBAL_SCOPE, query_text, normalized_limit, tier_filter=resolved_tiers
+        )
     else:
         ranked = _rank_candidates(
             [
-                *_query_scope(index, store, PROJECT_SCOPE, query_text, max(5, normalized_limit * 2), hybrid=True),
-                *_query_scope(index, store, GLOBAL_SCOPE, query_text, max(5, normalized_limit * 2), hybrid=True),
+                *_query_scope(
+                    index, store, PROJECT_SCOPE, query_text,
+                    max(5, normalized_limit * 2), hybrid=True, tier_filter=resolved_tiers,
+                ),
+                *_query_scope(
+                    index, store, GLOBAL_SCOPE, query_text,
+                    max(5, normalized_limit * 2), hybrid=True, tier_filter=resolved_tiers,
+                ),
             ]
         )
 
@@ -87,11 +120,12 @@ def _query_scope(
     limit: int,
     *,
     hybrid: bool = False,
+    tier_filter: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     _ensure_scope_synced(index, store, scope)
-    rows = index.search(query, scope, limit=max(limit, 5))
+    rows = index.search(query, scope, limit=max(limit, 5), tier_filter=tier_filter)
     if not rows:
-        rows = _lexical_fallback_rows(index, scope, query, limit=max(limit, 5))
+        rows = _lexical_fallback_rows(index, scope, query, limit=max(limit, 5), tier_filter=tier_filter)
     candidates: list[dict[str, Any]] = []
     for row in rows:
         base_score = _distance_to_score(float(row.get("_distance", 1.0)))
@@ -220,9 +254,15 @@ def _lexical_fallback_rows(
     query: str,
     *,
     limit: int,
+    tier_filter: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
+    allowed = set(tier_filter) if tier_filter else None
     ranked: list[tuple[float, float, dict[str, Any]]] = []
     for row in index.list_rows(scope):
+        if allowed is not None:
+            row_tier = str(row.get("tier") or "")
+            if row_tier and row_tier not in allowed:
+                continue
         lexical_score = _lexical_bonus(row, query)
         if lexical_score <= 0.0:
             continue
