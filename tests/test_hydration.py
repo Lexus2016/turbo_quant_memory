@@ -96,3 +96,27 @@ def test_note_hydration_returns_full_note_without_artificial_neighbors(tmp_path:
     assert payload["neighbors_before"] == []
     assert payload["neighbors_after"] == []
     assert payload["neighbor_window"] == {"before": 0, "after": 0}
+
+
+def test_build_hydrated_markdown_item_payload_exposes_reference_tier() -> None:
+    """Markdown hydrate payloads must carry tier='reference' so MCP clients
+    can branch on a single field across notes and markdown alike."""
+    from turbo_memory_mcp.contracts import build_hydrated_markdown_item_payload
+
+    block = {
+        "block_id": "b1",
+        "scope": "project",
+        "project_id": "p1",
+        "source_kind": "markdown",
+        "source_path": "docs/example.md",
+        "heading_path": ["Top", "Sub"],
+        "updated_at": "2026-05-22T00:00:00+00:00",
+        "content_raw": "body",
+    }
+    payload = build_hydrated_markdown_item_payload(block, project_name="P")
+    assert payload["tier"] == "reference"
+
+    block_with_tier = dict(block, tier="reference")
+    assert build_hydrated_markdown_item_payload(
+        block_with_tier, project_name="P"
+    )["tier"] == "reference"

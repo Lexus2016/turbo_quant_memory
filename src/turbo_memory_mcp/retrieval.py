@@ -209,6 +209,8 @@ def _decorate_candidate(
         payload["block_id"] = candidate["block_id"]
     if warning is not None:
         payload["warning"] = warning
+    if candidate.get("tier"):
+        payload["tier"] = str(candidate["tier"])
 
     if candidate["source_kind"] == NOTE_SOURCE_KIND:
         note = store.read_note(str(candidate["note_id"]), str(candidate["scope"]))
@@ -216,6 +218,10 @@ def _decorate_candidate(
         payload["note_status"] = note["note_status"]
         if note.get("promoted_from"):
             payload["promoted_from"] = dict(note["promoted_from"])
+        # The note JSON is authoritative for tier — overwrite any value the
+        # mirror in LanceDB has so a hand-edited tier on disk wins.
+        if note.get("tier"):
+            payload["tier"] = str(note["tier"])
 
     return payload
 

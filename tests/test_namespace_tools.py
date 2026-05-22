@@ -410,6 +410,36 @@ def test_default_search_returns_durable_notes(tmp_path: Path) -> None:
     assert payload["items"][0]["source_kind"] == "memory_note"
 
 
+def test_semantic_search_payload_exposes_tier_to_clients(tmp_path: Path) -> None:
+    """MCP clients must be able to see the tier field on every note hit."""
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Auth pattern",
+        "auth refresh login pattern",
+        kind="pattern",
+        environ=env,
+    )
+    payload = semantic_search_impl("auth refresh", scope="project", environ=env)
+    assert payload["result_count"] >= 1
+    assert payload["items"][0]["tier"] == "durable"
+
+
+def test_hydrate_payload_exposes_tier(tmp_path: Path) -> None:
+    """Hydrate response carries the tier field too."""
+    env = _test_env(tmp_path)
+    stored = remember_note_impl(
+        "Handoff record",
+        "session handoff content",
+        kind="handoff",
+        environ=env,
+    )
+    payload = hydrate_impl(
+        stored["item"]["item_id"], scope="project", environ=env
+    )
+    assert payload["status"] == "ok"
+    assert payload["item"]["tier"] == "episodic"
+
+
 def test_semantic_search_impl_episodic_filter_returns_handoffs(tmp_path: Path) -> None:
     """The MCP wrapper now exposes tier_filter; ('episodic',) yields only handoffs."""
     env = _test_env(tmp_path)

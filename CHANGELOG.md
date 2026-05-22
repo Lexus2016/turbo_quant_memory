@@ -39,6 +39,11 @@ no longer pollute default semantic_search.
   tables stay on the v1 schema (no `tier` column). `RetrievalIndex.search`
   introspects the live table and skips the WHERE clause when the column
   is missing, so search keeps working between upgrade and migrate.
+- `semantic_search` and `hydrate` payloads now expose the `tier` field
+  on every item (both note and markdown). Clients can filter or render
+  by tier without re-fetching the source record. `tier` is omitted on
+  legacy hits that pre-date Phase 2; markdown blocks always carry
+  `tier="reference"`.
 
 ### Phase A — Migration framework foundation
 

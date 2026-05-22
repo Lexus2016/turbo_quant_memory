@@ -249,6 +249,8 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
         payload["note_kind"] = item["note_kind"]
     if item.get("note_status"):
         payload["note_status"] = item["note_status"]
+    if item.get("tier"):
+        payload["tier"] = item["tier"]
     if item.get("promoted_from"):
         payload["promoted_from"] = dict(item["promoted_from"])
     return payload
@@ -261,7 +263,7 @@ def build_hydrated_markdown_item_payload(
 ) -> dict[str, object]:
     heading_path = list(block.get("heading_path", []))
     title = heading_path[-1] if heading_path else str(block["source_path"])
-    return {
+    payload: dict[str, object] = {
         "scope": block["scope"],
         "project_id": block["project_id"],
         "project_name": project_name,
@@ -274,6 +276,12 @@ def build_hydrated_markdown_item_payload(
         "updated_at": block["updated_at"],
         "content": block["content_raw"],
     }
+    # Markdown blocks are always in the `reference` tier; surface it
+    # explicitly so clients can branch on a single field instead of
+    # also checking source_kind.
+    tier = block.get("tier") or "reference"
+    payload["tier"] = str(tier)
+    return payload
 
 
 def build_hydrated_note_item_payload(
@@ -296,6 +304,8 @@ def build_hydrated_note_item_payload(
         "tags": list(note.get("tags", [])),
         "source_refs": list(note.get("source_refs", [])),
     }
+    if note.get("tier"):
+        payload["tier"] = note["tier"]
     if note.get("promoted_from"):
         payload["promoted_from"] = dict(note["promoted_from"])
     if note.get("deprecated_at"):
