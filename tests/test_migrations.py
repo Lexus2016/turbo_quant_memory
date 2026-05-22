@@ -953,3 +953,46 @@ def test_notes_migration_runs_end_to_end_via_runner(store: MemoryStore) -> None:
     # And re-running is a no-op (idempotency through the framework).
     follow_up = apply_pending(store, subsystems=[Subsystem.NOTES], snapshot=False)
     assert follow_up == []
+
+
+def test_retrieval_v1_to_v2_upgrade_resets_and_resyncs_both_scopes(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retrieval upgrade must reset BOTH project and global tables
+    so they pick up the new `tier` column, then re-populate them. We
+    stub RetrievalIndex so the test does not need a real LanceDB."""
+    from turbo_memory_mcp.migrations.upgrades import upgrade_retrieval_v1_to_v2
+
+    calls: list[tuple[str, tuple, dict]] = []
+
+    class StubIndex:
+        def __init__(self, *_args, **_kwargs):
+            calls.append(("__init__", _args, _kwargs))
+
+        def reset_scope(self, scope, *, project_id=None):
+            calls.append(("reset_scope", (scope,), {"project_id": project_id}))
+
+        def sync_project(self):
+            calls.append(("sync_project", (), {}))
+
+        def sync_global(self):
+            calls.append(("sync_global", (), {}))
+
+    monkeypatch.setattr(
+        "turbo_memory_mcp.retrieval_index.RetrievalIndex",
+        StubIndex,
+    )
+
+    upgrade_retrieval_v1_to_v2(store)
+
+    op_sequence = [name for name, _, _ in calls]
+    # Required calls, in the right order: reset both scopes, then resync.
+    assert op_sequence[0] == "__init__"
+    assert "reset_scope" in op_sequence
+    assert op_sequence.count("reset_scope") == 2
+    assert op_sequence.index("sync_project") > op_sequence.index("reset_scope")
+    assert op_sequence.index("sync_global") > op_sequence.index("reset_scope")
+
+    reset_scopes = [args[0] for name, args, _ in calls if name == "reset_scope"]
+    assert set(reset_scopes) == {"project", "global"}
