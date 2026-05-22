@@ -27,7 +27,7 @@ Run this flow in every client after the server is connected:
 
 Expected pass signals:
 
-- `self_test.tool_count = 11`
+- `self_test.tool_count = 14` (v0.6.1+; was 11 on v0.5.x)
 - `server_info.current_project` exists
 - `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` becomes `fresh` after indexing

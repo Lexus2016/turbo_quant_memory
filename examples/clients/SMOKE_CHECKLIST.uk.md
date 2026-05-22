@@ -27,7 +27,7 @@
 
 Очікувані сигнали успіху:
 
-- `self_test.tool_count = 11`
+- `self_test.tool_count = 14` (v0.6.1+; було 11 на v0.5.x)
 - `server_info.current_project` існує
 - `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` стає `fresh` після індексації
