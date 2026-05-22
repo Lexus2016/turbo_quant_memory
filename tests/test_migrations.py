@@ -360,3 +360,85 @@ def test_keep_count_prunes_old_snapshots(
     survivors_set = {p.name for p in surviving}
     expected = {snaps[-1].name, snaps[-2].name}
     assert survivors_set == expected
+
+
+def test_apply_pending_handles_multiple_subsystems_in_one_call(
+    store: MemoryStore,
+) -> None:
+    store.write_markdown_manifest()
+    store.write_project_retrieval_manifest()
+    store.write_global_retrieval_manifest()
+
+    seen: list[str] = []
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _md(_):
+        seen.append("md")
+
+    @migration(Subsystem.RETRIEVAL, from_version=1, to_version=2)
+    def _rt(_):
+        seen.append("rt")
+
+    outcomes = apply_pending(store, snapshot=False)
+    assert len(outcomes) == 2
+    assert set(seen) == {"md", "rt"}
+    assert store.read_markdown_manifest()["format_version"] == 2
+    assert store.read_project_retrieval_manifest()["format_version"] == 2
+    assert store.read_global_retrieval_manifest()["format_version"] == 2
+
+
+def test_apply_pending_restore_after_failed_copy_keeps_data(
+    store: MemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failed restore must move staged originals back so storage stays usable."""
+    from turbo_memory_mcp.migrations import snapshot as snapshot_mod
+
+    store.write_project_manifest()
+    snap = create_snapshot(store.storage_root)
+
+    # Write a sentinel that must survive a rolled-back restore.
+    sentinel = store.storage_root / "projects" / store.project.project_id / "sentinel.txt"
+    sentinel.write_text("alive", encoding="utf-8")
+
+    # Force the copy phase to fail.
+    real_copytree = snapshot_mod.shutil.copytree
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("simulated copy failure")
+
+    monkeypatch.setattr(snapshot_mod.shutil, "copytree", boom)
+
+    with pytest.raises(RuntimeError, match="simulated copy failure"):
+        restore_snapshot(store.storage_root, snap)
+
+    # Restore re-raises but the sentinel must still be reachable via the
+    # rolled-back staging move.
+    monkeypatch.setattr(snapshot_mod.shutil, "copytree", real_copytree)
+    assert sentinel.exists(), "rollback should keep the sentinel reachable"
+    assert sentinel.read_text(encoding="utf-8") == "alive"
+
+
+def test_log_event_writes_jsonl_with_required_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from turbo_memory_mcp.migrations import log_event, log_path
+
+    log_file = tmp_path / "events.log"
+    monkeypatch.setenv("TQMEMORY_MIGRATION_LOG_PATH", str(log_file))
+    assert log_path() == log_file
+
+    log_event("apply_success", subsystem="markdown", from_version=1, to_version=2)
+    log_event("snapshot_created", path="/tmp/snap")
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    assert first["event"] == "apply_success"
+    assert first["subsystem"] == "markdown"
+    assert first["from_version"] == 1
+    assert first["to_version"] == 2
+    assert "timestamp_utc" in first
+    assert "package_version" in first
+    second = json.loads(lines[1])
+    assert second["event"] == "snapshot_created"
+    assert second["path"] == "/tmp/snap"

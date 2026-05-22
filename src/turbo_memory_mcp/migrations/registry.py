@@ -7,9 +7,9 @@ not skipping versions.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Iterable
+from typing import Callable
 
 
 class Subsystem(str, Enum):
@@ -20,11 +20,12 @@ class Subsystem(str, Enum):
     USAGE_STATS = "usage_stats"
 
 
-MigrationFunc = Callable[["object"], None]
-"""An upgrade function takes a StorageLayout and mutates state in place.
+MigrationFunc = Callable[[object], None]
+"""An upgrade function takes a MemoryStore and mutates state in place.
 
 The function must be idempotent: re-running it on partially-migrated state
-should converge to the same result without raising.
+should converge to the same result without raising. The type is `object`
+rather than `MemoryStore` to avoid a circular import at module load time.
 """
 
 
@@ -139,10 +140,6 @@ def latest_version(subsystem: Subsystem) -> int:
         default=0,
     )
     return max(base, registry_max)
-
-
-def all_subsystems() -> Iterable[Subsystem]:
-    return list(Subsystem)
 
 
 def _find_step(subsystem: Subsystem, from_version: int) -> Migration | None:

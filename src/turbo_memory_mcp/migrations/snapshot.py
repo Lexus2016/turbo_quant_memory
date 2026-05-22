@@ -37,11 +37,18 @@ def snapshots_root(storage_root: Path) -> Path:
 
 
 def list_snapshots(storage_root: Path) -> list[Path]:
-    """Existing snapshots, sorted oldest -> newest."""
+    """Existing snapshots, sorted oldest -> newest.
+
+    Dotted entries (e.g. `.restore_staging_*` created mid-restore) are
+    excluded so prune_old never deletes work-in-progress directories.
+    """
     root = snapshots_root(storage_root)
     if not root.exists():
         return []
-    entries = [p for p in root.iterdir() if p.is_dir()]
+    entries = [
+        p for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+    ]
     entries.sort(key=lambda p: p.name)
     return entries
 
@@ -85,8 +92,12 @@ def create_snapshot(storage_root: Path) -> Path:
 def restore_snapshot(storage_root: Path, snapshot_path: Path) -> None:
     """Replace live state under storage_root with the snapshot contents.
 
-    Existing entries (except .snapshots/ and .daemon.lock) are removed
-    first, then the snapshot tree is copied back in place.
+    Safer than naive delete-then-copy: live state is first moved into a
+    staging directory under `.snapshots/.restore_staging_<stamp>/`. If
+    the copy from the snapshot fails midway, the staged originals are
+    moved back so the storage root keeps a recoverable state instead of
+    being left half-written. On success, the staging directory is
+    deleted.
     """
     storage_root = storage_root.resolve()
     snapshot_path = snapshot_path.resolve()
@@ -99,20 +110,64 @@ def restore_snapshot(storage_root: Path, snapshot_path: Path) -> None:
             f"snapshot {snapshot_path} is not inside {snapshots_root(storage_root)}"
         ) from exc
 
-    for child in list(storage_root.iterdir()):
-        if child.name in _EXCLUDE_NAMES:
-            continue
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+    snap_root = snapshots_root(storage_root)
+    snap_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    staging = snap_root / f".restore_staging_{stamp}"
+    staging.mkdir(parents=True)
 
-    for child in snapshot_path.iterdir():
-        dest = storage_root / child.name
-        if child.is_dir():
-            shutil.copytree(child, dest, symlinks=False)
-        else:
-            shutil.copy2(child, dest)
+    # 1) Move live state aside (rename is atomic on the same filesystem).
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for child in list(storage_root.iterdir()):
+            if child.name in _EXCLUDE_NAMES:
+                continue
+            dest = staging / child.name
+            shutil.move(str(child), str(dest))
+            moved.append((child, dest))
+    except Exception:
+        # Roll back any partial moves before re-raising.
+        _restore_moved(moved)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    # 2) Copy snapshot contents into the now-clean live root.
+    try:
+        for child in snapshot_path.iterdir():
+            dest = storage_root / child.name
+            if child.is_dir():
+                shutil.copytree(child, dest, symlinks=False)
+            else:
+                shutil.copy2(child, dest)
+    except Exception:
+        # Best effort: remove whatever partial copies we made, then
+        # restore the staged originals so the user keeps a working state.
+        for child in list(storage_root.iterdir()):
+            if child.name in _EXCLUDE_NAMES:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+        _restore_moved(moved)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    shutil.rmtree(staging, ignore_errors=True)
+
+
+def _restore_moved(moved: list[tuple[Path, Path]]) -> None:
+    """Move every (original_path, staged_path) pair back to original."""
+    for original, staged in moved:
+        try:
+            shutil.move(str(staged), str(original))
+        except Exception:
+            # If we can't restore one entry, keep trying the rest; the
+            # staged copy remains on disk for manual recovery.
+            continue
 
 
 def _prune_old(storage_root: Path) -> None:
