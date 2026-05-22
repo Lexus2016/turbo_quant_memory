@@ -3,5 +3,6 @@
 .pytest_cache/
 .venv/
 .gemini/
+.claude/
 __pycache__/
 *.py[cod]

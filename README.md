@@ -50,7 +50,7 @@ Use this 60-second flow:
 
 1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.3
 ```
 
 2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
@@ -75,7 +75,7 @@ Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIEN
 To pull a new release into an existing install, re-run the install command with `--reinstall`:
 
 ```bash
-uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.2
+uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.3
 ```
 
 If you already have `~/.gemini/settings.json` from before v0.4.2, also merge this block once so Gemini CLI starts reading `AGENTS.md` alongside `GEMINI.md`:
@@ -153,6 +153,13 @@ Why this is a practical advantage:
 - less repeated reading means fewer billed input tokens
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
+
+## New In v0.4.3
+
+- Maintenance baseline before the next architecture cycle — no behavior changes.
+- Added `CHANGELOG.md` with the full release history in Keep a Changelog format.
+- `.claude/` directory added to `.gitignore` to keep Claude Code local config out of the repo.
+- Install commands across README and SMOKE checklist now point to `v0.4.3`.
 
 ## New In v0.4.2
 
