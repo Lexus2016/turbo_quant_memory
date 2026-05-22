@@ -1218,3 +1218,52 @@ def test_bump_notes_manifest_writes_full_payload_when_manifest_missing(
     assert glob["scope"] == "global"
     assert glob["storage_root"] == str(store.storage_root)
     assert glob["format_version"] == 2
+
+
+def test_no_infinite_migrate_loop_after_post_migration_writes(
+    store: MemoryStore,
+) -> None:
+    """Regression test for the round-4 critical bug.
+
+    Sequence:
+      1) Two pre-migration writes (manifest at v1 baseline).
+      2) Migration bumps NOTES manifest to v2 through the runner.
+      3) Many more writes happen (each calls write_project_manifest).
+      4) detect_status must still report NOTES as 'up to date' — the
+         manifest must NOT have been silently reverted to v1.
+    """
+    from turbo_memory_mcp.migrations import (
+        Subsystem,
+        apply_pending,
+        detect_status,
+        migration,
+    )
+    from turbo_memory_mcp.migrations.upgrades import upgrade_notes_v1_to_v2
+
+    @migration(Subsystem.NOTES, from_version=1, to_version=2)
+    def _proxy(store_arg):
+        upgrade_notes_v1_to_v2(store_arg)
+
+    # Pre-migration: two writes lay down a v1 manifest.
+    store.write_project_note("note 1", "x", note_kind="decision")
+    store.write_project_note("note 2", "y", note_kind="lesson")
+    assert store.read_project_manifest()["format_version"] == 1
+
+    # Run the migration: project + global manifests should land at v2.
+    outcomes = apply_pending(store, subsystems=[Subsystem.NOTES], snapshot=False)
+    assert all(o.success for o in outcomes)
+    assert store.read_project_manifest()["format_version"] == 2
+    assert store.read_global_manifest()["format_version"] == 2
+
+    # Many post-migration writes. Each one calls write_project_manifest.
+    for i in range(5):
+        store.write_project_note(f"after migration {i}", "z", note_kind="lesson")
+
+    # Manifest must STILL be at v2 — not silently reverted to the
+    # in-code baseline.
+    assert store.read_project_manifest()["format_version"] == 2
+
+    # And the runner sees nothing pending now.
+    status = detect_status(store)[Subsystem.NOTES]
+    assert status.current_version == 2
+    assert status.pending == []
