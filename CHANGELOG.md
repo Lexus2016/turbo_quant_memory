@@ -5,6 +5,47 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Foundation work for the Memory Quality v1 milestone. Internal-only — no
+schema versions change yet, no user-visible behavior change. Real
+upgrades (offsets, tiers, hybrid retrieval, etc.) will register against
+this framework in later phases.
+
+### Added
+- `migrations/` package: `@migration` decorator, `Subsystem` enum
+  (`markdown`, `retrieval`, `usage_stats`), linear-chain registry,
+  per-subsystem `format_version` detection.
+- Runner with detect / dry-run / atomic apply (manifest is bumped last
+  per step so a crash leaves storage at the previous version and the
+  upgrade can be safely retried).
+- Rolling-backup snapshot helper under `<storage_root>/.snapshots/` with
+  microsecond-precision timestamps and configurable retention
+  (`TQMEMORY_SNAPSHOTS_KEEP`, default 1). `restore_snapshot` uses a
+  staging-then-copy pattern so a failed copy rolls back to the original
+  state instead of leaving storage half-written.
+- Structured JSONL log at `~/.turbo-quant-memory/migration.log`
+  (overridable via `TQMEMORY_MIGRATION_LOG_PATH`).
+- Daemon startup (primary / standalone roles only) detects pending
+  upgrades and writes a single-line warning to stderr. Detection never
+  blocks startup; proxies skip the check.
+- `turbo-memory-mcp migrate` CLI subcommand:
+  - `--status` (default): per-subsystem current vs latest.
+  - `--dry-run`: list pending upgrades without touching storage.
+  - `--apply`: snapshot + atomic apply. Refuses to run if a daemon
+    lockfile is present unless `--force` is set. On failure, prints the
+    exact `--restore-from` command to roll back.
+  - `--snapshot-only`: take a backup without applying.
+  - `--list-snapshots`: list available snapshots.
+  - `--restore-from <path>`: restore live storage from a snapshot.
+  - `--no-snapshot`: escape hatch (tests only).
+  - `--force`: bypass daemon-lockfile check.
+- Test coverage for registry chain/gap/duplicate, runner atomicity /
+  idempotency / failure path / multi-subsystem, snapshot
+  create / restore / rollback / retention, log JSONL shape, and the
+  full CLI surface (status, dry-run, apply, list, restore, daemon-lock
+  guard, snapshot-failure handling).
+
 ## [0.4.3] - 2026-05-22
 
 Maintenance baseline before the next architecture cycle. No behavioral changes.

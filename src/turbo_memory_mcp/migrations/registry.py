@@ -13,7 +13,15 @@ from typing import Callable
 
 
 class Subsystem(str, Enum):
-    """One independent migration chain per subsystem."""
+    """One independent migration chain per subsystem.
+
+    Each value maps 1:1 to a format-version constant in store.py and
+    drives a manifest the runner updates atomically last. To add a new
+    subsystem (e.g. NOTES in Phase 2): (1) extend this enum, (2) bump
+    a matching constant in store.py, (3) handle reads in
+    runner._read_current_version, and (4) handle writes in
+    runner._bump_manifest. Keep linear chains only — see Migration.
+    """
 
     MARKDOWN = "markdown"
     RETRIEVAL = "retrieval"

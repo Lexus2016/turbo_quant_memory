@@ -442,3 +442,241 @@ def test_log_event_writes_jsonl_with_required_fields(
     second = json.loads(lines[1])
     assert second["event"] == "snapshot_created"
     assert second["path"] == "/tmp/snap"
+
+
+# --------------------------------------------------------------------------- #
+# CLI integration
+# --------------------------------------------------------------------------- #
+
+
+def _patch_runtime_context(monkeypatch: pytest.MonkeyPatch, store: MemoryStore) -> None:
+    """Make CLI commands use the test store instead of resolving real CWD."""
+    from turbo_memory_mcp import server as server_mod
+
+    def _fake_ctx(*_args, **_kwargs):
+        return store.project, store
+
+    monkeypatch.setattr(server_mod, "build_runtime_context", _fake_ctx)
+
+
+def test_cli_list_snapshots_reports_empty(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    _patch_runtime_context(monkeypatch, store)
+    exit_code = main(["migrate", "--list-snapshots"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "No snapshots present." in out
+
+
+def test_cli_list_snapshots_shows_existing(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_project_manifest()
+    snap = create_snapshot(store.storage_root)
+    _patch_runtime_context(monkeypatch, store)
+    exit_code = main(["migrate", "--list-snapshots"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert snap.name in out
+
+
+def test_cli_apply_refuses_when_daemon_lockfile_present(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        raise AssertionError("must not run while daemon is up")
+
+    # Simulate live primary daemon.
+    (store.storage_root / ".daemon.lock").write_text("{}", encoding="utf-8")
+    _patch_runtime_context(monkeypatch, store)
+
+    exit_code = main(["migrate", "--apply", "--no-snapshot"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "daemon lockfile present" in err
+    # Manifest must not have been bumped.
+    assert store.read_markdown_manifest()["format_version"] == 1
+
+
+def test_cli_apply_force_bypasses_lockfile_check(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+    ran: list[bool] = []
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        ran.append(True)
+
+    (store.storage_root / ".daemon.lock").write_text("{}", encoding="utf-8")
+    _patch_runtime_context(monkeypatch, store)
+
+    exit_code = main(["migrate", "--apply", "--no-snapshot", "--force"])
+    assert exit_code == 0
+    assert ran == [True]
+    assert store.read_markdown_manifest()["format_version"] == 2
+
+
+def test_cli_restore_from_rejects_invalid_path(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    _patch_runtime_context(monkeypatch, store)
+    bogus = tmp_path / "does_not_exist"
+    exit_code = main(["migrate", "--restore-from", str(bogus)])
+    assert exit_code == 1
+    assert "error" in capsys.readouterr().err.lower()
+
+
+def test_cli_restore_from_succeeds_with_valid_snapshot(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_project_manifest()
+    snap = create_snapshot(store.storage_root)
+    # Mutate state after snapshot.
+    extra = store.storage_root / "projects" / store.project.project_id / "after.json"
+    extra.write_text("{}", encoding="utf-8")
+
+    _patch_runtime_context(monkeypatch, store)
+    exit_code = main(["migrate", "--restore-from", str(snap)])
+    assert exit_code == 0
+    assert not extra.exists()
+
+
+def test_cli_restore_from_conflicts_with_action_flag(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """argparse mutex enforces it: --restore-from and --apply cannot coexist."""
+    from turbo_memory_mcp.cli import main
+
+    _patch_runtime_context(monkeypatch, store)
+    store.write_project_manifest()
+    snap = create_snapshot(store.storage_root)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["migrate", "--apply", "--no-snapshot", "--restore-from", str(snap)])
+    # argparse uses exit code 2 for usage errors.
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "not allowed with argument" in err
+
+
+def test_cli_apply_skips_snapshot_when_nothing_pending(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No pending upgrades -> no snapshot is created and we exit cleanly."""
+    from turbo_memory_mcp.cli import main
+    from turbo_memory_mcp.migrations import list_snapshots as _list_snapshots
+
+    store.write_markdown_manifest()  # at latest version per store constant
+    _patch_runtime_context(monkeypatch, store)
+
+    before = _list_snapshots(store.storage_root)
+    exit_code = main(["migrate", "--apply"])
+    after = _list_snapshots(store.storage_root)
+
+    assert exit_code == 0
+    assert "Nothing to migrate." in capsys.readouterr().out
+    assert len(after) == len(before)  # no new snapshot
+
+
+def test_cli_apply_success_prints_snapshot_path(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        return None
+
+    _patch_runtime_context(monkeypatch, store)
+    exit_code = main(["migrate", "--apply"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Snapshot taken at:" in out
+    assert "Applied 1 migration step" in out
+
+
+def test_cli_apply_snapshot_failure_reports_error(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+    from turbo_memory_mcp import migrations as migrations_pkg
+
+    store.write_markdown_manifest()
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        raise AssertionError("apply must not run when snapshot fails")
+
+    def boom(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(migrations_pkg, "create_snapshot", boom)
+    _patch_runtime_context(monkeypatch, store)
+
+    exit_code = main(["migrate", "--apply"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "failed to create snapshot" in err
+    # Manifest must not have been touched.
+    assert store.read_markdown_manifest()["format_version"] == 1
+
+
+def test_cli_apply_failure_prints_restore_hint(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        raise RuntimeError("boom")
+
+    _patch_runtime_context(monkeypatch, store)
+    # snapshot enabled (default) so we have something to restore from.
+    exit_code = main(["migrate", "--apply"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "--restore-from" in err

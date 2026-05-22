@@ -67,12 +67,34 @@ def build_parser() -> argparse.ArgumentParser:
         const="snapshot_only",
         help="Create a rolling snapshot without applying anything.",
     )
+    action_group.add_argument(
+        "--list-snapshots",
+        dest="migrate_action",
+        action="store_const",
+        const="list_snapshots",
+        help="Show available snapshots (oldest -> newest).",
+    )
+    action_group.add_argument(
+        "--restore-from",
+        dest="restore_path",
+        metavar="SNAPSHOT_PATH",
+        help="Restore live storage from the given snapshot directory.",
+    )
     migrate_parser.add_argument(
         "--no-snapshot",
         action="store_true",
         help="Skip the snapshot step before --apply (use only in tests).",
     )
-    migrate_parser.set_defaults(migrate_action="status", handler=_handle_migrate)
+    migrate_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass safety checks (e.g. running daemon detection).",
+    )
+    migrate_parser.set_defaults(
+        migrate_action="status",
+        restore_path=None,
+        handler=_handle_migrate,
+    )
     return parser
 
 
@@ -89,6 +111,8 @@ def _handle_migrate(args: argparse.Namespace) -> int:
         apply_pending,
         create_snapshot,
         detect_status,
+        list_snapshots,
+        restore_snapshot,
     )
     from .server import build_runtime_context
 
@@ -98,17 +122,39 @@ def _handle_migrate(args: argparse.Namespace) -> int:
         print(f"error: cannot resolve storage context: {exc}", file=sys.stderr)
         return 1
 
+    # Mutual exclusion between --restore-from and the action flags is
+    # enforced by argparse (all of them share the same action_group).
+    if args.restore_path is not None:
+        return _migrate_restore_from(
+            store, restore_snapshot, args.restore_path, force=args.force
+        )
+
     action = args.migrate_action
     if action == "status":
         return _migrate_print_status(store, detect_status, Subsystem)
     if action == "dry_run":
         return _migrate_dry_run(store, apply_pending)
     if action == "apply":
-        return _migrate_apply(store, apply_pending, snapshot=not args.no_snapshot)
+        return _migrate_apply(
+            store,
+            apply_pending,
+            snapshot=not args.no_snapshot,
+            force=args.force,
+        )
     if action == "snapshot_only":
         return _migrate_snapshot_only(store, create_snapshot)
+    if action == "list_snapshots":
+        return _migrate_list_snapshots(store, list_snapshots)
     print(f"error: unknown migrate action: {action!r}", file=sys.stderr)
     return 1
+
+
+def _daemon_lockfile_present(store) -> "Path | None":
+    """Return the lockfile path if a primary daemon may be running."""
+    from pathlib import Path
+
+    lock = Path(store.storage_root) / ".daemon.lock"
+    return lock if lock.exists() else None
 
 
 def _migrate_print_status(store, detect_status, Subsystem) -> int:  # noqa: N803
@@ -155,12 +201,55 @@ def _migrate_dry_run(store, apply_pending) -> int:  # noqa: N803
     return 0
 
 
-def _migrate_apply(store, apply_pending, *, snapshot: bool) -> int:  # noqa: N803
-    if not snapshot:
-        print("warning: --no-snapshot set, no rolling backup will be taken.",
-              file=sys.stderr)
-    outcomes = apply_pending(store, dry_run=False, snapshot=snapshot)
+def _migrate_apply(store, apply_pending, *, snapshot: bool, force: bool) -> int:  # noqa: N803
+    from .migrations import create_snapshot as _create_snapshot
+    from .migrations import detect_status as _detect_status
+
+    if not force:
+        lock = _daemon_lockfile_present(store)
+        if lock is not None:
+            print(
+                f"error: daemon lockfile present at {lock}. Stop the running "
+                "primary daemon (close all MCP clients) before --apply, or "
+                "pass --force if you are sure no daemon is writing.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Skip the (potentially expensive) snapshot when there is nothing
+    # to migrate — otherwise users get a backup every time they call
+    # --apply by reflex.
+    statuses = _detect_status(store)
+    if not any(s.needs_upgrade for s in statuses.values()):
+        print("Nothing to migrate.")
+        return 0
+
+    # Take the snapshot here (not inside apply_pending) so the CLI can
+    # reference the exact path in both the success message and the
+    # roll-back hint on failure. Pass snapshot=False downstream to avoid
+    # a second backup.
+    snap_path = None
+    if snapshot:
+        try:
+            snap_path = _create_snapshot(store.storage_root)
+        except OSError as exc:
+            print(
+                f"error: failed to create snapshot before --apply: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Snapshot taken at: {snap_path}")
+    else:
+        print(
+            "warning: --no-snapshot set, no rolling backup will be taken.",
+            file=sys.stderr,
+        )
+
+    outcomes = apply_pending(store, dry_run=False, snapshot=False)
     if not outcomes:
+        # Pending was non-empty during detect but apply produced no work
+        # — extremely unlikely (registry mutation under our feet). Treat
+        # it as a no-op but the user already paid for the snapshot.
         print("Nothing to migrate.")
         return 0
     failed = [o for o in outcomes if not o.success]
@@ -177,9 +266,15 @@ def _migrate_apply(store, apply_pending, *, snapshot: bool) -> int:  # noqa: N80
     if failed:
         print(
             f"\n{len(failed)} step(s) failed. Storage left at last "
-            "successfully-bumped version. Inspect ~/.turbo-quant-memory/migration.log",
+            "successfully-bumped version. "
+            "Inspect ~/.turbo-quant-memory/migration.log for details.",
             file=sys.stderr,
         )
+        if snap_path is not None:
+            print(
+                f"To roll back, run: turbo-memory-mcp migrate --restore-from {snap_path}",
+                file=sys.stderr,
+            )
         return 1
     print(f"\nApplied {len(outcomes)} migration step(s).")
     return 0
@@ -188,6 +283,39 @@ def _migrate_apply(store, apply_pending, *, snapshot: bool) -> int:  # noqa: N80
 def _migrate_snapshot_only(store, create_snapshot) -> int:  # noqa: N803
     path = create_snapshot(store.storage_root)
     print(f"Snapshot created at: {path}")
+    return 0
+
+
+def _migrate_list_snapshots(store, list_snapshots) -> int:  # noqa: N803
+    snaps = list_snapshots(store.storage_root)
+    if not snaps:
+        print("No snapshots present.")
+        return 0
+    print(f"Snapshots under {store.storage_root}/.snapshots/ (oldest -> newest):")
+    for snap in snaps:
+        print(f"  {snap.name}  ({snap})")
+    return 0
+
+
+def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool) -> int:  # noqa: N803
+    from pathlib import Path
+
+    if not force:
+        lock = _daemon_lockfile_present(store)
+        if lock is not None:
+            print(
+                f"error: daemon lockfile present at {lock}. Stop the running "
+                "primary daemon before --restore-from, or pass --force.",
+                file=sys.stderr,
+            )
+            return 1
+    snap_path = Path(path_arg).expanduser().resolve()
+    try:
+        restore_snapshot(store.storage_root, snap_path)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Restored storage from snapshot: {snap_path}")
     return 0
 
 
