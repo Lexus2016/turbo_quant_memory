@@ -223,6 +223,20 @@ def _decorate_candidate(
         if note.get("tier"):
             payload["tier"] = str(note["tier"])
 
+    # Construct URI for relations lookup and fetch related entities
+    uri: str
+    if candidate["source_kind"] == NOTE_SOURCE_KIND:
+        uri = f"note://{candidate.get('note_id', candidate['item_id'])}"
+    else:
+        uri = f"file://{candidate['source_path']}"
+
+    relations = store.get_relations_for_entity(
+        uri=uri,
+        scope="hybrid",
+        project_id=candidate.get("project_id"),
+    )
+    payload["relations"] = relations
+
     return payload
 
 

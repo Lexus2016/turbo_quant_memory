@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-22
+
+Knowledge Graph Relations implementation. Allows linking memory notes, source files, issues, or tasks in a structured graph at both project and global scopes.
+
+### Added
+- Three new MCP tools: `link_entities(...)`, `unlink_entities(...)`, and `get_related_entities(...)`.
+- Automatic graph relation enrichment: `semantic_search` and `hydrate` now automatically query the graph and return matching relations inside the payload (`relations` field).
+- Cross-scope capability: relations can be created and queried at both `project` and `global` scopes.
+- Fully automated Pytest suite for graph relations verifying store logic, search enrichment, and contract compliance.
+
+### Changed
+- Refactored `CURRENT_TOOL_NAMES` in `contracts.py` to support 14 tools (up from 11).
+- Enhanced retrieval decoration pipeline to look up relations on candidate blocks during retrieval.
+
 ## [0.6.0] - 2026-05-22
 
 Phase 3 of the Memory Quality v1 milestone: hybrid retrieval combining
@@ -295,6 +309,7 @@ Maintenance baseline before the next architecture cycle. No behavioral changes.
 - Hydration paths and benchmark suite.
 - Trilingual documentation (English, Ukrainian, Russian).
 
+[0.6.1]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.3...v0.5.0

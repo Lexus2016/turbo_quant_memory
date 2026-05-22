@@ -1,231 +1,120 @@
-# Turbo Quant Memory for AI Agents
+# 🧠 Turbo Quant Memory for AI Agents (v0.6.1)
 
-![Turbo Quant Memory hero](assets/readme-hero-en.svg?v=20260328b)
+> **The first self-installable, trilingual local-first memory & knowledge graph for AI coding agents.** Save up to 60% of your token budget while giving your AI assistant a permanent, hyper-fast, and highly connected brain.
 
-[![Latest release](https://img.shields.io/github/v/release/Lexus2016/turbo_quant_memory?display_name=tag&label=release)](https://github.com/Lexus2016/turbo_quant_memory/releases)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)](https://www.python.org/downloads/)
-[![MCP server](https://img.shields.io/badge/MCP-stdio-0A7B83)](https://modelcontextprotocol.io/)
-[![Local-first](https://img.shields.io/badge/storage-local--first-2F855A)](https://github.com/Lexus2016/turbo_quant_memory)
+---
 
-Other languages: [Russian](README.ru.md) | [Ukrainian](README.uk.md)
+## 👋 What is this awesome tool? (For Humans)
 
-Turbo Quant Memory is the memory layer that makes AI agents feel like long-term teammates instead of short-term chat sessions.
+Imagine you are working with an AI coding assistant (like Claude Code, Gemini CLI, Cursor, or Codex). Every time you restart a session, the AI forgets everything. It forgets your architectural decisions, custom styling rules, how you solved that tricky database bug, or even your coding preferences. You have to explain it all over again, or feed the AI huge files, which **wastes your time and burns through your token budget (costing you real money)**.
 
-If you use Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or any MCP client, this is how you keep your institutional knowledge alive between tasks.
+**Turbo Quant Memory** solves this once and for all. It is a local-first **Model Context Protocol (MCP) server** that gives your AI agents a persistent brain. It stores:
+* 🎯 **Decisions & Lessons**: Why things were built this way, so the AI doesn't break them.
+* 💡 **Patterns & Gotchas**: Reusable tricks and hard-won bug fixes.
+* 🕸️ **Knowledge Graph Relations**: Structured associations linking memory notes, source files, tasks, or bugs.
+* 📦 **Codebase Index**: Compact Markdown block search so the AI understands your project structure instantly.
 
-## Why It Matters
+### 💰 Cost-Saving Magic
+Instead of reading massive files every time, your AI agent uses **Compact Retrieval** to query its memory and fetch only highly-relevant 600-token summaries.
+* **`semantic_search` only**: **63.96% fewer bytes** sent to the model on average!
+* **Ultra-low latency**: searches take under **70 ms** locally.
 
-Most agent workflows fail in the same place: memory.
+---
 
-- Great insights disappear in chat history.
-- Every new task restarts from zero.
-- Teams re-explain the same architecture again and again.
+## 🚀 DON'T INSTALL THIS MANUALLY! (Let the AI Do It)
 
-Turbo Quant Memory fixes this by making your project knowledge persistent, searchable, and reusable.
+You don't need to type commands in the terminal or configure JSON files. **Let your AI assistant handle the setup!**
 
-## Why Teams Choose Turbo Quant Memory
+Simply copy the link to this repository:
+`https://github.com/Lexus2016/turbo_quant_memory`
 
-| Typical AI workflow | With Turbo Quant Memory |
-|---|---|
-| Agents forget context between sessions | Agents can continue from saved project knowledge |
-| Decisions stay buried in old threads | Decisions become reusable notes |
-| Team knowledge stays inside one person's head | Knowledge becomes shared, searchable, and portable |
-| Token budget is wasted on repeated reading | Context is loaded smarter, so more budget goes to reasoning |
+And send this exact prompt to your AI assistant (Claude Code, Gemini CLI, Codex, etc.):
 
-## The Core Promise
+> "Hey! Please install and configure the Turbo Quant Memory server for my workspace using this repository: https://github.com/Lexus2016/turbo_quant_memory. Read the README.md, follow the 'Instructions for AI Agents' at the bottom of the file to install it via `uv tool`, register the `tqmemory` MCP server, run health checks, index this project, and set up our persistent memory. Let me know when you're ready!"
 
-Your agents stop behaving like temporary assistants and start behaving like members of the team.
+Your AI agent will automatically clone, install, register, and index everything for you!
 
-## What Makes It Different
+---
 
-- Local-first by design: your memory stays under your control.
-- One memory layer for many clients: same knowledge, same standards, same outcomes.
-- Cross-agent continuity: start in Codex, continue in Gemini CLI, come back to Codex, and keep the same project memory.
-- Built for real delivery: capture decisions, patterns, and handoffs that compound over time.
-- Transparent and auditable: memory is explicit, structured, and easy to inspect.
+## 🛠️ Quick Start (If You *Really* Want to Do It Yourself)
 
-## Quick Start
+If you prefer the manual way, run this 60-second flow:
 
-Use this 60-second flow:
+1. **Install the CLI Tool:**
+   ```bash
+   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.1
+   ```
 
-1. Install once:
-```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0
-```
+2. **Add `tqmemory` MCP Server to your client:**
+   ```bash
+   # Codex
+   codex mcp add tqmemory -- turbo-memory-mcp serve
 
-2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
+   # Gemini CLI
+   gemini mcp add tqmemory turbo-memory-mcp serve
 
-```bash
-# Codex
-codex mcp add tqmemory -- turbo-memory-mcp serve
+   # Claude Code (Project scope)
+   claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
+   ```
 
-# Gemini CLI
-gemini mcp add tqmemory turbo-memory-mcp serve
+3. **Restart your client and let the magic begin!**
 
-# Claude Code (project scope)
-claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
-```
+*For custom integrations (Cursor, OpenCode, Antigravity, etc.), see [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).*
 
-3. Restart the client and run any `tqmemory` tool.
+---
 
-Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
+## 🌟 Advanced Features (Under the Hood)
 
-### Upgrading
+### 1. Hybrid BM25 + Vector Search
+Every query searches both dense-vector spaces (for semantic meaning) and BM25 full-text indexes (for exact term matches like function names, file paths, or IDs) in parallel. Results are fused using Reciprocal Rank Fusion (RRF, `k=60`). If a lane fails, it degrades gracefully to vector-only search.
 
-To pull a new release into an existing install, re-run the install command with `--reinstall`:
+### 2. Knowledge Graph Relations
+You can build associations between notes, source files, issues, or tasks using directed relations. The memory server automatically enriches search and hydration results with these relations, letting AI agents browse associated context effortlessly.
 
-```bash
-uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0
-```
+### 3. Tiered Memory Architecture
+Memory notes are separated into logical tiers:
+* `durable`: Decisions, architectural patterns, lessons.
+* `episodic`: Session handoffs, daily progress.
+* `reference`: Markdown blocks, file references.
 
-After upgrading from v0.4.x, run `turbo-memory-mcp migrate --status` to see the pending Phase 2 upgrade (`notes` v1→v2 + `retrieval` v1→v2). Stop your MCP clients first (the daemon lockfile blocks `--apply` while a primary is running), then run `turbo-memory-mcp migrate --apply`. A rolling snapshot is taken automatically; on failure the CLI prints the exact `--restore-from` command. See `New In v0.5.0` below for the full list.
+Default searches return only `durable` + `reference` so session noise never drowns out critical architectural decisions!
 
-If you already have `~/.gemini/settings.json` from before v0.4.2, also merge this block once so Gemini CLI starts reading `AGENTS.md` alongside `GEMINI.md`:
+---
 
-```jsonc
-{
-  "context": { "fileName": ["AGENTS.md", "GEMINI.md"] }
-}
-```
+## 🤖 Instructions for AI Agents (System Directive)
 
-## Ignoring Files During Indexing
+> [!IMPORTANT]
+> **ATTENTION AI AGENT (Claude, Gemini, Codex, or Antigravity):**
+> You are equipped with the `tqmemory` MCP server. This is your long-term memory. Read and obey these instructions to ensure seamless integration and zero-friction memory retrieval.
 
-Create a `.tqmemoryignore` file in your project root to exclude directories or files from Markdown indexing. The format is similar to `.gitignore` — one glob pattern per line, `#` for comments.
+### 1. Pre-Flight Ritual (Every Session Start)
+1. **Check Migrations & Health:** Call `health()` and `server_info()`. If `migrations_pending` (in `health`) or `migrations.pending` (in `server_info`) is `true`, surface the `migrations_hint` verbatim to the user so they can run the CLI upgrade. **Do not run `migrate --apply` yourself** as it requires closing active MCP clients.
+2. **Retrieve Context:** Before starting any non-trivial task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines.
 
-```gitignore
-# Skip duplicate workspace template directories
-workspace-*
+### 2. Memory Writing Discipline
+When you learn something important, solve a complex bug, or make an architectural decision, **immediately save it** using `remember_note()`. Do not wait until the end of the session.
+* **Lessons (`kind="lesson"`):** Store hard-won patterns or bug fixes.
+* **Decisions (`kind="decision"`):** Store structural choices or tooling decisions.
+* **Patterns (`kind="pattern"`):** Store reusable templates or styling conventions.
+* **Handoffs (`kind="handoff"`):** Store episodic progress before pausing or ending a session (automatically assigned to `episodic` tier).
 
-# Skip runtime reports
-data/reports/*.md
-
-# Skip generated content
-output/
-```
-
-The ignore file is picked up automatically by `index_paths(...)`. Patterns match against both directory names and full relative paths. The search walks upward from the indexed root until it finds a `.tqmemoryignore` or reaches the `.git` boundary.
-
-Directories like `node_modules`, `.git`, `__pycache__`, `dist`, and `build` are always ignored by default.
-
-## Shared Memory Across Agents
-
-This works out of the box in the standard local setup. You do not need a separate sync service, export/import flow, or agent-specific memory configuration.
-
-This is shared local memory, not remote cloud sync. If Codex and Gemini CLI run on the same machine and open the same repository, they can use the same memory layer automatically.
-
-To keep one shared project memory across Codex, Gemini CLI, and other MCP clients:
-
-1. Install `turbo-memory-mcp` once on the machine.
-2. Add the same `tqmemory` MCP server in each client you use.
-3. Open the same repository in each client.
-
-When those conditions are true, the clients resolve the same project memory automatically. That means you can start work in Codex, continue in Gemini CLI, and return to Codex without rebuilding context.
-
-If a client is launched outside the repository root, set `TQMEMORY_PROJECT_ROOT` explicitly so it resolves the same project identity.
-
-## Who This Is For
-
-- AI-first engineering teams
-- Solo builders running multiple agents
-- Product teams that want consistent AI execution quality
-- Anyone tired of repeating context every day
-
-## Why Pick This
-
-Choose Turbo Quant Memory if you want:
-
-- faster onboarding for every new task
-- fewer repeated mistakes
-- stronger continuity across sessions
-- higher ROI from every agent run
-
-## Benchmark-Proven Cost Advantage
-
-![Benchmark summary](benchmarks/summary-en.svg)
-
-On this repository corpus, the compact memory path shows strong savings that directly reduce model spend:
-
-- `semantic_search` only: **63.96% fewer bytes** sent to the model on average
-- `semantic_search + hydrate(top1)`: **44.1% fewer bytes** on average
-- `semantic_search` latency: **68.13 ms** average
-- `hydrate` latency: **41.63 ms** average
-
-Why this is a practical advantage:
-
-- less repeated reading means fewer billed input tokens
-- lower token pressure means lower cost per task
-- context budget stays available for reasoning instead of reloading files
-
-## New In v0.6.0
-
-Phase 3 of the Memory Quality v1 milestone — **hybrid retrieval**: dense-vector search plus BM25 (full-text-search) merged via Reciprocal Rank Fusion. Particularly fixes the short-content overhead problem from v0.5.x: exact-term hits (function names, file paths, IDs) now reach the top even when their vector signal is weak.
-
-- **Hybrid BM25 + vector via RRF.** Every `semantic_search` query now hits both lanes in parallel. Reciprocal Rank Fusion (`k=60`) combines the top-K from each; items that rank well in either lane bubble up.
-- **Idempotent FTS index** on the `content_search` column. New migration `RETRIEVAL v2 → v3` adds it without touching data — fast on any corpus size.
-- **Graceful fallback** on legacy LanceDB tables that lack the FTS index — search degrades to vector-only, never breaks.
-- **Defensive lane wrappers** (`_safe_vector_search` / `_safe_fts_search`) — one broken lane no longer takes down the whole query.
-
-To upgrade: `uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0`, stop MCP clients, then `turbo-memory-mcp migrate --apply`.
-
-## New In v0.5.1
-
-Closes the agent-visibility gap from v0.5.0. The stderr migration warning at daemon startup is only seen by humans reading client logs — agents stayed silent on legacy schemas. v0.5.1 surfaces the same detection through MCP probes every agent calls at session start.
-
-- **`mcp__tqmemory__health`** now returns `migrations_pending: bool` (always) and `migrations_hint: str` (only when pending).
-- **`mcp__tqmemory__server_info`** now returns a `migrations` block with per-subsystem `current_version`, `latest_version`, `pending`, `step_count`, plus a top-level `hint` string.
-- **Agent integration recipe** (already in this repo's `CLAUDE.md`): query either probe on session start; if pending is true, surface the hint verbatim to the user. Do NOT run `migrate --apply` from inside the agent — only the user can close MCP clients that hold the daemon lockfile.
-
-## New In v0.5.0
-
-This release ships the first two phases of the Memory Quality v1 milestone: the schema-migration framework (Phase A) and tier separation (Phase 2). Existing v0.4.x installs upgrade in place — backward-compatible and recoverable from a rolling snapshot.
-
-- **Tier separation.** Every note now carries a `tier`: `durable` (decisions / patterns / lessons), `episodic` (session handoffs), or `reference` (markdown blocks). Default `semantic_search` returns only `durable` + `reference` so session handoffs no longer drown durable knowledge. Opt episodic in explicitly with `tier_filter=("episodic",)`.
-- **MCP payload visibility.** `semantic_search` and `hydrate` responses now include the `tier` field on every item so clients can branch on a single value.
-- **Schema migration framework.** New `turbo-memory-mcp migrate` subcommand with `--status`, `--dry-run`, `--apply`, `--snapshot-only`, `--list-snapshots`, `--restore-from <path>`, and `--force` (bypass daemon-lock guard). Rolling snapshots under `<storage_root>/.snapshots/` with configurable retention (`TQMEMORY_SNAPSHOTS_KEEP`). Structured JSONL log at `~/.turbo-quant-memory/migration.log`.
-- **Daemon-startup detection.** The primary daemon detects pending upgrades on launch and prints a single-line stderr warning. Detection never blocks startup. Proxies skip the check.
-- **Graceful upgrade path.** Until `migrate --apply` runs, the new `WHERE tier IN (…)` clause is suppressed on legacy LanceDB tables so search keeps working between binary upgrade and migrate.
-- **Sticky manifest version.** Manifest writers now keep any bumped `format_version` (`max(existing, in-code baseline)`), so post-migration writes can no longer silently revert the version and re-trigger the apply loop. Stale `format_version=0` manifests are still auto-repaired.
-- **`promote_note` preserves tier.** An explicit tier on the project note survives promotion to global scope.
-- **`.claude/` excluded by default** (already in `.gitignore`).
-- **CHANGELOG.md** maintained in Keep a Changelog format.
-
-## New In v0.4.3
-
-- Maintenance baseline before the next architecture cycle — no behavior changes.
-- Added `CHANGELOG.md` with the full release history in Keep a Changelog format.
-- `.claude/` directory added to `.gitignore` to keep Claude Code local config out of the repo.
-- Install commands across README and SMOKE checklist now point to `v0.4.3`.
-
-## New In v0.4.2
-
-- Gemini CLI fixture and the bundled `.gemini/settings.json` now ship `"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}`, so Gemini CLI picks up the same `AGENTS.md` project prompts the rest of the agents already use — no duplicate `GEMINI.md` mirror required.
-- README and SMOKE checklist install commands now point at the actual current release, with a new `Upgrading` subsection covering `uv tool install --reinstall` and the one-time `~/.gemini/settings.json` migration.
-- New SMOKE checklist step warns operators that merging the Gemini fixture into an existing `settings.json` must preserve the `context` block — without it Gemini CLI silently falls back to `GEMINI.md`-only and skips `AGENTS.md`.
-- Filed `.planning/todos/2026-04-28-lint-false-positives.md` tracking two `lint_knowledge_base` issues for the next code release: ASCII-only title-key normalization that collapses Cyrillic / non-ASCII H1s into `untitled`, and `broken_link` reports for files inside `DEFAULT_IGNORED_DIR_NAMES` (e.g. `benchmarks/latest.md`) that exist on disk.
-
-## New In v0.4.1
-
-- Automatic proxy failover when the primary dies. Previously, if the first `turbo-memory-mcp` process (the primary holding the model + LanceDB handles) shut down, the remaining proxy processes in other MCP clients lost their RPC link and `tqmemory` became silently unavailable for those clients.
-- Proxies now detect a lost primary via `PrimaryUnreachable` on their next RPC call and transparently re-bootstrap: one surviving proxy atomically claims the lockfile and promotes itself to primary (starting its own `DaemonListener`), and every other orphaned proxy reconnects to the new primary. No MCP client restart required.
-- Phase-aware RPC error handling: connect/send-phase failures are translated into `PrimaryUnreachable` (safe to replay), while mid-call failures (send succeeded, recv failed) surface to the host unchanged so non-idempotent tools like `remember_note` are never silently duplicated.
-- Gemini CLI fixture now ships `context.fileName: ["AGENTS.md", "GEMINI.md"]` so Gemini CLI picks up the same `AGENTS.md` project prompts that Codex, Cursor, and other agents already use, without forcing a duplicate `GEMINI.md` mirror file.
-
-## New In v0.4.0
-
-- Singleton daemon transport: only one `turbo-memory-mcp` process per machine keeps the sentence-transformers model and LanceDB handles resident. Every additional MCP-client launch becomes a thin stdio↔socket proxy that forwards tool calls to the primary.
-- Cross-platform coordination: Unix/macOS uses an `AF_UNIX` socket under the system temp dir (short path, 0600 perms); Windows uses a named pipe scoped to the current user. Authenticated via a 32-byte random authkey stored in `~/.turbo-quant-memory/.daemon.lock`.
-- Lazy imports in `retrieval_index` mean proxy processes do not pay the ~470 MB cost of PyTorch / LanceDB / PyArrow imports when they only forward RPC. Measured savings: ~1 GB RSS for four concurrent MCP clients (primary 530 MB, proxies ~50 MB each vs 437 MB each before).
-- Existing on-disk state (JSON notes, LanceDB tables, Markdown blocks, manifests) is unchanged and fully backward-compatible. Escape hatch: set `TQMEMORY_DAEMON_DISABLE=1` to fall back to per-process mode.
-
-## New In v0.3.1
-
-- Published shared-memory guidance for Codex and Gemini CLI handoffs inside the README and client integration docs.
-- Added a ready Gemini CLI fixture plus smoke-check steps for validating the same `tqmemory` server across clients.
-- Clarified that shared memory is local same-machine continuity, not remote cloud sync.
-
-## Learn More
-
-- Client integrations: [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md)
-- Technical spec: [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md)
-- Memory strategy: [MEMORY_STRATEGY.md](MEMORY_STRATEGY.md)
-- Benchmarks: [benchmarks/latest.md](benchmarks/latest.md)
+*Format your notes in English. Keep them concise, technical, and actionable. Add semantic tags.*
+
+### 3. Knowledge Graph Linking
+Use relations to connect ideas, files, and tasks:
+* When saving a note about a bug fix in `src/auth.py`, call `link_entities(source="note:[note_id]", target="file:///absolute/path/to/src/auth.py", relation_type="fixes")`.
+* Link related notes: `link_entities(source="note:[new_note]", target="note:[old_note]", relation_type="supersedes")`.
+* Link files to tasks: `link_entities(source="file:///path/to/file", target="task:[task_id]", relation_type="implements")`.
+
+### 4. Zero Ambiguity & Memory Updates
+* **Deprecate Outdated Notes:** When a pattern or decision changes, write the new note, then call `deprecate_note()` on the old one to avoid search pollution.
+* **No Smoke Notes:** Do not write temporary or smoke test notes.
+* **Provenance:** Always preserve file paths and line numbers in your memory payloads.
+
+---
+
+## 🌍 Language Versions
+This documentation is maintained in three synchronized languages:
+* 🇺🇸 [English README](README.md)
+* 🇺🇦 [Ukrainian README](README.uk.md)
+* 🇷🇺 [Russian README](README.ru.md)

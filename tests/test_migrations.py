@@ -264,15 +264,15 @@ def test_apply_pending_retrieval_bumps_both_project_and_global(
     store.write_project_retrieval_manifest()
     store.write_global_retrieval_manifest()
 
-    @migration(Subsystem.RETRIEVAL, from_version=1, to_version=2)
+    @migration(Subsystem.RETRIEVAL, from_version=2, to_version=3)
     def _step(_):
         return None
 
     apply_pending(store, subsystems=[Subsystem.RETRIEVAL], snapshot=False)
     proj = store.read_project_retrieval_manifest()
     glob = store.read_global_retrieval_manifest()
-    assert proj is not None and proj["format_version"] == 2
-    assert glob is not None and glob["format_version"] == 2
+    assert proj is not None and proj["format_version"] == 3
+    assert glob is not None and glob["format_version"] == 3
 
 
 def test_format_pending_warning_is_none_when_up_to_date(store: MemoryStore) -> None:
@@ -1198,7 +1198,7 @@ def test_write_retrieval_manifests_preserve_existing_format_version(
             "scope": "project",
             "project_id": store.project.project_id,
             "source_kind": "retrieval",
-            "format_version": 2,
+            "format_version": 3,
         },
     )
     write_json_atomic(
@@ -1206,13 +1206,13 @@ def test_write_retrieval_manifests_preserve_existing_format_version(
         {
             "scope": "global",
             "source_kind": "retrieval",
-            "format_version": 2,
+            "format_version": 3,
         },
     )
     proj = store.write_project_retrieval_manifest()
     glob = store.write_global_retrieval_manifest()
-    assert proj["format_version"] == 2
-    assert glob["format_version"] == 2
+    assert proj["format_version"] == 3
+    assert glob["format_version"] == 3
 
 
 def test_bump_notes_manifest_writes_full_payload_when_manifest_missing(

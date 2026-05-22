@@ -31,6 +31,9 @@ EXPECTED_TOOL_NAMES = [
     "hydrate",
     "index_paths",
     "lint_knowledge_base",
+    "link_entities",
+    "unlink_entities",
+    "get_related_entities",
 ]
 
 
@@ -137,7 +140,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     install_contract = build_install_contract()
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 11
+    assert payload["tool_count"] == 14
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"

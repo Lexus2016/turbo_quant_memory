@@ -92,6 +92,12 @@ The server should reduce repeated token usage by:
 - Detect orphan candidates with no inbound or outbound internal links.
 - Detect duplicate normalized titles that increase ambiguity during retrieval.
 
+### 7. Knowledge Graph Relations
+
+- Link notes, files, tasks, or issues via custom relation types.
+- Query relations to traverse the knowledge network.
+- Enrich retrieval results automatically with associated relations for enhanced context discovery.
+
 ## MCP Tool Surface
 
 | Tool | Purpose |
@@ -107,6 +113,9 @@ The server should reduce repeated token usage by:
 | `hydrate(...)` | open bounded fuller context |
 | `index_paths(...)` | index or refresh Markdown roots |
 | `lint_knowledge_base(...)` | run structural checks for link integrity and wiki consistency |
+| `link_entities(...)` | create a link between two knowledge entities in the graph |
+| `unlink_entities(...)` | remove a link between two knowledge entities in the graph |
+| `get_related_entities(...)` | query relations involving a specific entity URI |
 
 ## Data Model
 

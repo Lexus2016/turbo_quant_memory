@@ -199,6 +199,64 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
             {"paths": paths, "max_issues": max_issues},
         )
 
+    @mcp.tool()
+    def link_entities(
+        source_uri: str,
+        target_uri: str,
+        relation_type: str,
+        scope: str = "project",
+    ) -> dict[str, object]:
+        """Create a Knowledge Graph link between two entities.
+        
+        Entities are specified using URIs:
+          - Note: note://<note_id>
+          - File: file://<relative_path> (relative to project root)
+          - External: e.g. issue://BUG-404, task://TASK-101
+        """
+        return dispatcher(
+            "link_entities",
+            {
+                "source_uri": source_uri,
+                "target_uri": target_uri,
+                "relation_type": relation_type,
+                "scope": scope,
+            },
+        )
+
+    @mcp.tool()
+    def unlink_entities(
+        source_uri: str,
+        target_uri: str,
+        relation_type: str | None = None,
+        scope: str = "project",
+    ) -> dict[str, object]:
+        """Remove a Knowledge Graph link between two entities."""
+        return dispatcher(
+            "unlink_entities",
+            {
+                "source_uri": source_uri,
+                "target_uri": target_uri,
+                "relation_type": relation_type,
+                "scope": scope,
+            },
+        )
+
+    @mcp.tool()
+    def get_related_entities(
+        uri: str,
+        relation_type: str | None = None,
+        scope: str = "hybrid",
+    ) -> dict[str, object]:
+        """Query relations involving a specific entity URI."""
+        return dispatcher(
+            "get_related_entities",
+            {
+                "uri": uri,
+                "relation_type": relation_type,
+                "scope": scope,
+            },
+        )
+
     return mcp
 
 
@@ -322,6 +380,38 @@ def _tool_lint_knowledge_base(kwargs: Mapping[str, Any], *, cwd: Any, environ: A
     )
 
 
+def _tool_link_entities(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return link_entities_impl(
+        str(kwargs["source_uri"]),
+        str(kwargs["target_uri"]),
+        str(kwargs["relation_type"]),
+        scope=str(kwargs.get("scope", "project")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_unlink_entities(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return unlink_entities_impl(
+        str(kwargs["source_uri"]),
+        str(kwargs["target_uri"]),
+        relation_type=kwargs.get("relation_type"),
+        scope=str(kwargs.get("scope", "project")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_get_related_entities(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return get_related_entities_impl(
+        str(kwargs["uri"]),
+        relation_type=kwargs.get("relation_type"),
+        scope=str(kwargs.get("scope", "hybrid")),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
 TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "health": _tool_health,
     "server_info": _tool_server_info,
@@ -334,6 +424,9 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "hydrate": _tool_hydrate,
     "index_paths": _tool_index_paths,
     "lint_knowledge_base": _tool_lint_knowledge_base,
+    "link_entities": _tool_link_entities,
+    "unlink_entities": _tool_unlink_entities,
+    "get_related_entities": _tool_get_related_entities,
 }
 
 
@@ -667,6 +760,97 @@ def self_test_impl(
         storage_root=str(store.storage_root),
         current_project=build_current_project_payload(project),
     )
+
+
+def link_entities_impl(
+    source_uri: str,
+    target_uri: str,
+    relation_type: str,
+    *,
+    scope: str = "project",
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    resolved_scope = _normalize_scope(scope)
+    if resolved_scope not in (PROJECT_SCOPE, GLOBAL_SCOPE):
+        raise ValueError(f"Unsupported scope: {scope}")
+    if not source_uri.strip():
+        raise ValueError("link_entities requires a non-empty source_uri.")
+    if not target_uri.strip():
+        raise ValueError("link_entities requires a non-empty target_uri.")
+    if not relation_type.strip():
+        raise ValueError("link_entities requires a non-empty relation_type.")
+        
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    relation = store.add_relation(
+        source=source_uri.strip(),
+        target=target_uri.strip(),
+        relation_type=relation_type.strip(),
+        scope=resolved_scope,
+    )
+    
+    return {
+        "action": "linked",
+        "relation": relation,
+        "scope": resolved_scope,
+    }
+
+
+def unlink_entities_impl(
+    source_uri: str,
+    target_uri: str,
+    *,
+    relation_type: str | None = None,
+    scope: str = "project",
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    resolved_scope = _normalize_scope(scope)
+    if resolved_scope not in (PROJECT_SCOPE, GLOBAL_SCOPE):
+        raise ValueError(f"Unsupported scope: {scope}")
+    if not source_uri.strip():
+        raise ValueError("unlink_entities requires a non-empty source_uri.")
+    if not target_uri.strip():
+        raise ValueError("unlink_entities requires a non-empty target_uri.")
+        
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    changed = store.remove_relation(
+        source=source_uri.strip(),
+        target=target_uri.strip(),
+        relation_type=relation_type.strip() if relation_type else None,
+        scope=resolved_scope,
+    )
+    
+    return {
+        "action": "unlinked",
+        "changed": changed,
+        "scope": resolved_scope,
+    }
+
+
+def get_related_entities_impl(
+    uri: str,
+    *,
+    relation_type: str | None = None,
+    scope: str = "hybrid",
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    if not uri.strip():
+        raise ValueError("get_related_entities requires a non-empty uri.")
+        
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    relations = store.get_relations_for_entity(
+        uri=uri.strip(),
+        relation_type=relation_type.strip() if relation_type else None,
+        scope=scope,
+    )
+    
+    return {
+        "uri": uri.strip(),
+        "relations": relations,
+        "scope": scope,
+    }
 
 
 def remember_note_impl(

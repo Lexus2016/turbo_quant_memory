@@ -21,6 +21,7 @@
 - When old knowledge is replaced, write the new note and deprecate the old one.
 - Do not keep smoke, temporary, or validation notes active.
 - Treat `.planning`, `.serena`, and generated benchmark artifacts as historical workflow context, not as primary user-facing memory.
+- Use Knowledge Graph relations (`link_entities`, `unlink_entities`, `get_related_entities`) to build associations between notes, source files, issues, or tasks, enabling association-based semantic retrieval.
 
 ## Documentation Policy
 

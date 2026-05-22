@@ -1836,7 +1836,7 @@ wheels = [
 
 [[package]]
 name = "turbo-memory-mcp"
-version = "0.4.1"
+version = "0.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "lancedb" },

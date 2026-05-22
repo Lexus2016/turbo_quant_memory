@@ -30,7 +30,13 @@ PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + (
     "index_paths",
 )
 PHASE_6_TOOL_NAMES = PHASE_5_TOOL_NAMES + ("lint_knowledge_base",)
-CURRENT_TOOL_NAMES = PHASE_6_TOOL_NAMES
+PHASE_7_TOOL_NAMES = PHASE_6_TOOL_NAMES + (
+    "link_entities",
+    "unlink_entities",
+    "get_related_entities",
+)
+CURRENT_TOOL_NAMES = PHASE_7_TOOL_NAMES
+
 
 
 def build_install_contract() -> dict[str, dict[str, str]]:
@@ -264,7 +270,10 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
         payload["tier"] = item["tier"]
     if item.get("promoted_from"):
         payload["promoted_from"] = dict(item["promoted_from"])
+    if "relations" in item:
+        payload["relations"] = list(item["relations"])
     return payload
+
 
 
 def build_hydrated_markdown_item_payload(
@@ -292,7 +301,10 @@ def build_hydrated_markdown_item_payload(
     # also checking source_kind.
     tier = block.get("tier") or "reference"
     payload["tier"] = str(tier)
+    if "relations" in block:
+        payload["relations"] = list(block["relations"])
     return payload
+
 
 
 def build_hydrated_note_item_payload(
@@ -325,7 +337,10 @@ def build_hydrated_note_item_payload(
         payload["deprecation_reason"] = note["deprecation_reason"]
     if note.get("superseded_by"):
         payload["superseded_by"] = dict(note["superseded_by"])
+    if "relations" in note:
+        payload["relations"] = list(note["relations"])
     return payload
+
 
 
 def build_hydration_payload(

@@ -40,14 +40,11 @@ NOTE_TIER_REFERENCE = "reference"
 NOTE_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_EPISODIC, NOTE_TIER_REFERENCE)
 DEFAULT_SEARCH_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_REFERENCE)
 MARKDOWN_FORMAT_VERSION = 1
-RETRIEVAL_FORMAT_VERSION = 2
+RETRIEVAL_FORMAT_VERSION = 3
 USAGE_STATS_FORMAT_VERSION = 2
 NOTES_FORMAT_VERSION = 1
-# RETRIEVAL is at 2 (post Phase 2 tier column). The Phase 3 @migration
-# v2->v3 adds the BM25 FTS index on top of that schema; latest_version
-# resolves to 3 via the registry, so fresh installs detect the pending
-# Phase 3 step on first daemon launch. NOTES still ships at 1 because
-# legacy installs need the v1->v2 reclass to run before manifests bump.
+# RETRIEVAL is at 3 (post Phase 3 BM25 FTS index). NOTES still ships at 1
+# because legacy installs need the v1->v2 reclass to run before manifests bump.
 
 
 def tier_for_kind(note_kind: str | None) -> str:
@@ -702,6 +699,87 @@ class MemoryStore:
 
         self.write_project_manifest()
         _write_json_atomic(self.project_note_path(str(note["note_id"]), str(note["project_id"])), note)
+
+    def project_relations_path(self, project_id: str | None = None) -> Path:
+        return self.project_dir(project_id) / "relations.json"
+
+    def global_relations_path(self) -> Path:
+        return self.global_dir() / "relations.json"
+
+    def read_relations(self, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> list[dict[str, str]]:
+        if scope == GLOBAL_SCOPE:
+            path = self.global_relations_path()
+        else:
+            path = self.project_relations_path(project_id)
+        
+        data = _read_json_if_exists(path)
+        if data is None or not isinstance(data, dict) or "relations" not in data:
+            return []
+        return data["relations"]
+
+    def write_relations(self, relations: list[dict[str, str]], scope: str = PROJECT_SCOPE, project_id: str | None = None) -> None:
+        if scope == GLOBAL_SCOPE:
+            path = self.global_relations_path()
+        else:
+            path = self.project_relations_path(project_id)
+        
+        payload = {
+            "format_version": 1,
+            "relations": relations,
+            "updated_at": utc_now(),
+        }
+        _write_json_atomic(path, payload)
+
+    def add_relation(self, source: str, target: str, relation_type: str, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> dict[str, str]:
+        relations = self.read_relations(scope, project_id)
+        for rel in relations:
+            if rel.get("source") == source and rel.get("target") == target and rel.get("type") == relation_type:
+                return rel
+        
+        new_rel = {
+            "source": source,
+            "target": target,
+            "type": relation_type,
+            "created_at": utc_now(),
+        }
+        relations.append(new_rel)
+        self.write_relations(relations, scope, project_id)
+        return new_rel
+
+    def remove_relation(self, source: str, target: str, relation_type: str | None = None, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> bool:
+        relations = self.read_relations(scope, project_id)
+        initial_len = len(relations)
+        
+        if relation_type is not None:
+            relations = [
+                rel for rel in relations
+                if not (rel.get("source") == source and rel.get("target") == target and rel.get("type") == relation_type)
+            ]
+        else:
+            relations = [
+                rel for rel in relations
+                if not (rel.get("source") == source and rel.get("target") == target)
+            ]
+        
+        changed = len(relations) < initial_len
+        if changed:
+            self.write_relations(relations, scope, project_id)
+        return changed
+
+    def get_relations_for_entity(self, uri: str, relation_type: str | None = None, scope: str = "hybrid", project_id: str | None = None) -> list[dict[str, str]]:
+        all_relations = []
+        if scope in (PROJECT_SCOPE, "hybrid"):
+            all_relations.extend(self.read_relations(PROJECT_SCOPE, project_id))
+        if scope in (GLOBAL_SCOPE, "hybrid"):
+            all_relations.extend(self.read_relations(GLOBAL_SCOPE))
+            
+        filtered = []
+        for rel in all_relations:
+            if rel.get("source") == uri or rel.get("target") == uri:
+                if relation_type is None or rel.get("type") == relation_type:
+                    filtered.append(rel)
+        return filtered
+
 
 
 def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
