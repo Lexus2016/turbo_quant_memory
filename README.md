@@ -50,7 +50,7 @@ Use this 60-second flow:
 
 1. Install once:
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.3
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.5.0
 ```
 
 2. Add `tqmemory` MCP server in your client (the client will launch it automatically):
@@ -75,8 +75,10 @@ Need a ready config for Gemini CLI, Cursor, OpenCode, or Antigravity? Use [CLIEN
 To pull a new release into an existing install, re-run the install command with `--reinstall`:
 
 ```bash
-uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.4.3
+uv tool install --reinstall git+https://github.com/Lexus2016/turbo_quant_memory@v0.5.0
 ```
+
+After upgrading from v0.4.x, run `turbo-memory-mcp migrate --status` to see the pending Phase 2 upgrade (`notes` v1→v2 + `retrieval` v1→v2). Stop your MCP clients first (the daemon lockfile blocks `--apply` while a primary is running), then run `turbo-memory-mcp migrate --apply`. A rolling snapshot is taken automatically; on failure the CLI prints the exact `--restore-from` command. See `New In v0.5.0` below for the full list.
 
 If you already have `~/.gemini/settings.json` from before v0.4.2, also merge this block once so Gemini CLI starts reading `AGENTS.md` alongside `GEMINI.md`:
 
@@ -153,6 +155,20 @@ Why this is a practical advantage:
 - less repeated reading means fewer billed input tokens
 - lower token pressure means lower cost per task
 - context budget stays available for reasoning instead of reloading files
+
+## New In v0.5.0
+
+This release ships the first two phases of the Memory Quality v1 milestone: the schema-migration framework (Phase A) and tier separation (Phase 2). Existing v0.4.x installs upgrade in place — backward-compatible and recoverable from a rolling snapshot.
+
+- **Tier separation.** Every note now carries a `tier`: `durable` (decisions / patterns / lessons), `episodic` (session handoffs), or `reference` (markdown blocks). Default `semantic_search` returns only `durable` + `reference` so session handoffs no longer drown durable knowledge. Opt episodic in explicitly with `tier_filter=("episodic",)`.
+- **MCP payload visibility.** `semantic_search` and `hydrate` responses now include the `tier` field on every item so clients can branch on a single value.
+- **Schema migration framework.** New `turbo-memory-mcp migrate` subcommand with `--status`, `--dry-run`, `--apply`, `--snapshot-only`, `--list-snapshots`, `--restore-from <path>`, and `--force` (bypass daemon-lock guard). Rolling snapshots under `<storage_root>/.snapshots/` with configurable retention (`TQMEMORY_SNAPSHOTS_KEEP`). Structured JSONL log at `~/.turbo-quant-memory/migration.log`.
+- **Daemon-startup detection.** The primary daemon detects pending upgrades on launch and prints a single-line stderr warning. Detection never blocks startup. Proxies skip the check.
+- **Graceful upgrade path.** Until `migrate --apply` runs, the new `WHERE tier IN (…)` clause is suppressed on legacy LanceDB tables so search keeps working between binary upgrade and migrate.
+- **Sticky manifest version.** Manifest writers now keep any bumped `format_version` (`max(existing, in-code baseline)`), so post-migration writes can no longer silently revert the version and re-trigger the apply loop. Stale `format_version=0` manifests are still auto-repaired.
+- **`promote_note` preserves tier.** An explicit tier on the project note survives promotion to global scope.
+- **`.claude/` excluded by default** (already in `.gitignore`).
+- **CHANGELOG.md** maintained in Keep a Changelog format.
 
 ## New In v0.4.3
 

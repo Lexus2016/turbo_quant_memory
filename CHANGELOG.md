@@ -5,11 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-05-22
 
 Phase A (migration framework) and Phase 2 (tier separation) of the
 Memory Quality v1 milestone. Behavior change: episodic notes (handoffs)
 no longer pollute default semantic_search.
+
+Backward-compatible upgrade: legacy LanceDB tables keep working until
+`migrate --apply` runs. The daemon-lock guard blocks `--apply` while a
+primary MCP daemon is running so users do not race with a live writer.
 
 ### Phase 2 — Tier separation (this release)
 
@@ -206,6 +210,7 @@ Maintenance baseline before the next architecture cycle. No behavioral changes.
 - Hydration paths and benchmark suite.
 - Trilingual documentation (English, Ukrainian, Russian).
 
+[0.5.0]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lexus2016/turbo_quant_memory/compare/v0.4.0...v0.4.1
