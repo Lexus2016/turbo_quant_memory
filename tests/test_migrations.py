@@ -852,31 +852,32 @@ def test_notes_bump_writes_format_version_to_both_manifests(
 
 
 def test_notes_migration_runs_end_to_end_via_runner(store: MemoryStore) -> None:
-    """The full path: legacy v1 state -> runner.apply_pending -> v2 manifest
-    AND every note re-tagged. Re-importing the package so the
-    autouse fixture's clear_registry() does not blow away the real
-    upgrade registration in upgrades.py.
+    """Full path: legacy v1 state -> runner.apply_pending -> v2 manifest
+    AND every note re-tagged.
+
+    The autouse fixture clears REGISTRY between tests, so we explicitly
+    register a NOTES v1->v2 step that delegates to the real
+    `upgrade_notes_v1_to_v2`. This keeps the test independent of
+    upgrades.py module load order (no `importlib.reload` hack) and makes
+    the intent obvious: we are exercising the runner integration around
+    the real upgrade function.
     """
     from turbo_memory_mcp.migrations import (
         Subsystem,
         apply_pending,
         detect_status,
-        upgrades as _upgrades,  # re-import to re-register after clear_registry
+        migration,
     )
     from turbo_memory_mcp.migrations.io import write_json_atomic
-    from turbo_memory_mcp.migrations.registry import REGISTRY
+    from turbo_memory_mcp.migrations.upgrades import upgrade_notes_v1_to_v2
     from turbo_memory_mcp.store import (
         NOTE_TIER_DURABLE,
         NOTE_TIER_EPISODIC,
     )
 
-    # Re-execute the @migration decorators that the autouse fixture
-    # cleared by reloading upgrades.py. importlib.reload gives us the
-    # decorator side-effects back in REGISTRY.
-    import importlib
-
-    importlib.reload(_upgrades)
-    assert any(m.subsystem is Subsystem.NOTES for m in REGISTRY)
+    @migration(Subsystem.NOTES, from_version=1, to_version=2)
+    def _proxy(store_arg):
+        upgrade_notes_v1_to_v2(store_arg)
 
     # Simulate a legacy install: notes WITHOUT tier + manifests WITHOUT
     # format_version. This is exactly what pre-Phase-2 storage looks
@@ -996,3 +997,51 @@ def test_retrieval_v1_to_v2_upgrade_resets_and_resyncs_both_scopes(
 
     reset_scopes = [args[0] for name, args, _ in calls if name == "reset_scope"]
     assert set(reset_scopes) == {"project", "global"}
+
+
+def test_table_has_tier_column_detects_phase2_schema() -> None:
+    from turbo_memory_mcp.retrieval_index import _table_has_tier_column
+
+    class _Schema:
+        names = ["scope", "project_id", "tier", "title", "updated_at"]
+
+    class _Table:
+        schema = _Schema()
+
+    assert _table_has_tier_column(_Table()) is True
+
+
+def test_table_has_tier_column_rejects_pre_phase2_schema() -> None:
+    from turbo_memory_mcp.retrieval_index import _table_has_tier_column
+
+    class _Schema:
+        names = ["scope", "project_id", "title", "updated_at"]
+
+    class _Table:
+        schema = _Schema()
+
+    # No tier column -> tier_filter must be silently skipped so legacy
+    # LanceDB tables keep working until `migrate --apply` runs.
+    assert _table_has_tier_column(_Table()) is False
+
+
+def test_table_has_tier_column_handles_schema_introspection_failure() -> None:
+    from turbo_memory_mcp.retrieval_index import _table_has_tier_column
+
+    class _Table:
+        @property
+        def schema(self):  # noqa: D401
+            raise RuntimeError("schema unavailable")
+
+    # Any failure to read schema should fall back to "no tier" (safe)
+    # rather than crash the entire search call.
+    assert _table_has_tier_column(_Table()) is False
+
+
+def test_table_has_tier_column_handles_missing_schema_attribute() -> None:
+    from turbo_memory_mcp.retrieval_index import _table_has_tier_column
+
+    class _Table:
+        pass
+
+    assert _table_has_tier_column(_Table()) is False

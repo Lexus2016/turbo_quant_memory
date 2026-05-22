@@ -171,7 +171,12 @@ class RetrievalIndex:
 
         query_vector = self._embed_texts([query])[0]
         builder = table.search(query_vector).metric("cosine").limit(limit)
-        if tier_filter:
+        # Apply tier_filter only when the on-disk LanceDB table actually
+        # carries the `tier` column. Existing installs that have not yet
+        # run `migrate --apply` still have the v1 schema and would error
+        # on the WHERE clause; gracefully degrade to "no tier filter"
+        # rather than break their search.
+        if tier_filter and _table_has_tier_column(table):
             tiers_quoted = ", ".join(_quote_sql_string(str(t)) for t in tier_filter)
             builder = builder.where(f"tier IN ({tiers_quoted})")
         return [dict(row) for row in builder.to_list()]
@@ -309,6 +314,29 @@ def _dedupe_ids(item_ids: Sequence[str]) -> list[str]:
 
 def _quote_sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _table_has_tier_column(table: Any) -> bool:
+    """True when the LanceDB table carries the Phase-2 `tier` column.
+
+    Returns False for v1 tables that pre-date Phase 2 (and for any
+    unexpected schema-introspection failure). Falling back to False
+    means tier_filter is skipped silently — degraded but not broken.
+    `schema` can be a property whose getter raises (e.g. old or
+    proxied LanceDB versions), so we wrap the read itself, not just
+    the `.names` access.
+    """
+    try:
+        schema_attr = getattr(table, "schema", None)
+    except Exception:  # noqa: BLE001 — defensive: property may raise
+        return False
+    if schema_attr is None:
+        return False
+    try:
+        field_names = list(schema_attr.names)
+    except Exception:  # noqa: BLE001 — defensive: unknown LanceDB versions
+        return False
+    return "tier" in field_names
 
 
 def mirror_markdown_block(
