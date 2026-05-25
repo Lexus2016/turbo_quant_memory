@@ -24,10 +24,17 @@
 6. `semantic_search(query="namespace smoke", scope="hybrid")`
 7. `lint_knowledge_base(paths=["."], max_issues=50)`
 8. `hydrate(item_id, scope="project", mode="default")` для Markdown-hit
+9. **Round-trip сховища секретів (v0.7.0+):** перед цим кроком виставте
+   `TQMEMORY_SECRETS_PASSPHRASE` в env, щоб не створювати реальних keychain-entry. Потім:
+   - `set_secret(name="smoke-test", value="smoke-only-not-real")`
+   - `list_secrets()` — імена містять `smoke-test`, без поля `values`.
+   - `get_secret(name="smoke-test")` — статус `ok`, значення у `secret_value`.
+   - `delete_secret(name="smoke-test")` — `deleted: true`.
+   - `get_secret(name="smoke-test")` ще раз — статус `missing`.
 
 Очікувані сигнали успіху:
 
-- `self_test.tool_count = 14` (v0.6.1+; було 11 на v0.5.x)
+- `self_test.tool_count = 18` (v0.7.0+; було 14 на v0.6.x, 11 на v0.5.x)
 - `server_info.current_project` існує
 - `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` стає `fresh` після індексації
@@ -38,6 +45,9 @@
 - `lint_knowledge_base(...)` повертає `summary` і обмежений список `issues`
 - `hydrate(...)` повертає повний source item і обмежене локальне оточення
 - `project` hit-и йдуть раніше за promoted `global` hit-и, коли обидва релевантні
+- `set_secret` повертає `{"status": "ok", "name": "smoke-test", "project_id": ...}` БЕЗ поля `secret_value`.
+- `get_secret` повертає `secret_value` у виділеному полі, ніколи у `summary` / `message` / `description`.
+- Після `delete_secret`, повторний `get_secret` повертає `{"status": "missing", ...}`.
 
 ## Перевірки По Клієнтах
 
