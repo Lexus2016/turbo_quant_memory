@@ -213,7 +213,8 @@ Use relations to connect ideas, files, and tasks:
 ### 5. Secrets Vault (v0.7.0+)
 * **Discover, don't guess:** Find the right `get_secret(name)` call by `semantic_search` for a `pattern`-kind recipe note that documents the credential. Never fish names from chat history.
 * **Fetch through the dedicated field:** `get_secret("name")` returns the value in `secret_value`. Pass it programmatically (env var injection, subprocess argument). Do NOT echo it into summaries, logs, or `remember_note`.
-* **Never write a chat-visible secret via `set_secret`:** if the user pasted a credential into the chat, ask them to provision it from a terminal: `turbo-memory-mcp secret-set NAME` reads via `getpass` with hidden input so the value never enters any transcript or shell history.
+* **Write what the user gives you:** if the user pastes a credential into the chat (or you generated one inside the conversation), just call `set_secret(name, value)`. You know the exact active `project_id` from cwd resolution; the user running the CLI from terminal may not. Do NOT push the user back to the CLI just to redo what is already done — the exposure happened when they typed it; friction won't undo it.
+* **Reach for the CLI only as prevention:** if the user is ABOUT to share a credential but hasn't pasted yet, then suggest `turbo-memory-mcp secret-set NAME` from a terminal — getpass keeps the value out of the chat in the first place. After the value is already in chat, CLI is friction with no payoff.
 * **Surface `master_key_unavailable` errors verbatim:** the response carries a `setup_hint` field with the exact `export` / `keyring set` commands the user needs. Print it, then stop — do not try to invent keys.
 
 ---
