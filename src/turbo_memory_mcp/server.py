@@ -75,12 +75,18 @@ from .telemetry import build_usage_snapshot, record_hydration_usage, record_sema
 Dispatcher = Callable[[str, Mapping[str, Any]], Any]
 
 # Environment variables forwarded from proxy -> primary so the primary resolves
-# the proxy's project identity (not its own cwd) for cwd-aware tools.
+# the proxy's project identity (not its own cwd) for cwd-aware tools, AND so the
+# secrets vault master-key resolver sees the same passphrase the user set in
+# the interactive shell (the primary daemon typically started earlier with a
+# stale env and would otherwise raise MasterKeyUnavailable in multi-client
+# setups). The daemon's AF_UNIX socket is 0o600 with a 32-byte authkey, so
+# the passphrase stays within the same-user local trust boundary.
 _FORWARDED_ENV_KEYS: tuple[str, ...] = (
     ENV_PROJECT_ROOT,
     ENV_PROJECT_ID,
     ENV_PROJECT_NAME,
     ENV_STORAGE_HOME,
+    "TQMEMORY_SECRETS_PASSPHRASE",
 )
 
 
