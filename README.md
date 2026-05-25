@@ -210,6 +210,12 @@ Use relations to connect ideas, files, and tasks:
 * **No Smoke Notes:** Do not write temporary or smoke test notes.
 * **Provenance:** Always preserve file paths and line numbers in your memory payloads.
 
+### 5. Secrets Vault (v0.7.0+)
+* **Discover, don't guess:** Find the right `get_secret(name)` call by `semantic_search` for a `pattern`-kind recipe note that documents the credential. Never fish names from chat history.
+* **Fetch through the dedicated field:** `get_secret("name")` returns the value in `secret_value`. Pass it programmatically (env var injection, subprocess argument). Do NOT echo it into summaries, logs, or `remember_note`.
+* **Never write a chat-visible secret via `set_secret`:** if the user pasted a credential into the chat, ask them to provision it from a terminal: `turbo-memory-mcp secret-set NAME` reads via `getpass` with hidden input so the value never enters any transcript or shell history.
+* **Surface `master_key_unavailable` errors verbatim:** the response carries a `setup_hint` field with the exact `export` / `keyring set` commands the user needs. Print it, then stop — do not try to invent keys.
+
 ---
 
 ## 🌍 Language Versions
