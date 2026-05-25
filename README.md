@@ -140,18 +140,18 @@ Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the 
    # Headless / Linux / CI / Docker:
    export TQMEMORY_SECRETS_PASSPHRASE='your-long-passphrase'   # add to shell rc
    ```
-2. **Save a secret once, reuse forever** — two paths:
-   * **From a terminal (recommended for any value that already exists outside the chat — pasted SSH keys, prod DB DSNs, API tokens):**
+2. **Save a secret once, reuse forever** — two paths, picked by *whether the value is already in the chat*:
+   * **Value NOT yet in the chat — use the CLI (prophylactic path):**
      ```bash
      turbo-memory-mcp secret-set prod-db-dsn
      # prompts: Value for 'prod-db-dsn' (input hidden): ******
      ```
-     The value is read via `getpass` — it never enters shell history, scrollback, or any chat transcript. This is the canonical setup path.
-   * **From an agent (only when the agent is generating a fresh value, e.g., a brand-new API key it just created):**
+     The value is read via `getpass` — it never enters shell history, scrollback, or any chat transcript. Recommended when you're about to provision a fresh credential and want to keep it out of the conversation entirely.
+   * **Value already in the chat — let the agent write it (reactive path):**
      ```
      set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
      ```
-     Use this sparingly — the value is by definition already in the chat the agent sees, so the MCP-side write is appropriate only when the value originated inside the conversation.
+     Use this whenever the value is already visible: you pasted it, or the agent generated it inside the conversation. The agent resolves the active `project_id` deterministically from `cwd` — better than asking the user to retype the value in a terminal where their cwd may not match the intended project. Once exposure has happened in chat, the CLI offers no additional secrecy; `set_secret` is the safer write path.
 3. **Agents fetch on demand**:
    ```
    get_secret("prod-db-dsn") → {"status": "ok", "secret_value": "postgresql://..."}
