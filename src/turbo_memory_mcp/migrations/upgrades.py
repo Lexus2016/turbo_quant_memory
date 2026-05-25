@@ -71,6 +71,39 @@ def upgrade_retrieval_v1_to_v2(store: MemoryStore) -> None:
 
 
 @migration(
+    Subsystem.SECRETS,
+    from_version=1,
+    to_version=2,
+    description="provision empty per-project secrets vaults under projects/*/secrets/",
+)
+def upgrade_secrets_v1_to_v2(store: MemoryStore) -> None:
+    """Walk every existing project directory and ensure a ``secrets/`` slot
+    is provisioned. If the master key cannot be resolved for a project
+    (e.g. headless install without ``TQMEMORY_SECRETS_PASSPHRASE`` yet),
+    ``SecretsStore.provision()`` writes a stub ``meta.json`` with
+    ``vault_initialized: false`` and skips ``vault.tqv``; the first
+    successful ``set_secret`` lazily completes initialization.
+
+    Idempotent: re-running on a fully-provisioned tree is a no-op (all
+    projects already have ``secrets/meta.json``). A fresh install with no
+    project dirs yet still succeeds — the manifest bump is what actually
+    moves the subsystem version forward.
+    """
+    # Local import keeps the migrations module lightweight at load time.
+    from ..secrets.store import SecretsStore
+
+    projects_root = store.storage_root / "projects"
+    if not projects_root.exists():
+        # Fresh install, no projects yet. The runner will still bump the
+        # secrets-manifest.json so the next start sees version 1.
+        return
+    for project_dir in projects_root.iterdir():
+        if not project_dir.is_dir():
+            continue
+        SecretsStore(store.storage_root, project_dir.name).provision()
+
+
+@migration(
     Subsystem.RETRIEVAL,
     from_version=2,
     to_version=3,

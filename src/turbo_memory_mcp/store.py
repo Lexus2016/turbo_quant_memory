@@ -43,8 +43,12 @@ MARKDOWN_FORMAT_VERSION = 1
 RETRIEVAL_FORMAT_VERSION = 3
 USAGE_STATS_FORMAT_VERSION = 2
 NOTES_FORMAT_VERSION = 1
+SECRETS_FORMAT_VERSION = 2
 # RETRIEVAL is at 3 (post Phase 3 BM25 FTS index). NOTES still ships at 1
 # because legacy installs need the v1->v2 reclass to run before manifests bump.
+# SECRETS ships at 2: v1 is the conceptual "subsystem exists but no per-project
+# vaults provisioned yet" baseline (matches NOTES' legacy-v1 convention); the
+# v1->v2 migration walks projects/* and provisions an empty vault per project.
 
 
 def tier_for_kind(note_kind: str | None) -> str:
@@ -133,6 +137,18 @@ class MemoryStore:
 
     def usage_stats_path(self) -> Path:
         return self.telemetry_dir() / "usage.json"
+
+    def secrets_manifest_path(self) -> Path:
+        """Subsystem-level marker for the SECRETS migration chain.
+
+        Sits at storage_root and tracks ``format_version`` for the whole
+        secrets subsystem. Per-project ``secrets/meta.json`` files have
+        their own ``version`` field and are independent of this manifest.
+        """
+        return self.storage_root / "secrets-manifest.json"
+
+    def read_secrets_manifest(self) -> dict[str, Any] | None:
+        return _read_json_if_exists(self.secrets_manifest_path())
 
     def ensure_layout(self) -> None:
         self.project_notes_dir().mkdir(parents=True, exist_ok=True)

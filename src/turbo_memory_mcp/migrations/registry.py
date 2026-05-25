@@ -27,6 +27,7 @@ class Subsystem(str, Enum):
     RETRIEVAL = "retrieval"
     USAGE_STATS = "usage_stats"
     NOTES = "notes"
+    SECRETS = "secrets"
 
 
 MigrationFunc = Callable[[object], None]
@@ -143,6 +144,7 @@ def latest_version(subsystem: Subsystem) -> int:
         Subsystem.RETRIEVAL: _store.RETRIEVAL_FORMAT_VERSION,
         Subsystem.USAGE_STATS: _store.USAGE_STATS_FORMAT_VERSION,
         Subsystem.NOTES: _store.NOTES_FORMAT_VERSION,
+        Subsystem.SECRETS: _store.SECRETS_FORMAT_VERSION,
     }
     base = int(constant_map.get(subsystem, 1))
     registry_max = max(

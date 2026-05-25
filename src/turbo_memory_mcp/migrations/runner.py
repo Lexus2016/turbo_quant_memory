@@ -230,6 +230,28 @@ def _read_current_version(store: MemoryStore, subsystem: Subsystem) -> int:
         if not present:
             return 0
         return min(present)
+    if subsystem is Subsystem.SECRETS:
+        # SECRETS uses a single subsystem-level marker at storage_root.
+        # Per-project secrets/meta.json files have their own internal version
+        # but are not consulted here — they are managed by SecretsStore.
+        #
+        # When the marker is missing we distinguish two cases so fresh
+        # installs do not see a noisy "pending migration" warning:
+        #   - storage has at least one projects/<id>/ dir already -> v1
+        #     ("upgrade from v0.6.1-era install; needs provisioning")
+        #   - storage has no project dirs yet                     -> v0
+        #     ("nothing to provision; no upgrade needed")
+        manifest = store.read_secrets_manifest()
+        if manifest:
+            return _version_from(manifest)
+        projects_root = store.storage_root / "projects"
+        if not projects_root.exists():
+            return 0
+        try:
+            has_projects = any(projects_root.iterdir())
+        except OSError:
+            return 0
+        return 1 if has_projects else 0
     raise ValueError(f"Unknown subsystem: {subsystem!r}")
 
 
@@ -293,6 +315,10 @@ def _bump_manifest(store: MemoryStore, subsystem: Subsystem, new_version: int) -
         glob_path = store.global_manifest_path()
         _bump_one(proj_path, store.read_project_manifest(), new_version, timestamp)
         _bump_one(glob_path, store.read_global_manifest(), new_version, timestamp)
+        return
+    if subsystem is Subsystem.SECRETS:
+        path = store.secrets_manifest_path()
+        _bump_one(path, store.read_secrets_manifest(), new_version, timestamp)
         return
     raise ValueError(f"Unknown subsystem: {subsystem!r}")
 

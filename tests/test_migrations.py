@@ -163,7 +163,17 @@ def test_latest_version_takes_max_of_store_and_registry() -> None:
 
 def test_detect_status_treats_missing_manifests_as_version_zero(store: MemoryStore) -> None:
     statuses = detect_status(store)
+    # SECRETS is excluded here because Phase 9 introduces an intentional
+    # heuristic in _read_current_version: a missing secrets-manifest combined
+    # with at least one projects/<id>/ subdir is treated as v1 ("upgrade from
+    # pre-v0.7 install needs provisioning") rather than v0. The `store`
+    # fixture's ensure_layout() creates such a subdir, so SECRETS reads as v1.
+    # Dedicated coverage lives in tests/test_secrets_migration.py:
+    # test_detect_status_fresh_install_no_projects_is_v0 and
+    # test_detect_status_upgrade_from_pre_v07_is_v1.
     for sub in Subsystem:
+        if sub is Subsystem.SECRETS:
+            continue
         assert statuses[sub].current_version == 0
         assert statuses[sub].pending == []
 
