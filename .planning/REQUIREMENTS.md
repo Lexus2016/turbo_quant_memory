@@ -70,6 +70,15 @@
 - **KBL-02**: Lint results report broken internal links, orphan candidates, and duplicate normalized titles. / Результати lint показують биті internal links, orphan candidates і дублікати нормалізованих заголовків.
 - **KBL-03**: Lint supports both explicit root paths and previously registered Markdown roots. / Lint підтримує і явні root paths, і раніше зареєстровані Markdown roots.
 
+### Secrets Vault
+
+- **VLT-01**: Server stores per-project secrets encrypted at rest under `~/.turbo-quant-memory/projects/<project_id>/secrets/vault.tqv` using AES-256-GCM with a per-project master key. / Сервер зберігає per-project секрети зашифрованими at-rest у `~/.turbo-quant-memory/projects/<project_id>/secrets/vault.tqv` через AES-256-GCM з per-project майстер-ключем.
+- **VLT-02**: Master key resolution survives daemon restarts and machine reboots via OS keyring (Keychain on macOS, libsecret on Linux, Credential Manager on Windows) with an `TQMEMORY_SECRETS_PASSPHRASE` env-var fallback; no interactive prompt is used as fallback. / Розв'язання майстер-ключа переживає перезапуски daemon'а та reboot машини через OS keyring (Keychain на macOS, libsecret на Linux, Credential Manager на Windows) із fallback на env var `TQMEMORY_SECRETS_PASSPHRASE`; інтерактивний prompt як fallback не використовується.
+- **VLT-03**: Server exposes `set_secret`, `get_secret`, `list_secrets`, and `delete_secret` MCP tools scoped implicitly to the active project. / Сервер надає MCP-інструменти `set_secret`, `get_secret`, `list_secrets`, `delete_secret`, неявно прив'язані до активного проєкту.
+- **VLT-04**: Secret values are NEVER returned via `semantic_search`, `hydrate`, or `lint_knowledge_base`; the indexer refuses to traverse any `secrets/` subdirectory. / Значення секретів НІКОЛИ не повертаються через `semantic_search`, `hydrate` або `lint_knowledge_base`; індексатор відмовляється обходити будь-яку підпапку `secrets/`.
+- **VLT-05**: Every secret access (`set`, `get`, `list`, `delete`) is recorded in `~/.turbo-quant-memory/audit/secrets.jsonl` by `(timestamp, project_id, action, name)` only; values are never logged. / Кожен доступ до секрету (`set`, `get`, `list`, `delete`) записується в `~/.turbo-quant-memory/audit/secrets.jsonl` тільки за `(timestamp, project_id, action, name)`; значення не логуються.
+- **VLT-06**: On upgrade, the migration runner enumerates existing project directories under `~/.turbo-quant-memory/projects/*` and provisions an empty per-project vault and metadata file immediately, not lazily. / При оновленні migration runner проходить існуючі project-каталоги у `~/.turbo-quant-memory/projects/*` і одразу створює порожній per-project vault і metadata-файл, а не лінько при першому використанні.
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -104,12 +113,23 @@
 | MEM-02 | Phase 5 | Complete |
 | OPS-01 | Phase 6 | Complete |
 | OPS-02 | Phase 6 | Complete |
+| KBL-01 | Phase 7 | Complete |
+| KBL-02 | Phase 7 | Complete |
+| KBL-03 | Phase 7 | Complete |
+| VLT-01 | Phase 9 | Planned |
+| VLT-02 | Phase 9 | Planned |
+| VLT-03 | Phase 9 | Planned |
+| VLT-04 | Phase 9 | Planned |
+| VLT-05 | Phase 9 | Planned |
+| VLT-06 | Phase 9 | Planned |
 
 **Coverage:**
 - v1 requirements: 21 total
-- Mapped to phases: 21
+- v2 KBL requirements: 3 total (shipped via Phase 7 quick extension)
+- v2 VLT requirements: 6 total (Phase 9, planned 2026-05-25)
+- Mapped to phases: 30
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-04-03 after quick task 260403-fe0*
+*Last updated: 2026-05-25 with VLT-01..VLT-06 for Phase 9 secrets vault*

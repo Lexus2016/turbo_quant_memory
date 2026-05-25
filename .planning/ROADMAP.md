@@ -1,8 +1,8 @@
 # Roadmap: Turbo Quant Memory for AI Agents
 
 **Defined:** 2026-03-25
-**Requirements mapped:** 21 / 21
-**Status:** v1 core shipped; post-v1 hardening and rollout slices shipped through `v0.3.0`
+**Requirements mapped:** 30 / 30 (21 v1 + 3 KBL + 6 VLT)
+**Status:** v1 core shipped; post-v1 hardening and rollout slices shipped through `v0.3.0`; Phase 9 secrets vault planned for v0.7.0
 
 ## Overview
 
@@ -16,6 +16,7 @@
 | 6 | Hardening and Adoption | Add observability, smoke tests, and easy operator guidance for real use | OPS-01, OPS-02 | 4 |
 | 7 | Knowledge-Base Hygiene (Quick Extension) | Add structural wiki linting so agent-managed markdown corpora stay consistent over time | KBL-01, KBL-02, KBL-03 | 3 |
 | 8 | Memory Resilience, Migration Stats, Release Rollout, and Client Refresh | Make derived indexes self-healing across upgrades, prove token savings with persistent telemetry, and refresh the live client rollout contract | OPS-01, OPS-02 | 4 |
+| 9 | Project-Scoped Encrypted Secrets Vault | Add per-project encrypted secrets storage so AI agents can persist and retrieve credentials across sessions without leaking them into the embedding/FTS index or backups | VLT-01, VLT-02, VLT-03, VLT-04, VLT-05, VLT-06 | 4 |
 
 ## Phase Details
 
@@ -157,5 +158,26 @@ Plans:
 3. README, smoke checklist, and client fixtures match the new `v0.3.0` contract and explain the savings value clearly.
 4. The shared local MCP binary can be refreshed in place for Claude Code, Codex, Gemini, and OpenCode so live clients pick up the release.
 
+### Phase 9: Project-Scoped Encrypted Secrets Vault
+
+**Goal:** Give AI agents a safe place to persist project credentials (SSH, DB DSN, API tokens) across sessions and reboots, encrypted at rest, project-scoped, fully isolated from any retrieval path.
+
+**Status:** Planned (2026-05-25)
+
+**Requirements:** `VLT-01`, `VLT-02`, `VLT-03`, `VLT-04`, `VLT-05`, `VLT-06`
+**Depends on:** Phase 8
+**Plans:** 0/3 plans complete
+
+Plans:
+- [ ] `09-01` Cryptographic foundation, key resolver, secrets store, audit log (Wave 1)
+- [ ] `09-02` Migration runner integration, MCP tool surface, indexer/lint/retrieval hardening (Wave 2)
+- [ ] `09-03` Smoke test extension, bilingual docs, CHANGELOG, client fixture refresh (Wave 3)
+
+**Success criteria:**
+1. `set_secret` / `get_secret` round-trips survive daemon restart and machine reboot via OS keyring or env-passphrase fallback.
+2. `semantic_search`, `hydrate`, and `lint_knowledge_base` never see secret values; indexer refuses any `secrets/` directory traversal.
+3. Migration provisions an empty per-project vault for every existing `~/.turbo-quant-memory/projects/*` directory on first daemon start after upgrade; idempotent.
+4. Audit log records every secret access by `(timestamp, project_id, action, name)` with no value leakage; tool count grows `14 -> 18` and bilingual docs cover the threat model and setup contract.
+
 ---
-*Last updated: 2026-04-03 after phase 8 completion*
+*Last updated: 2026-05-25 with Phase 9 planning*
