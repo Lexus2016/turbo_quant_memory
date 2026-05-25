@@ -140,10 +140,18 @@ Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the 
    # Headless / Linux / CI / Docker:
    export TQMEMORY_SECRETS_PASSPHRASE='your-long-passphrase'   # add to shell rc
    ```
-2. **Save a secret once, reuse forever**:
-   ```
-   set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
-   ```
+2. **Save a secret once, reuse forever** — two paths:
+   * **From a terminal (recommended for any value that already exists outside the chat — pasted SSH keys, prod DB DSNs, API tokens):**
+     ```bash
+     turbo-memory-mcp secret-set prod-db-dsn
+     # prompts: Value for 'prod-db-dsn' (input hidden): ******
+     ```
+     The value is read via `getpass` — it never enters shell history, scrollback, or any chat transcript. This is the canonical setup path.
+   * **From an agent (only when the agent is generating a fresh value, e.g., a brand-new API key it just created):**
+     ```
+     set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
+     ```
+     Use this sparingly — the value is by definition already in the chat the agent sees, so the MCP-side write is appropriate only when the value originated inside the conversation.
 3. **Agents fetch on demand**:
    ```
    get_secret("prod-db-dsn") → {"status": "ok", "secret_value": "postgresql://..."}

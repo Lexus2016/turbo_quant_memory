@@ -140,10 +140,18 @@ graph TD
    # Headless / Linux / CI / Docker:
    export TQMEMORY_SECRETS_PASSPHRASE='your-long-passphrase'   # добавьте в shell rc
    ```
-2. **Сохранили один раз, используете везде**:
-   ```
-   set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
-   ```
+2. **Сохранили один раз, используете везде** — два пути:
+   * **Из терминала (рекомендуется для любого значения, уже существующего вне чата — вставленные SSH-ключи, prod DB DSN, API-токены):**
+     ```bash
+     turbo-memory-mcp secret-set prod-db-dsn
+     # prompt: Value for 'prod-db-dsn' (input hidden): ******
+     ```
+     Значение читается через `getpass` — оно никогда не попадает в shell-историю, scrollback или чат-транскрипт. Это канонический путь настройки.
+   * **Из агента (только когда агент сам ГЕНЕРИРУЕТ свежее значение, например, новый API-ключ, который только что создал):**
+     ```
+     set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
+     ```
+     Используйте ограниченно — значение по дизайну уже в чате агента, поэтому MCP-запись уместна только когда значение возникло внутри разговора.
 3. **Агенты достают по запросу**:
    ```
    get_secret("prod-db-dsn") → {"status": "ok", "secret_value": "postgresql://..."}
