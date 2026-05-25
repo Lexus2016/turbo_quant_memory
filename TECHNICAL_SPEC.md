@@ -116,6 +116,10 @@ The server should reduce repeated token usage by:
 | `link_entities(...)` | create a link between two knowledge entities in the graph |
 | `unlink_entities(...)` | remove a link between two knowledge entities in the graph |
 | `get_related_entities(...)` | query relations involving a specific entity URI |
+| `set_secret(name, value)` | store an encrypted secret in the active project's vault |
+| `get_secret(name)` | fetch a project secret by exact name; value returned in dedicated `secret_value` field |
+| `list_secrets()` | list secret names in the active project; never returns values |
+| `delete_secret(name)` | delete a project secret by exact name |
 
 ## Data Model
 
@@ -149,6 +153,26 @@ The server should reduce repeated token usage by:
 | `created_at` | creation timestamp |
 | `source_refs` | provenance references |
 
+### Secrets vault (project-scoped, encrypted)
+
+Per-project encrypted store kept entirely separate from notes and markdown. Lives under `<storage_root>/projects/<project_id>/secrets/`; never read by `semantic_search`, `hydrate`, or `lint_knowledge_base`.
+
+| File | Meaning |
+|---|---|
+| `vault.tqv` | AES-256-GCM blob containing JSON `{version, entries: {name: {value, created_at, updated_at}}}`. 12-byte random nonce per write, 16-byte GCM tag appended by `cryptography`'s `AESGCM`. Mode `0o600`. |
+| `meta.json` | `{version, kdf, kdf_params, key_mode, vault_initialized, created_at, updated_at}`. KDF parameters and resolution mode for diagnostics; no key material. Mode `0o600`. |
+| `audit.jsonl` | Append-only access log. One JSON line per access: `{ts, action ∈ {set,get,list,delete}, name}`. `project_id` implicit from path; values never logged. Mode `0o600`. |
+
+Subsystem-level marker `<storage_root>/secrets-manifest.json` tracks the SECRETS migration chain (`format_version`); it carries no secret content.
+
+Master key per project: 32 bytes resolved at call time in priority order
+(1) env var `TQMEMORY_SECRETS_PASSPHRASE` (Argon2id-derived with project-specific
+salt `sha256("tqv-salt-v1:" + project_id)`); (2) existing OS keyring entry at
+service `turbo-quant-memory`, account `secrets-master-<project_id>`;
+(3) keyring auto-bootstrap (generate + store) if the backend is writable;
+(4) hard fail with an actionable setup hint. No interactive-prompt fallback —
+that would silently die on reboot.
+
 ## Performance Targets
 
 - local startup should stay comfortable on a developer laptop
@@ -162,7 +186,26 @@ The server should reduce repeated token usage by:
 - Keep output sizes bounded by default.
 - Preserve source boundaries and provenance.
 - Treat notes and retrieved memory as tool data, not authority.
-- Avoid hidden outbound-network requirements for the core local flow.
+- Avoid hidden outbound-network requirements for the core local flow — `src/` contains zero outbound HTTP code (no `requests` / `httpx` / `aiohttp` / `urllib.request` / `urlopen` / raw `socket`).
+
+### Secrets vault threat model
+
+In scope (the secrets vault must protect against these):
+- Accidental backups exposing plaintext credentials (Time Machine, rsync, iCloud sync of the home directory).
+- Share-screen / screenshot leaks of stored credentials.
+- Accidental `git add` of credential-bearing files under `~/`.
+
+Out of scope (the secrets vault does NOT defend against these; users with stronger threat models should use a dedicated secret manager):
+- Compromise of the root user on the local machine.
+- A live attacker that has already taken over the running daemon process.
+- Hardware-level attacks (cold-boot, evil-maid, hardware key extraction).
+- Anything requiring multi-tenant isolation or compliance certifications.
+
+Enforcement points:
+- AES-256-GCM at rest with per-project master keys; nonce per write; MAC failure raises `cryptography.exceptions.InvalidTag`.
+- Indexer (`ingestion._resolve_roots`) and linter (`knowledge_lint._resolve_roots`) refuse registration of any path inside `<storage_root>/projects/<project_id>/secrets/`. Both `_iter_markdown_files` walkers skip files under that subtree as defense in depth.
+- `set_secret` / `get_secret` / `list_secrets` / `delete_secret` MCP responses keep secret values strictly within a dedicated `secret_value` field on `get_secret` only — never interpolated into descriptive `summary` / `message` text.
+- Audit log records the access by `(timestamp, action, name)` and never by value; sentinel-grep regression test asserts this invariant.
 
 ## Deployment Contract
 

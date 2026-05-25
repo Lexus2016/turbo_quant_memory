@@ -116,6 +116,10 @@
 | `link_entities(...)` | создать связь между двумя сущностями знаний в графе |
 | `unlink_entities(...)` | удалить связь между двумя сущностями знаний в графе |
 | `get_related_entities(...)` | получить связи для конкретной сущности по её URI |
+| `set_secret(name, value)` | сохранить зашифрованный секрет в vault'е активного проекта |
+| `get_secret(name)` | достать секрет по точному имени; значение возвращается в выделенном поле `secret_value` |
+| `list_secrets()` | список имён секретов активного проекта; значения никогда не возвращаются |
+| `delete_secret(name)` | удалить секрет по точному имени |
 
 ## Модель Данных
 
@@ -149,6 +153,26 @@
 | `created_at` | время создания |
 | `source_refs` | provenance-ссылки |
 
+### Хранилище секретов (project-scope, зашифрованное)
+
+Per-project зашифрованное хранилище, держится полностью отдельно от заметок и markdown. Живёт под `<storage_root>/projects/<project_id>/secrets/`; никогда не читается `semantic_search`, `hydrate` или `lint_knowledge_base`.
+
+| Файл | Значение |
+|---|---|
+| `vault.tqv` | AES-256-GCM blob с JSON `{version, entries: {name: {value, created_at, updated_at}}}`. 12-байтный random nonce на запись, 16-байтный GCM tag. Mode `0o600`. |
+| `meta.json` | `{version, kdf, kdf_params, key_mode, vault_initialized, created_at, updated_at}`. KDF-параметры и key-resolution mode для диагностики; никакого key-материала. Mode `0o600`. |
+| `audit.jsonl` | Append-only audit-log. Одна JSON-строка на доступ: `{ts, action ∈ {set,get,list,delete}, name}`. `project_id` неявный из пути; значения не логируются. Mode `0o600`. |
+
+Subsystem-marker `<storage_root>/secrets-manifest.json` отслеживает SECRETS migration chain (`format_version`); никакого секретного содержимого.
+
+Мастер-ключ per project: 32 байта, разрешается at call-time в приоритете
+(1) env `TQMEMORY_SECRETS_PASSPHRASE` (Argon2id, project-specific salt
+`sha256("tqv-salt-v1:" + project_id)`); (2) существующий keyring entry
+`service=turbo-quant-memory, account=secrets-master-<project_id>`;
+(3) keyring auto-bootstrap (сгенерировать + положить), если backend writable;
+(4) hard fail с setup-hint. Интерактивного prompt-fallback нет — он
+бы тихо умирал на reboot.
+
 ## Целевые Показатели Производительности
 
 - локальный старт должен быть комфортным на ноутбуке разработчика
@@ -162,7 +186,26 @@
 - По умолчанию ограничивать размер output.
 - Сохранять границы источника и provenance.
 - Рассматривать notes и retrieval как tool data, а не как абсолютный авторитет.
-- Избегать скрытых внешних сетевых зависимостей для core local flow.
+- Избегать скрытых внешних сетевых зависимостей для core local flow — `src/` содержит **ноль outbound-HTTP кода** (никаких `requests` / `httpx` / `aiohttp` / `urllib.request` / `urlopen` / raw `socket`).
+
+### Threat-модель хранилища секретов
+
+В скоупе (от чего секретный vault обязан защитить):
+- Случайные бэкапы с plaintext credentials (Time Machine, rsync, iCloud-sync home-директории).
+- Share-screen / скриншот-утечки сохранённой credential на экране.
+- Случайный `git add` файла с credentials под `~/`.
+
+Вне скоупа (vault НЕ защищает; для более широкой threat-модели — дедикированный secret-manager):
+- Скомпрометированный root-пользователь на локальной машине.
+- Live-атакующий, уже захвативший запущенный daemon-процесс.
+- Hardware-атаки (cold-boot, evil-maid, hardware key extraction).
+- Что-либо требующее multi-tenant изоляции или compliance-сертификаций.
+
+Точки enforcement:
+- AES-256-GCM at-rest с per-project мастер-ключами; nonce на каждую запись; MAC-failure поднимает `cryptography.exceptions.InvalidTag`.
+- Indexer (`ingestion._resolve_roots`) и linter (`knowledge_lint._resolve_roots`) отказывают в регистрации любого пути внутри `<storage_root>/projects/<project_id>/secrets/`. Оба `_iter_markdown_files` walkers пропускают файлы под этим поддеревом как defense-in-depth.
+- MCP-ответы `set_secret` / `get_secret` / `list_secrets` / `delete_secret` держат значения секретов исключительно в выделенном поле `secret_value` на `get_secret` — никогда не вшивая в описательные `summary` / `message` поля.
+- Audit-log пишет доступ как `(timestamp, action, name)`, никогда значение; sentinel-grep regression-тест проверяет этот инвариант.
 
 ## Контракт Развёртывания
 
