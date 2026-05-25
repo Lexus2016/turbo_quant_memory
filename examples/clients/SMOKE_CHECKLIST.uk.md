@@ -8,8 +8,8 @@
 
 | Спосіб | Команда |
 |---|---|
-| Основний | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0` |
-| Резервний | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.6.0` |
+| Основний | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.0` |
+| Резервний | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.0` |
 | Запуск | `turbo-memory-mcp serve` |
 
 ## Спільний Потік Перевірки
