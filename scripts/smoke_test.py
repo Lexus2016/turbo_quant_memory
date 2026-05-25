@@ -27,6 +27,13 @@ EXPECTED_TOOL_NAMES = [
     "hydrate",
     "index_paths",
     "lint_knowledge_base",
+    "link_entities",
+    "unlink_entities",
+    "get_related_entities",
+    "set_secret",
+    "get_secret",
+    "list_secrets",
+    "delete_secret",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
 
@@ -74,6 +81,10 @@ async def run_smoke() -> list[str]:
             **os.environ,
             "TQMEMORY_HOME": str(storage_root),
             "TQMEMORY_PROJECT_ROOT": str(PROJECT_ROOT),
+            # Smoke-only passphrase: never written anywhere outside this temp
+            # storage. The vault round-trip below uses it; nothing is left
+            # behind on the host keychain after the TemporaryDirectory exits.
+            "TQMEMORY_SECRETS_PASSPHRASE": "tqmemory-smoke-passphrase-only",
         }
         expected_project = build_current_project_payload(
             resolve_project_identity(cwd=PROJECT_ROOT, environ=server_env)
@@ -221,6 +232,33 @@ async def run_smoke() -> list[str]:
                         },
                     )
                 )
+
+                # --- Phase 9 secrets vault round-trip ---
+                set_result = result_payload(
+                    await session.call_tool(
+                        "set_secret",
+                        {"name": "smoke-db-dsn", "value": "postgresql://x:y@h/d"},
+                    )
+                )
+                list_after_set = result_payload(
+                    await session.call_tool("list_secrets", {})
+                )
+                get_result = result_payload(
+                    await session.call_tool(
+                        "get_secret", {"name": "smoke-db-dsn"}
+                    )
+                )
+                delete_result = result_payload(
+                    await session.call_tool(
+                        "delete_secret", {"name": "smoke-db-dsn"}
+                    )
+                )
+                get_after_delete = result_payload(
+                    await session.call_tool(
+                        "get_secret", {"name": "smoke-db-dsn"}
+                    )
+                )
+
                 server_info_after = result_payload(await session.call_tool("server_info"))
 
     expect(health["status"] == "ok", f"health.status mismatch: {health}")
@@ -245,7 +283,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "project", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 11, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 18, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
@@ -439,6 +477,48 @@ async def run_smoke() -> list[str]:
         f"changed incremental block_count mismatch: {changed_incremental}",
     )
 
+    # --- Phase 9 secrets vault assertions ---
+    expect(set_result["status"] == "ok", f"set_secret status mismatch: {set_result}")
+    expect(set_result["name"] == "smoke-db-dsn", f"set_secret name mismatch: {set_result}")
+    expect(
+        "secret_value" not in set_result,
+        f"set_secret must not echo the value: {set_result}",
+    )
+    expect(
+        "postgresql" not in json.dumps(set_result),
+        f"set_secret leaked the value into the response: {set_result}",
+    )
+
+    expect(list_after_set["status"] == "ok", f"list_secrets status mismatch: {list_after_set}")
+    expect(
+        list_after_set["names"] == ["smoke-db-dsn"],
+        f"list_secrets names mismatch: {list_after_set}",
+    )
+    expect(
+        "values" not in list_after_set and "secret_value" not in list_after_set,
+        f"list_secrets must not include any value field: {list_after_set}",
+    )
+
+    expect(get_result["status"] == "ok", f"get_secret status mismatch: {get_result}")
+    expect(
+        get_result["secret_value"] == "postgresql://x:y@h/d",
+        f"get_secret value mismatch: {get_result}",
+    )
+    for key in ("summary", "message", "description"):
+        expect(
+            key not in get_result,
+            f"get_secret must not surface descriptive '{key}' field: {get_result}",
+        )
+
+    expect(
+        delete_result["status"] == "ok" and delete_result["deleted"] is True,
+        f"delete_secret mismatch: {delete_result}",
+    )
+    expect(
+        get_after_delete["status"] == "missing",
+        f"get_secret after delete should be missing: {get_after_delete}",
+    )
+
     return [
         f"PASS tool catalog: {', '.join(tool_names)}",
         f"PASS server_info: {server_info['current_project']['project_id']} @ {server_info['storage_root']}",
@@ -454,6 +534,7 @@ async def run_smoke() -> list[str]:
         f"PASS lint_knowledge_base: issues={knowledge_lint['summary']['issue_count']}",
         f"PASS index_paths incremental idle: skipped={idle_incremental['skipped_files']}",
         f"PASS index_paths incremental changed: changed={changed_incremental['changed_files']} deleted={changed_incremental['deleted_files']}",
+        f"PASS secrets vault round-trip: set/list/get/delete on '{set_result['name']}'",
     ]
 
 
