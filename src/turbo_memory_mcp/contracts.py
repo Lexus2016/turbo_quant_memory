@@ -35,7 +35,13 @@ PHASE_7_TOOL_NAMES = PHASE_6_TOOL_NAMES + (
     "unlink_entities",
     "get_related_entities",
 )
-CURRENT_TOOL_NAMES = PHASE_7_TOOL_NAMES
+PHASE_9_TOOL_NAMES = PHASE_7_TOOL_NAMES + (
+    "set_secret",
+    "get_secret",
+    "list_secrets",
+    "delete_secret",
+)
+CURRENT_TOOL_NAMES = PHASE_9_TOOL_NAMES
 
 
 
@@ -417,6 +423,59 @@ def build_self_test_payload(
     }
 
 
+def build_set_secret_payload(*, name: str, project_id: str) -> dict[str, object]:
+    return {"status": "ok", "name": name, "project_id": project_id}
+
+
+def build_get_secret_payload(
+    *, name: str, project_id: str, secret_value: str
+) -> dict[str, object]:
+    # ``secret_value`` is a DEDICATED field — never interpolated into
+    # descriptive ``summary``/``message`` text. Clients should render it
+    # masked by default and pass it through programmatically only.
+    return {
+        "status": "ok",
+        "name": name,
+        "project_id": project_id,
+        "secret_value": secret_value,
+    }
+
+
+def build_get_secret_missing_payload(
+    *, name: str, project_id: str
+) -> dict[str, object]:
+    return {"status": "missing", "name": name, "project_id": project_id}
+
+
+def build_list_secrets_payload(
+    *, names: list[str], project_id: str
+) -> dict[str, object]:
+    return {"status": "ok", "project_id": project_id, "names": list(names)}
+
+
+def build_delete_secret_payload(
+    *, name: str, project_id: str, deleted: bool
+) -> dict[str, object]:
+    return {
+        "status": "ok",
+        "name": name,
+        "project_id": project_id,
+        "deleted": deleted,
+    }
+
+
+def build_secret_error_payload(
+    *, name: str, project_id: str, code: str, setup_hint: str
+) -> dict[str, object]:
+    return {
+        "status": "error",
+        "code": code,
+        "name": name,
+        "project_id": project_id,
+        "setup_hint": setup_hint,
+    }
+
+
 __all__ = [
     "CURRENT_TOOL_NAMES",
     "DEFAULT_QUERY_MODE",
@@ -430,24 +489,31 @@ __all__ = [
     "PHASE_4_TOOL_NAMES",
     "PHASE_6_TOOL_NAMES",
     "PHASE_5_TOOL_NAMES",
+    "PHASE_9_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
     "RUNTIME_COMMAND",
     "SERVER_ID",
     "TRANSPORT",
     "build_contract_snapshot",
+    "build_delete_secret_payload",
+    "build_get_secret_missing_payload",
+    "build_get_secret_payload",
     "build_health_payload",
     "build_hydrated_markdown_item_payload",
     "build_hydrated_note_item_payload",
     "build_hydration_payload",
     "build_indexing_payload",
     "build_install_contract",
+    "build_list_secrets_payload",
     "build_note_item_payload",
     "build_note_write_payload",
     "build_scope_payload",
     "build_search_payload",
-    "build_semantic_item_payload",
+    "build_secret_error_payload",
     "build_self_test_payload",
+    "build_semantic_item_payload",
     "build_server_info_payload",
+    "build_set_secret_payload",
     "build_supported_client_tiers",
 ]

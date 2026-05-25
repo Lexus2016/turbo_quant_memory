@@ -19,11 +19,17 @@ from .contracts import (
     DEFAULT_QUERY_MODE,
     PRODUCT_NAME,
     SERVER_ID,
+    build_delete_secret_payload,
+    build_get_secret_missing_payload,
+    build_get_secret_payload,
     build_health_payload,
+    build_list_secrets_payload,
     build_note_write_payload,
     build_scope_payload,
+    build_secret_error_payload,
     build_self_test_payload,
     build_server_info_payload,
+    build_set_secret_payload,
 )
 from .daemon import (
     BootstrapResult,
@@ -46,6 +52,11 @@ from .knowledge_lint import lint_knowledge_base
 from .migrations import format_pending_warning
 from .retrieval import semantic_search
 from .retrieval_index import RetrievalIndex
+from .secrets import (
+    AuditLog,
+    MasterKeyUnavailable,
+    SecretsStore,
+)
 from .store import (
     ENV_STORAGE_HOME,
     GLOBAL_SCOPE,
@@ -257,6 +268,40 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
             },
         )
 
+    @mcp.tool()
+    def set_secret(name: str, value: str) -> dict[str, object]:
+        """Store an encrypted secret in the active project's vault.
+
+        The value is encrypted with AES-256-GCM under a per-project master
+        key resolved from TQMEMORY_SECRETS_PASSPHRASE or the OS keyring.
+        Secrets are NEVER indexed, embedded, or returned via
+        ``semantic_search`` / ``hydrate``. They live in
+        ``~/.turbo-quant-memory/projects/<project_id>/secrets/vault.tqv``
+        and stay on this machine.
+        """
+        return dispatcher("set_secret", {"name": name, "value": value})
+
+    @mcp.tool()
+    def get_secret(name: str) -> dict[str, object]:
+        """Fetch a project secret by exact name.
+
+        Returns the value in a dedicated ``secret_value`` field (never in
+        descriptive text). Status is ``"ok"`` on hit, ``"missing"`` when
+        no such name exists, or ``"error"`` with ``setup_hint`` when no
+        master key is configured yet.
+        """
+        return dispatcher("get_secret", {"name": name})
+
+    @mcp.tool()
+    def list_secrets() -> dict[str, object]:
+        """List secret names in the active project. Never returns values."""
+        return dispatcher("list_secrets", {})
+
+    @mcp.tool()
+    def delete_secret(name: str) -> dict[str, object]:
+        """Delete a project secret by exact name."""
+        return dispatcher("delete_secret", {"name": name})
+
     return mcp
 
 
@@ -412,6 +457,27 @@ def _tool_get_related_entities(kwargs: Mapping[str, Any], *, cwd: Any, environ: 
     )
 
 
+def _tool_set_secret(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return set_secret_impl(
+        str(kwargs["name"]),
+        str(kwargs["value"]),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
+def _tool_get_secret(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return get_secret_impl(str(kwargs["name"]), cwd=cwd, environ=environ)
+
+
+def _tool_list_secrets(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return list_secrets_impl(cwd=cwd, environ=environ)
+
+
+def _tool_delete_secret(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return delete_secret_impl(str(kwargs["name"]), cwd=cwd, environ=environ)
+
+
 TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "health": _tool_health,
     "server_info": _tool_server_info,
@@ -427,6 +493,10 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "link_entities": _tool_link_entities,
     "unlink_entities": _tool_unlink_entities,
     "get_related_entities": _tool_get_related_entities,
+    "set_secret": _tool_set_secret,
+    "get_secret": _tool_get_secret,
+    "list_secrets": _tool_list_secrets,
+    "delete_secret": _tool_delete_secret,
 }
 
 
@@ -1042,6 +1112,108 @@ def build_runtime_context(
     project = resolve_project_identity(cwd=cwd, environ=environ)
     store = MemoryStore(project, storage_root=resolve_storage_root(environ))
     return project, store
+
+
+# ---------------------------------------------------------------------------
+# Secrets (Phase 9)
+# ---------------------------------------------------------------------------
+
+
+def set_secret_impl(
+    name: str,
+    value: str,
+    *,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
+    vault = SecretsStore(mem_store.storage_root, project.project_id)
+    try:
+        vault.set(name, value)
+    except MasterKeyUnavailable as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_unavailable",
+            setup_hint=str(exc),
+        )
+    AuditLog(vault.secrets_dir).record("set", name)
+    return build_set_secret_payload(name=name, project_id=project.project_id)
+
+
+def get_secret_impl(
+    name: str,
+    *,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
+    vault = SecretsStore(mem_store.storage_root, project.project_id)
+    try:
+        value = vault.get(name)
+    except MasterKeyUnavailable as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_unavailable",
+            setup_hint=str(exc),
+        )
+    if vault.secrets_dir.is_dir():
+        AuditLog(vault.secrets_dir).record("get", name)
+    if value is None:
+        return build_get_secret_missing_payload(
+            name=name, project_id=project.project_id
+        )
+    return build_get_secret_payload(
+        name=name, project_id=project.project_id, secret_value=value
+    )
+
+
+def list_secrets_impl(
+    *,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
+    vault = SecretsStore(mem_store.storage_root, project.project_id)
+    try:
+        names = vault.list_names()
+    except MasterKeyUnavailable as exc:
+        return build_secret_error_payload(
+            name="*",
+            project_id=project.project_id,
+            code="master_key_unavailable",
+            setup_hint=str(exc),
+        )
+    if vault.secrets_dir.is_dir():
+        AuditLog(vault.secrets_dir).record("list", "*")
+    return build_list_secrets_payload(
+        names=names, project_id=project.project_id
+    )
+
+
+def delete_secret_impl(
+    name: str,
+    *,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
+    vault = SecretsStore(mem_store.storage_root, project.project_id)
+    try:
+        deleted = vault.delete(name)
+    except MasterKeyUnavailable as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_unavailable",
+            setup_hint=str(exc),
+        )
+    if vault.secrets_dir.is_dir():
+        AuditLog(vault.secrets_dir).record("delete", name)
+    return build_delete_secret_payload(
+        name=name, project_id=project.project_id, deleted=deleted
+    )
 
 
 def build_current_project_payload(project: ProjectIdentity) -> dict[str, object]:
