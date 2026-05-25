@@ -5,6 +5,97 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-25
+
+Project-scoped encrypted secrets vault. Agents can now persist and retrieve
+connection credentials (SSH keys, DB DSNs, API tokens) across sessions and
+machine reboots — encrypted at rest, hard-isolated from `semantic_search`,
+`hydrate`, and `lint_knowledge_base`, and never transmitted anywhere
+(`src/` continues to contain zero outbound HTTP code).
+
+### Added
+- Four new MCP tools: `set_secret(name, value)`, `get_secret(name)`,
+  `list_secrets()`, `delete_secret(name)`. Each is implicitly scoped to the
+  active project; there is no `scope` parameter.
+- `Subsystem.SECRETS` migration chain (`v1 -> v2`) that walks
+  `<storage_root>/projects/*` on first `turbo-memory-mcp migrate --apply`
+  after upgrade and provisions an empty per-project vault under
+  `projects/<project_id>/secrets/`. Idempotent and unconditionally green —
+  if the master key cannot be resolved during migration, a stub `meta.json`
+  is written and the vault initializes on first successful `set_secret`.
+- Per-project encrypted store: `vault.tqv` (AES-256-GCM, 12-byte nonce,
+  16-byte GCM tag), `meta.json` (KDF params + key_mode for diagnostics,
+  no key material), `audit.jsonl` (append-only access log;
+  `(timestamp, action, name)` only, values never logged).
+- Subsystem-level marker `<storage_root>/secrets-manifest.json` tracking
+  the SECRETS migration `format_version`.
+- Master-key resolution priority: env `TQMEMORY_SECRETS_PASSPHRASE`
+  (Argon2id, per-project salt) → existing OS keyring entry
+  (`turbo-quant-memory` / `secrets-master-<project_id>`) → keyring
+  auto-bootstrap (generate + store) on a writable backend → hard fail with
+  an actionable setup hint. No interactive prompt fallback — it would
+  silently die on reboot.
+- Three new runtime dependencies (all pure-Python wheels with native
+  CPython extensions, no system-level deps): `keyring>=25.0.0,<26.0`,
+  `cryptography>=43.0.0,<47.0`, `argon2-cffi>=23.1.0,<24.0`.
+- 73 new unit / integration tests (`tests/test_secrets_*.py`) covering
+  crypto round-trips, KDF determinism, key-resolver branches,
+  store CRUD + permissions + tampering, migration provisioning,
+  MCP response shapes, ingest/lint/retrieval isolation, and a
+  sentinel-grep regression that proves planted secret values never
+  surface via `semantic_search`.
+
+### Changed
+- `self_test.tool_count` grows `14 -> 18`. `EXPECTED_TOOL_NAMES` extended
+  in `tests/test_tools.py` and `scripts/smoke_test.py`. Smoke
+  `tool_count` assertion also bumped from `11` (stale) to `18` in the
+  same pass.
+- `scripts/smoke_test.py` now performs a full `set_secret -> list_secrets
+  -> get_secret -> delete_secret -> get_secret(==missing)` round-trip
+  against a temp `TQMEMORY_HOME` with a smoke-only
+  `TQMEMORY_SECRETS_PASSPHRASE`. New `PASS secrets vault round-trip` line
+  in the success summary.
+
+### Security
+- New `Security and Trust > Secrets vault threat model` section in
+  `TECHNICAL_SPEC` (EN/UK/RU). In scope: accidental backup leaks
+  (Time Machine, rsync, iCloud), share-screen / screenshot leaks,
+  accidental `git add`. Explicitly out of scope: root compromise, live
+  daemon takeover, hardware attacks, multi-tenant isolation. Users with
+  bigger threat models should use a dedicated secret manager.
+- Ingestion (`ingestion._resolve_roots`) and lint (`knowledge_lint._resolve_roots`)
+  refuse to register any path inside the vault subtree with a clear
+  `ValueError`. Both `_iter_markdown_files` walkers skip files under
+  `projects/<id>/secrets/` as defense in depth.
+- `get_secret` response keeps the value in a dedicated `secret_value`
+  field only; `set` / `list` / `delete` responses never echo the value.
+- Agent recipe documented in `AGENTS.md` and project `CLAUDE.md`:
+  never call `set_secret` with a value from the chat transcript;
+  ask the user to set it themselves so the value never enters
+  client-side logs.
+
+### Migration
+- Stop all MCP clients, then run `turbo-memory-mcp migrate --apply`.
+  A rolling snapshot is taken automatically; on failure the CLI prints
+  the exact `--restore-from` command. The v1->v2 step creates the
+  vault directory structure for every existing project, then bumps
+  `secrets-manifest.json` to `format_version=2`. The migration is
+  idempotent — re-running on a fully-provisioned tree is a no-op.
+
+### Documentation
+- New "Secrets Vault (NEW in v0.7.0)" sections in all three README
+  variants (EN/UK/RU), written in user-reassurance tone: WHY built,
+  WHAT CHANGES, WHAT DOES NOT CHANGE, WHERE secrets live and where
+  they don't, HOW to use, THREAT MODEL, FAQ.
+- `TECHNICAL_SPEC` (EN/UK/RU): MCP Tool Surface table extended; new
+  "Secrets vault" subsection under Data Model; "Security and Trust"
+  extended with the explicit "src/ contains zero outbound HTTP code"
+  claim plus the threat-model breakdown.
+- `MEMORY_STRATEGY` (EN/UK/RU): new "Secrets vs Notes" subsection plus
+  guardrails extension.
+- Per-phase planning artifacts under `.planning/phases/09-secrets-vault/`
+  with 3 wave plans + 2 wave summaries + 1 context document.
+
 ## [0.6.1] - 2026-05-22
 
 Knowledge Graph Relations implementation. Allows linking memory notes, source files, issues, or tasks in a structured graph at both project and global scopes.

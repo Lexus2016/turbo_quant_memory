@@ -24,10 +24,18 @@ Run this flow in every client after the server is connected:
 6. `semantic_search(query="namespace smoke", scope="hybrid")`
 7. `lint_knowledge_base(paths=["."], max_issues=50)`
 8. `hydrate(item_id, scope="project", mode="default")` on a Markdown hit
+9. **Secrets vault round-trip (v0.7.0+):** before this step, set
+   `TQMEMORY_SECRETS_PASSPHRASE` in the env so no real keychain entries
+   are created. Then:
+   - `set_secret(name="smoke-test", value="smoke-only-not-real")`
+   - `list_secrets()` — expect names containing `smoke-test`, no `values` field.
+   - `get_secret(name="smoke-test")` — expect status `ok` and the value in `secret_value`.
+   - `delete_secret(name="smoke-test")` — expect `deleted: true`.
+   - `get_secret(name="smoke-test")` again — expect status `missing`.
 
 Expected pass signals:
 
-- `self_test.tool_count = 14` (v0.6.1+; was 11 on v0.5.x)
+- `self_test.tool_count = 18` (v0.7.0+; was 14 on v0.6.x, 11 on v0.5.x)
 - `server_info.current_project` exists
 - `server_info.default_query_mode = "project"`
 - `server_info.index_status.project.freshness` becomes `fresh` after indexing
@@ -38,6 +46,9 @@ Expected pass signals:
 - `lint_knowledge_base(...)` returns `summary` and bounded `issues`
 - `hydrate(...)` returns the full source item plus a bounded neighborhood
 - `project` hits appear before promoted `global` hits when both are relevant
+- `set_secret` returns `{"status": "ok", "name": "smoke-test", "project_id": ...}` with NO `secret_value` field.
+- `get_secret` returns `secret_value` in a dedicated field, never in `summary` / `message` / `description`.
+- After `delete_secret`, a follow-up `get_secret` returns `{"status": "missing", ...}`.
 
 ## Client-Specific Checks
 

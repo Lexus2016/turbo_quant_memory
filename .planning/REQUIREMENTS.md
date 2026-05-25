@@ -116,12 +116,12 @@
 | KBL-01 | Phase 7 | Complete |
 | KBL-02 | Phase 7 | Complete |
 | KBL-03 | Phase 7 | Complete |
-| VLT-01 | Phase 9 | Planned |
-| VLT-02 | Phase 9 | Planned |
-| VLT-03 | Phase 9 | Planned |
-| VLT-04 | Phase 9 | Planned |
-| VLT-05 | Phase 9 | Planned |
-| VLT-06 | Phase 9 | Planned |
+| VLT-01 | Phase 9 | Complete |
+| VLT-02 | Phase 9 | Complete |
+| VLT-03 | Phase 9 | Complete |
+| VLT-04 | Phase 9 | Complete |
+| VLT-05 | Phase 9 | Complete |
+| VLT-06 | Phase 9 | Complete |
 
 **Coverage:**
 - v1 requirements: 21 total

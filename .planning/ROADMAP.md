@@ -162,16 +162,16 @@ Plans:
 
 **Goal:** Give AI agents a safe place to persist project credentials (SSH, DB DSN, API tokens) across sessions and reboots, encrypted at rest, project-scoped, fully isolated from any retrieval path.
 
-**Status:** Planned (2026-05-25)
+**Status:** Complete (2026-05-25, shipped as `v0.7.0`)
 
 **Requirements:** `VLT-01`, `VLT-02`, `VLT-03`, `VLT-04`, `VLT-05`, `VLT-06`
 **Depends on:** Phase 8
-**Plans:** 0/3 plans complete
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] `09-01` Cryptographic foundation, key resolver, secrets store, audit log (Wave 1)
-- [ ] `09-02` Migration runner integration, MCP tool surface, indexer/lint/retrieval hardening (Wave 2)
-- [ ] `09-03` Smoke test extension, bilingual docs, CHANGELOG, client fixture refresh (Wave 3)
+- [x] `09-01` Cryptographic foundation, key resolver, secrets store, audit log (Wave 1, 2026-05-25)
+- [x] `09-02` Migration runner integration, MCP tool surface, indexer/lint/retrieval hardening (Wave 2, 2026-05-25)
+- [x] `09-03` Smoke test extension, bilingual docs, CHANGELOG, client fixture refresh (Wave 3, 2026-05-25)
 
 **Success criteria:**
 1. `set_secret` / `get_secret` round-trips survive daemon restart and machine reboot via OS keyring or env-passphrase fallback.
