@@ -173,3 +173,53 @@ def test_module_invocation_path_exposed_via_main(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Store a secret" in out
     assert "[A-Za-z0-9_.-]" in out
+
+
+def test_secret_set_writes_audit_entry(
+    cli_env, in_memory_keyring, monkeypatch, capsys
+):
+    """CLI is the canonical setup path — every set MUST be audited at parity
+    with the MCP set_secret tool. Verified by inspecting audit.jsonl."""
+    import json
+
+    code, _, _ = _invoke(monkeypatch, capsys, "audited-secret", "audited-value\n")
+    assert code == 0
+
+    audit_path = (
+        cli_env
+        / "memory-home"
+        / "projects"
+        / "cli-secret-project"
+        / "secrets"
+        / "audit.jsonl"
+    )
+    assert audit_path.exists()
+    lines = audit_path.read_text().splitlines()
+    assert any(
+        json.loads(line) == {**json.loads(line), "action": "set", "name": "audited-secret"}
+        for line in lines
+    ), f"expected a 'set' audit entry for 'audited-secret', got: {lines}"
+    # Audit log never contains the value.
+    assert "audited-value" not in audit_path.read_text()
+
+
+def test_secret_set_does_not_audit_on_master_key_unavailable(
+    cli_env, fail_keyring, monkeypatch, capsys
+):
+    """Failed set (no key) must NOT leave an audit line — audit reflects
+    accepted operations only, mirroring the MCP impl's behavior."""
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
+    code, _, _ = _invoke(monkeypatch, capsys, "wont-stick", "value\n")
+    assert code == 3
+
+    audit_path = (
+        cli_env
+        / "memory-home"
+        / "projects"
+        / "cli-secret-project"
+        / "secrets"
+        / "audit.jsonl"
+    )
+    # Either no file or no entry for the failed name.
+    if audit_path.exists():
+        assert "wont-stick" not in audit_path.read_text()

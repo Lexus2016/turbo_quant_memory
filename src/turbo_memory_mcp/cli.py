@@ -345,14 +345,19 @@ def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool
 def _handle_secret_set(args: argparse.Namespace) -> int:
     """Set a project secret without exposing the value to a chat transcript.
 
+    Records the write into the per-project audit log on success — the CLI
+    is the canonical first-time setup path, so audit coverage parity with
+    the MCP ``set_secret`` impl is essential for accurate access history.
+
     Exit codes:
         0 - secret stored
         2 - invalid input (empty value, invalid name)
         3 - master key unavailable; stderr carries the setup hint verbatim
+        130 - interrupted at the hidden-input prompt
     """
     import getpass
 
-    from .secrets import MasterKeyUnavailable, SecretsStore
+    from .secrets import AuditLog, MasterKeyUnavailable, SecretsStore
     from .server import build_runtime_context
 
     name = args.name
@@ -371,8 +376,9 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
         return 2
 
     project, store = build_runtime_context()
+    vault = SecretsStore(store.storage_root, project.project_id)
     try:
-        SecretsStore(store.storage_root, project.project_id).set(name, value)
+        vault.set(name, value)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -380,6 +386,7 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 3
 
+    AuditLog(vault.secrets_dir).record("set", name)
     print(f"Stored secret '{name}' for project '{project.project_id}'.")
     return 0
 
