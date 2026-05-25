@@ -21,11 +21,13 @@ Public surface:
 
 from .audit import AuditLog
 from .keyresolver import MasterKeyUnavailable, resolve_master_key
+from .paths import is_inside_secrets_storage
 from .store import SecretsStore
 
 __all__ = [
     "AuditLog",
     "MasterKeyUnavailable",
     "SecretsStore",
+    "is_inside_secrets_storage",
     "resolve_master_key",
 ]

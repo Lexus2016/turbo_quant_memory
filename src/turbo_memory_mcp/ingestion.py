@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .contracts import INDEX_MODES, build_indexing_payload
 from .markdown_parser import build_block_id, parse_markdown_blocks
+from .secrets.paths import is_inside_secrets_storage
 from .store import MemoryStore, sha256_path, sha256_text, utc_now
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -88,7 +89,7 @@ def index_paths_with_sync_plan(
         }
         seen_source_paths: set[str] = set()
 
-        for file_path in _iter_markdown_files(root_path):
+        for file_path in _iter_markdown_files(root_path, storage_root=store.storage_root):
             indexed_files += 1
             source_path = file_path.relative_to(root_path).as_posix()
             seen_source_paths.add(source_path)
@@ -227,7 +228,7 @@ def assess_project_index_freshness(
             missing_root_count += 1
             continue
 
-        actual_files = _iter_markdown_files(root_path)
+        actual_files = _iter_markdown_files(root_path, storage_root=store.storage_root)
         actual_source_paths = {path.relative_to(root_path).as_posix(): path for path in actual_files}
         manifest_source_paths = manifests_by_root.get(root_id, {})
 
@@ -280,6 +281,12 @@ def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir:
     seen_paths: set[Path] = set()
     for raw_path in paths:
         resolved_path = _resolve_input_path(raw_path, base_dir=base_dir)
+        if is_inside_secrets_storage(resolved_path, store.storage_root):
+            raise ValueError(
+                f"Refusing to register an indexing root inside the secrets "
+                f"vault: {resolved_path}. The secrets/ subtree is hard-isolated "
+                "from semantic_search / hydrate / lint_knowledge_base by design."
+            )
         if resolved_path in seen_paths:
             continue
         seen_paths.add(resolved_path)
@@ -346,11 +353,17 @@ def _matches_ignore(relative_posix: str, patterns: list[str]) -> bool:
     return False
 
 
-def _iter_markdown_files(root_path: Path) -> list[Path]:
+def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -> list[Path]:
     ignore_patterns = _load_ignore_patterns(root_path)
     files: list[Path] = []
     for file_path in root_path.rglob("*.md"):
         if not file_path.is_file():
+            continue
+        # Defense-in-depth: even if the boundary guard in _resolve_roots is
+        # somehow bypassed, never traverse a secrets vault subtree.
+        if storage_root is not None and is_inside_secrets_storage(
+            file_path, storage_root
+        ):
             continue
         relative_parts = file_path.relative_to(root_path).parts[:-1]
         if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):

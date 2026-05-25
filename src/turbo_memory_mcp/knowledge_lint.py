@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
+from .secrets.paths import is_inside_secrets_storage
 from .store import MemoryStore, utc_now
 
 _MAX_ISSUES_LIMIT = 1000
@@ -50,7 +51,7 @@ def lint_knowledge_base(
         if not root_path.exists() or not root_path.is_dir():
             raise FileNotFoundError(f"Markdown root does not exist: {root_path}")
 
-        files = _iter_markdown_files(root_path)
+        files = _iter_markdown_files(root_path, storage_root=store.storage_root)
         total_file_count += len(files)
         root_summaries.append({"root_id": root_id, "path": str(root_path), "file_count": len(files)})
 
@@ -171,6 +172,11 @@ def _resolve_roots(
     seen_paths: set[Path] = set()
     for raw_path in paths:
         resolved_path = _resolve_input_path(raw_path, base_dir=base_dir)
+        if is_inside_secrets_storage(resolved_path, store.storage_root):
+            raise ValueError(
+                f"Refusing to lint a path inside the secrets vault: "
+                f"{resolved_path}. The secrets/ subtree is hard-isolated."
+            )
         if resolved_path in seen_paths:
             continue
         seen_paths.add(resolved_path)
@@ -185,10 +191,16 @@ def _resolve_input_path(raw_path: str, *, base_dir: Path) -> Path:
     return candidate.resolve()
 
 
-def _iter_markdown_files(root_path: Path) -> list[Path]:
+def _iter_markdown_files(
+    root_path: Path, *, storage_root: Path | None = None
+) -> list[Path]:
     files: list[Path] = []
     for file_path in root_path.rglob("*.md"):
         if not file_path.is_file():
+            continue
+        if storage_root is not None and is_inside_secrets_storage(
+            file_path, storage_root
+        ):
             continue
         relative_parts = file_path.relative_to(root_path).parts[:-1]
         if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):
