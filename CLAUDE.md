@@ -22,4 +22,4 @@
 - Always discover the right `get_secret(name)` call from a `pattern`-kind recipe note via `semantic_search`. Do not guess names from chat history.
 - Pass `secret_value` through programmatically only — never echo into summaries, never store via `remember_note`.
 - If you encounter a `master_key_unavailable` error response, surface its `setup_hint` verbatim to the user and stop; do not try to recover by guessing keys.
-- Never call `set_secret` with a value already visible in the chat transcript. Ask the user to set it themselves on a clean session.
+- Never call `set_secret` with a value already visible in the chat transcript. Ask the user to provision it from a terminal via `turbo-memory-mcp secret-set NAME` (hidden-input prompt; value never enters a chat).

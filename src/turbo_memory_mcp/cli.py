@@ -95,6 +95,29 @@ def build_parser() -> argparse.ArgumentParser:
         restore_path=None,
         handler=_handle_migrate,
     )
+
+    secret_set_parser = subparsers.add_parser(
+        "secret-set",
+        help=(
+            "Set a project secret without exposing the value to any chat "
+            "transcript (input is read via getpass on a TTY)."
+        ),
+        description=(
+            "Store a secret in the active project's encrypted vault. The "
+            "value is read from stdin: when invoked on a TTY, getpass "
+            "prompts with hidden input so the value never enters shell "
+            "history or scrollback; when invoked from a pipe, stdin is "
+            "consumed verbatim (trailing newline stripped). Active project "
+            "is resolved from the current working directory the same way "
+            "as the MCP server."
+        ),
+    )
+    secret_set_parser.add_argument(
+        "name",
+        help="Secret name. Must match [A-Za-z0-9_.-]{1,128}.",
+    )
+    secret_set_parser.set_defaults(handler=_handle_secret_set)
+
     return parser
 
 
@@ -316,6 +339,48 @@ def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"Restored storage from snapshot: {snap_path}")
+    return 0
+
+
+def _handle_secret_set(args: argparse.Namespace) -> int:
+    """Set a project secret without exposing the value to a chat transcript.
+
+    Exit codes:
+        0 - secret stored
+        2 - invalid input (empty value, invalid name)
+        3 - master key unavailable; stderr carries the setup hint verbatim
+    """
+    import getpass
+
+    from .secrets import MasterKeyUnavailable, SecretsStore
+    from .server import build_runtime_context
+
+    name = args.name
+
+    if sys.stdin.isatty():
+        try:
+            value = getpass.getpass(f"Value for '{name}' (input hidden): ")
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted.", file=sys.stderr)
+            return 130
+    else:
+        value = sys.stdin.read().rstrip("\n")
+
+    if not value:
+        print("error: empty value rejected.", file=sys.stderr)
+        return 2
+
+    project, store = build_runtime_context()
+    try:
+        SecretsStore(store.storage_root, project.project_id).set(name, value)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except MasterKeyUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
+
+    print(f"Stored secret '{name}' for project '{project.project_id}'.")
     return 0
 
 

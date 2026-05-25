@@ -38,6 +38,12 @@ machine reboots — encrypted at rest, hard-isolated from `semantic_search`,
 - Three new runtime dependencies (all pure-Python wheels with native
   CPython extensions, no system-level deps): `keyring>=25.0.0,<26.0`,
   `cryptography>=43.0.0,<47.0`, `argon2-cffi>=23.1.0,<24.0`.
+- New CLI subcommand `turbo-memory-mcp secret-set NAME` for first-time
+  secret provisioning without exposing the value to a chat transcript.
+  On a TTY it reads via `getpass` (hidden input, never enters shell
+  history or scrollback); on a pipe it consumes stdin verbatim. Exit
+  codes: `0` stored, `2` invalid input (empty / bad name), `3` master
+  key unavailable (the setup hint is printed to stderr verbatim).
 - 73 new unit / integration tests (`tests/test_secrets_*.py`) covering
   crypto round-trips, KDF determinism, key-resolver branches,
   store CRUD + permissions + tampering, migration provisioning,

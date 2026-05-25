@@ -190,7 +190,7 @@ The secrets vault is a SEPARATE subsystem with different semantics from notes �
 Agents MUST NOT call `set_secret` with a value that came from chat context where it has been logged by the MCP client. The recommended pattern is to:
 1. Search project memory for a `pattern`-kind recipe note that explains how to fetch the credential (e.g. `"To connect to prod DB call get_secret('prod-db-dsn')"`).
 2. Call `get_secret(name)` only when actually needed; pass `secret_value` through programmatically, never echo it in summaries or logs.
-3. Ask the user to set the secret the first time via `turbo-memory-mcp` CLI (planned) or by direct `keyring set` so the value never enters a chat transcript.
+3. Ask the user to set the secret the first time from a terminal — `turbo-memory-mcp secret-set NAME` reads the value via `getpass` with hidden input — so the value never enters a chat transcript. Direct `keyring set` is an equivalent low-level alternative.
 
 ## Guardrails
 
