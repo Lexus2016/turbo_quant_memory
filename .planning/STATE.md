@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: Milestone complete
-stopped_at: Phase 8 completed
-last_updated: "2026-04-03T15:35:39.100Z"
-last_activity: 2026-04-03
+status: Phase 9 complete; v0.7.0 release-ready (untagged)
+stopped_at: Phase 9 completed
+last_updated: "2026-05-25T12:00:00.000Z"
+last_activity: 2026-05-25
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 17
-  completed_plans: 17
+  total_phases: 9
+  completed_phases: 9
+  total_plans: 20
+  completed_plans: 20
 ---
 
 # Project State
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** Agents can offload cold project context and recover only the minimum high-signal context needed to act correctly.
-**Current focus:** Release adoption and client rollout on the `v0.3.0` contract
+**Current focus:** Project-scoped encrypted secrets vault shipped in `v0.7.0`; awaiting user-initiated git tag + push to make the release publishable.
 
 ## Current Position
 
-Milestone: v1.1 hardening slice — COMPLETE
-Next: monitor adoption on live agent clients and tune pricing basis per environment if USD telemetry is desired
+Milestone: v1.1 hardening slice — COMPLETE; Phase 9 secrets vault — COMPLETE
+Next: cut the `v0.7.0` git tag once the user is ready to push; pending follow-ups documented in `.planning/phases/09-secrets-vault/09-03-SUMMARY.md` (CLI master-key rotation, future Windows smoke coverage).
 
 ## Performance Metrics
 
@@ -106,6 +106,8 @@ Recent decisions affecting current work:
 
 - Phase 8 added: version-aware index migration, persistent savings telemetry, release rollout, and client refresh
 - Phase 8 completed: derived indexes auto-rebuild on format mismatch and telemetry stays outside retrieval memory
+- Phase 9 added: project-scoped encrypted secrets vault (AES-256-GCM, Argon2id, OS keyring + env passphrase, hard isolation from retrieval, per-project audit log)
+- Phase 9 completed: Subsystem.SECRETS migration v1->v2, 4 MCP tools + CLI 'secret-set', 73 new tests, EN/UK/RU docs in reassurance tone, v0.7.0 release-ready
 
 ### Pending Todos
 
@@ -124,7 +126,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T15:05:00.000Z
-Last activity: 2026-04-03 - Completed Phase 8 hardening/release rollout slice for `v0.3.0`
-Stopped at: Phase 8 completed
+Last session: 2026-05-25T12:00:00.000Z
+Last activity: 2026-05-25 - Closed Phase 9 secrets vault for `v0.7.0`; self-audit loop applied 4 corrections (proxy env forwarding, README CLI guidance, CLI audit-log parity, version-pin sweep)
+Stopped at: Phase 9 completed
 Resume file: README.md
