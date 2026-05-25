@@ -75,10 +75,19 @@ machine reboots — encrypted at rest, hard-isolated from `semantic_search`,
   `projects/<id>/secrets/` as defense in depth.
 - `get_secret` response keeps the value in a dedicated `secret_value`
   field only; `set` / `list` / `delete` responses never echo the value.
-- Agent recipe documented in `AGENTS.md` and project `CLAUDE.md`:
-  never call `set_secret` with a value from the chat transcript;
-  ask the user to set it themselves so the value never enters
-  client-side logs.
+- Agent recipe documented in `AGENTS.md`, project `CLAUDE.md`, README
+  EN/UK/RU section 5, and MEMORY_STRATEGY EN/UK/RU. Split by whether
+  the value is already in the chat:
+    * NOT yet in chat -> recommend `turbo-memory-mcp secret-set NAME`
+      from a terminal (getpass hidden input keeps it out of any
+      transcript). This is the prophylactic path.
+    * Already in chat (user pasted or agent generated) -> call
+      `set_secret(name, value)` directly. The agent's deterministic
+      `project_id` resolution is the safer write path once exposure
+      has happened; pushing the user back to the CLI just to redo a
+      value already in the transcript is friction without protection
+      and risks landing the secret in the wrong project if the user's
+      terminal cwd does not match the intended one.
 
 ### Migration
 - Stop all MCP clients, then run `turbo-memory-mcp migrate --apply`.
