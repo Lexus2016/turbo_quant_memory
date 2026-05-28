@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-28
+
+Patch release. Fixes a stale-lockfile deadlock that could block
+`turbo-memory-mcp migrate --apply` (and `--restore-from`) indefinitely after a
+daemon exited uncleanly.
+
+### Fixed
+- The migration guard treated the mere *existence* of `<storage_root>/.daemon.lock`
+  as proof that a primary daemon was running. A daemon that exits uncleanly
+  (SIGKILL, crash, host sleep) never runs its release hook, leaving behind a
+  lockfile that names a now-dead PID — so `migrate --apply` / `--restore-from`
+  would refuse forever even though nothing was writing, forcing operators to
+  reach for `--force` or delete the file by hand. The guard now reads the PID
+  from the lockfile and checks liveness via the same `_is_pid_alive` helper the
+  daemon uses at startup: only a lock whose PID is still alive blocks. A
+  lockfile naming a dead PID is correctly treated as stale, and a malformed or
+  unreadable lock stays conservative (reported as present) so `--force` remains
+  the deliberate escape hatch. This makes the migrate guard and daemon-startup
+  staleness detection agree on what counts as a live owner.
+
+### Tests
+- Added regression coverage in `tests/test_migrations.py`:
+  `test_cli_apply_ignores_stale_lockfile_with_dead_pid` (dead PID → migration
+  proceeds) and `test_cli_apply_refuses_when_daemon_pid_alive` (live PID via
+  `os.getpid()` → migration blocked).
+
 ## [0.7.0] - 2026-05-25
 
 Project-scoped encrypted secrets vault. Agents can now persist and retrieve

@@ -8,8 +8,8 @@ Install the packaged CLI before wiring the MCP server into a client.
 
 | Method | Command |
 |---|---|
-| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.0` |
-| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.0` |
+| Primary | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.1` |
+| Fallback | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.1` |
 | Runtime | `turbo-memory-mcp serve` |
 
 ## Shared Validation Flow
