@@ -572,6 +572,66 @@ def test_cli_apply_force_bypasses_lockfile_check(
     assert store.read_markdown_manifest()["format_version"] == 2
 
 
+def test_cli_apply_ignores_stale_lockfile_with_dead_pid(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A lockfile naming a dead PID is stale and must not block --apply."""
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+    ran: list[bool] = []
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        ran.append(True)
+
+    # Lockfile left behind by a daemon that exited uncleanly: PID now dead.
+    (store.storage_root / ".daemon.lock").write_text(
+        json.dumps({"pid": 424242, "protocol_version": "1.0"}), encoding="utf-8"
+    )
+    monkeypatch.setattr("turbo_memory_mcp.daemon._is_pid_alive", lambda _pid: False)
+    _patch_runtime_context(monkeypatch, store)
+
+    exit_code = main(["migrate", "--apply", "--no-snapshot"])
+    assert exit_code == 0
+    assert ran == [True]
+    err = capsys.readouterr().err
+    assert "daemon lockfile present" not in err
+    assert store.read_markdown_manifest()["format_version"] == 2
+
+
+def test_cli_apply_refuses_when_daemon_pid_alive(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A lockfile naming a live PID is a real daemon and must block --apply."""
+    import os
+
+    from turbo_memory_mcp.cli import main
+
+    store.write_markdown_manifest()
+
+    @migration(Subsystem.MARKDOWN, from_version=1, to_version=2)
+    def _step(_):
+        raise AssertionError("must not run while a live daemon owns the lock")
+
+    # os.getpid() is the running test process: guaranteed alive.
+    (store.storage_root / ".daemon.lock").write_text(
+        json.dumps({"pid": os.getpid(), "protocol_version": "1.0"}),
+        encoding="utf-8",
+    )
+    _patch_runtime_context(monkeypatch, store)
+
+    exit_code = main(["migrate", "--apply", "--no-snapshot"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "daemon lockfile present" in err
+    assert store.read_markdown_manifest()["format_version"] == 1
+
+
 def test_cli_restore_from_rejects_invalid_path(
     store: MemoryStore,
     monkeypatch: pytest.MonkeyPatch,

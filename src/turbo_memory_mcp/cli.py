@@ -173,11 +173,29 @@ def _handle_migrate(args: argparse.Namespace) -> int:
 
 
 def _daemon_lockfile_present(store) -> "Path | None":
-    """Return the lockfile path if a primary daemon may be running."""
+    """Return the lockfile path only if a *live* primary daemon owns it.
+
+    Bare file existence is not enough. A daemon that exits uncleanly (SIGKILL,
+    crash, host sleep) never runs its release hook, so it leaves behind a
+    lockfile naming a now-dead PID. Treating that stale file as a live owner
+    wedges ``--apply`` / ``--restore-from`` forever even though nothing is
+    writing. Reuse the daemon's own PID-liveness check so this guard and daemon
+    startup agree on what counts as a live owner: only a lock whose PID is
+    still alive blocks. A malformed lock (unreadable, or missing its PID) stays
+    conservative and reports as present so the operator decides via ``--force``.
+    """
     from pathlib import Path
 
+    from .daemon import _is_pid_alive, _read_lockfile
+
     lock = Path(store.storage_root) / ".daemon.lock"
-    return lock if lock.exists() else None
+    payload = _read_lockfile(lock)
+    if payload is None:
+        return None
+    pid = payload.get("pid")
+    if not isinstance(pid, int):
+        return lock
+    return lock if _is_pid_alive(pid) else None
 
 
 def _migrate_print_status(store, detect_status, Subsystem) -> int:  # noqa: N803
