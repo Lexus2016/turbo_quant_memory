@@ -6,3 +6,9 @@
 .claude/
 __pycache__/
 *.py[cod]
+
+# Generated retrieval-quality reports embed real per-project data — keep local only
+benchmarks/retrieval_quality.json
+benchmarks/retrieval_quality.md
+benchmarks/retrieval_quality_global.json
+benchmarks/retrieval_quality_global.md
