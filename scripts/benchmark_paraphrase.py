@@ -1,14 +1,18 @@
-"""Paraphrased-query retrieval benchmark — the unbiased complement to the
-self-retrieval harness.
+"""External-fixture retrieval benchmark — the unbiased complement to the
+verbatim self-retrieval harness.
 
-Queries come from an EXTERNAL fixture of LLM-paraphrased developer questions that
-deliberately AVOID the gold item's own wording (different words, mixed languages).
-This measures real retrieval, not verbatim near-duplicate matching, and so closes
-the bias of benchmark_retrieval_global (whose queries were verbatim spans, which
-favour pure vector and the paraphrase-trained model).
+Queries come from an EXTERNAL fixture rather than the gold item's own text, so this
+measures real retrieval instead of verbatim near-duplicate matching (which favours
+pure vector). It is query-regime agnostic — feed it whichever fixture you want:
+  * LLM-paraphrased developer questions (different words, mixed languages),
+  * exact-identifier queries (function/symbol names, paths, CONST_NAMES),
+  * any other reformulated queries.
+Run all three regimes to see the full picture: gating made hybrid ~= vector on
+verbatim, ~neutral on paraphrases, and a clear WIN on identifier queries (where the
+BM25 lane earns its place).
 
 Compares pure dense vector vs the production vector-first GATED hybrid on the SAME
-paraphrased queries, over the real project corpora (read-only safe copies).
+queries, over the real project corpora (read-only safe copies).
 
     uv run python scripts/benchmark_paraphrase.py <fixture.json>
 
