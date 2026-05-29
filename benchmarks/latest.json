@@ -5,19 +5,19 @@
     "without_mcp": "Open the full source text of every unique Markdown file represented in the top-5 project search hits."
   },
   "corpus": {
-    "block_count": 247,
-    "changed_files_on_full": 17,
-    "indexed_files": 17
+    "block_count": 384,
+    "changed_files_on_full": 18,
+    "indexed_files": 18
   },
-  "generated_at": "2026-03-28T17:20:15.198620+00:00",
+  "generated_at": "2026-05-29T06:20:34.132360+00:00",
   "indexing": {
-    "full_index_ms": 5553.57,
-    "idle_incremental_ms": 844.25,
+    "full_index_ms": 8687.48,
+    "idle_incremental_ms": 397.33,
     "idle_incremental_payload": {
-      "block_count": 247,
+      "block_count": 384,
       "changed_files": 0,
       "deleted_files": 0,
-      "indexed_files": 17,
+      "indexed_files": 18,
       "mode": "incremental",
       "registered_roots": [
         {
@@ -25,55 +25,61 @@
           "root_id": "mdroot-b823fa76b43f03fe"
         }
       ],
-      "skipped_files": 17,
+      "skipped_files": 18,
       "status": "ok"
     }
   },
   "project_root": "/Users/admin/_Projects/turbo_quant_mcp_memory",
   "queries": [
     {
-      "hydrate_latency_ms": 41.92,
+      "hydrate_latency_ms": 402.34,
       "naive_full_files": {
-        "bytes": 9151,
-        "file_count": 2,
+        "bytes": 32911,
+        "file_count": 3,
         "files": [
           {
-            "bytes": 3586,
-            "lines": 88,
-            "path": "CLIENT_INTEGRATIONS.md",
-            "words": 499
+            "bytes": 7627,
+            "lines": 215,
+            "path": "MEMORY_STRATEGY.md",
+            "words": 1141
           },
           {
-            "bytes": 5565,
-            "lines": 195,
-            "path": "MEMORY_STRATEGY.md",
-            "words": 822
+            "bytes": 12876,
+            "lines": 215,
+            "path": "MEMORY_STRATEGY.ru.md",
+            "words": 1100
+          },
+          {
+            "bytes": 12408,
+            "lines": 215,
+            "path": "MEMORY_STRATEGY.uk.md",
+            "words": 1091
           }
         ],
-        "lines": 283,
-        "words": 1321
+        "lines": 645,
+        "words": 3332
       },
       "query": "namespace model project global hybrid",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 40.05,
-          "words_percent": 62.15
+          "bytes_percent": 81.12,
+          "words_percent": 85.02
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 8.11,
-          "words_percent": 44.74
+          "bytes_percent": 71.92,
+          "words_percent": 77.94
         }
       },
-      "search_latency_ms": 91.04,
+      "search_latency_ms": 522.62,
       "semantic_search_payload": {
-        "bytes": 5486,
-        "lines": 141,
-        "words": 500
+        "bytes": 6213,
+        "lines": 152,
+        "words": 499
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 8409,
-        "lines": 205,
-        "words": 730
+        "bytes": 9243,
+        "lines": 219,
+        "words": 735
       },
       "top_hit": {
         "confidence_state": "medium",
@@ -83,54 +89,60 @@
       }
     },
     {
-      "hydrate_latency_ms": 38.7,
+      "hydrate_latency_ms": 362.83,
       "naive_full_files": {
-        "bytes": 22069,
-        "file_count": 3,
+        "bytes": 44730,
+        "file_count": 4,
         "files": [
           {
-            "bytes": 5565,
-            "lines": 195,
+            "bytes": 7627,
+            "lines": 215,
             "path": "MEMORY_STRATEGY.md",
-            "words": 822
+            "words": 1141
           },
           {
-            "bytes": 9194,
-            "lines": 195,
+            "bytes": 12876,
+            "lines": 215,
+            "path": "MEMORY_STRATEGY.ru.md",
+            "words": 1100
+          },
+          {
+            "bytes": 12408,
+            "lines": 215,
             "path": "MEMORY_STRATEGY.uk.md",
-            "words": 804
+            "words": 1091
           },
           {
-            "bytes": 7310,
-            "lines": 194,
+            "bytes": 11819,
+            "lines": 255,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1134
+            "words": 1740
           }
         ],
-        "lines": 584,
-        "words": 2760
+        "lines": 900,
+        "words": 5072
       },
       "query": "hydrate bounded neighborhood related mode",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 72.98,
-          "words_percent": 79.75
+          "bytes_percent": 85.02,
+          "words_percent": 88.74
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 59.92,
-          "words_percent": 72.39
+          "bytes_percent": 77.63,
+          "words_percent": 83.18
         }
       },
-      "search_latency_ms": 45.22,
+      "search_latency_ms": 350.6,
       "semantic_search_payload": {
-        "bytes": 5963,
-        "lines": 140,
-        "words": 559
+        "bytes": 6700,
+        "lines": 150,
+        "words": 571
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 8845,
-        "lines": 204,
-        "words": 762
+        "bytes": 10007,
+        "lines": 217,
+        "words": 853
       },
       "top_hit": {
         "confidence_state": "medium",
@@ -140,251 +152,251 @@
       }
     },
     {
-      "hydrate_latency_ms": 43.2,
+      "hydrate_latency_ms": 348.63,
       "naive_full_files": {
-        "bytes": 17837,
-        "file_count": 3,
+        "bytes": 48925,
+        "file_count": 4,
         "files": [
           {
-            "bytes": 3586,
-            "lines": 88,
+            "bytes": 23907,
+            "lines": 461,
+            "path": "CHANGELOG.md",
+            "words": 3044
+          },
+          {
+            "bytes": 4983,
+            "lines": 112,
             "path": "CLIENT_INTEGRATIONS.md",
-            "words": 499
+            "words": 704
           },
           {
-            "bytes": 5565,
-            "lines": 195,
+            "bytes": 7627,
+            "lines": 215,
             "path": "MEMORY_STRATEGY.md",
-            "words": 822
+            "words": 1141
           },
           {
-            "bytes": 8686,
-            "lines": 168,
-            "path": "README.md",
-            "words": 1156
+            "bytes": 12408,
+            "lines": 215,
+            "path": "MEMORY_STRATEGY.uk.md",
+            "words": 1091
           }
         ],
-        "lines": 451,
-        "words": 2477
+        "lines": 1003,
+        "words": 5980
       },
       "query": "current project resolution git remote overrides",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 65.79,
-          "words_percent": 76.46
+          "bytes_percent": 86.92,
+          "words_percent": 90.32
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 48.9,
-          "words_percent": 67.62
+          "bytes_percent": 80.56,
+          "words_percent": 86.56
         }
       },
-      "search_latency_ms": 72.83,
+      "search_latency_ms": 400.11,
       "semantic_search_payload": {
-        "bytes": 6102,
-        "lines": 143,
-        "words": 583
+        "bytes": 6397,
+        "lines": 151,
+        "words": 579
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 9114,
-        "lines": 207,
-        "words": 802
+        "bytes": 9510,
+        "lines": 218,
+        "words": 804
       },
       "top_hit": {
-        "confidence_state": "low",
+        "confidence_state": "ambiguous",
         "score": 0.58,
         "source_path": "MEMORY_STRATEGY.md",
         "title": "Project Identity"
       }
     },
     {
-      "hydrate_latency_ms": 40.25,
+      "hydrate_latency_ms": 356.44,
       "naive_full_files": {
-        "bytes": 15996,
-        "file_count": 2,
+        "bytes": 41418,
+        "file_count": 3,
         "files": [
           {
-            "bytes": 8686,
-            "lines": 168,
-            "path": "README.md",
-            "words": 1156
+            "bytes": 23907,
+            "lines": 461,
+            "path": "CHANGELOG.md",
+            "words": 3044
           },
           {
-            "bytes": 7310,
-            "lines": 194,
+            "bytes": 11819,
+            "lines": 255,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1134
+            "words": 1740
+          },
+          {
+            "bytes": 5692,
+            "lines": 108,
+            "path": "examples/clients/SMOKE_CHECKLIST.md",
+            "words": 704
           }
         ],
-        "lines": 362,
-        "words": 2290
+        "lines": 824,
+        "words": 5488
       },
       "query": "storage stats freshness index status",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 63.03,
-          "words_percent": 75.2
+          "bytes_percent": 84.71,
+          "words_percent": 89.63
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 42.45,
-          "words_percent": 62.75
+          "bytes_percent": 72.7,
+          "words_percent": 81.21
         }
       },
-      "search_latency_ms": 50.12,
+      "search_latency_ms": 360.7,
       "semantic_search_payload": {
-        "bytes": 5913,
-        "lines": 141,
-        "words": 568
+        "bytes": 6331,
+        "lines": 153,
+        "words": 569
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 9206,
-        "lines": 206,
-        "words": 853
+        "bytes": 11308,
+        "lines": 223,
+        "words": 1031
       },
       "top_hit": {
         "confidence_state": "ambiguous",
         "score": 0.461,
-        "source_path": "TECHNICAL_SPEC.md",
-        "title": "Acceptance Criteria"
+        "source_path": "CHANGELOG.md",
+        "title": "Added"
       }
     },
     {
-      "hydrate_latency_ms": 40.28,
+      "hydrate_latency_ms": 366.25,
       "naive_full_files": {
-        "bytes": 18582,
+        "bytes": 59152,
         "file_count": 4,
         "files": [
           {
-            "bytes": 3586,
-            "lines": 88,
-            "path": "CLIENT_INTEGRATIONS.md",
-            "words": 499
+            "bytes": 23907,
+            "lines": 461,
+            "path": "CHANGELOG.md",
+            "words": 3044
           },
           {
-            "bytes": 5306,
-            "lines": 88,
-            "path": "CLIENT_INTEGRATIONS.uk.md",
-            "words": 470
+            "bytes": 15669,
+            "lines": 227,
+            "path": "README.md",
+            "words": 2258
           },
           {
-            "bytes": 4854,
-            "lines": 81,
-            "path": "examples/clients/SMOKE_CHECKLIST.ru.md",
-            "words": 412
+            "bytes": 11819,
+            "lines": 255,
+            "path": "TECHNICAL_SPEC.md",
+            "words": 1740
           },
           {
-            "bytes": 4836,
-            "lines": 81,
+            "bytes": 7757,
+            "lines": 107,
             "path": "examples/clients/SMOKE_CHECKLIST.uk.md",
-            "words": 413
+            "words": 667
           }
         ],
-        "lines": 338,
-        "words": 1794
+        "lines": 1050,
+        "words": 7709
       },
       "query": "Claude Code Codex Cursor OpenCode integrations",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 64.41,
-          "words_percent": 71.68
+          "bytes_percent": 88.9,
+          "words_percent": 92.22
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 41.31,
-          "words_percent": 56.69
+          "bytes_percent": 82.24,
+          "words_percent": 86.94
         }
       },
-      "search_latency_ms": 78.02,
+      "search_latency_ms": 397.72,
       "semantic_search_payload": {
-        "bytes": 6613,
-        "lines": 145,
-        "words": 508
+        "bytes": 6566,
+        "lines": 152,
+        "words": 600
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 10905,
-        "lines": 212,
-        "words": 777
+        "bytes": 10504,
+        "lines": 220,
+        "words": 1007
       },
       "top_hit": {
-        "confidence_state": "ambiguous",
-        "score": 0.53,
-        "source_path": "examples/clients/SMOKE_CHECKLIST.uk.md",
-        "title": "OpenCode"
+        "confidence_state": "low",
+        "score": 0.591,
+        "source_path": "README.md",
+        "title": "👋 What is this awesome tool? (For Humans)"
       }
     },
     {
-      "hydrate_latency_ms": 45.42,
+      "hydrate_latency_ms": 369.8,
       "naive_full_files": {
-        "bytes": 25147,
-        "file_count": 4,
+        "bytes": 27488,
+        "file_count": 2,
         "files": [
           {
-            "bytes": 3586,
-            "lines": 88,
-            "path": "CLIENT_INTEGRATIONS.md",
-            "words": 499
-          },
-          {
-            "bytes": 5565,
-            "lines": 195,
-            "path": "MEMORY_STRATEGY.md",
-            "words": 822
-          },
-          {
-            "bytes": 8686,
-            "lines": 168,
+            "bytes": 15669,
+            "lines": 227,
             "path": "README.md",
-            "words": 1156
+            "words": 2258
           },
           {
-            "bytes": 7310,
-            "lines": 194,
+            "bytes": 11819,
+            "lines": 255,
             "path": "TECHNICAL_SPEC.md",
-            "words": 1134
+            "words": 1740
           }
         ],
-        "lines": 645,
-        "words": 3611
+        "lines": 482,
+        "words": 3998
       },
       "query": "remember note decision lesson handoff pattern",
       "savings": {
         "semantic_search_only": {
-          "bytes_percent": 77.5,
-          "words_percent": 84.85
+          "bytes_percent": 76.07,
+          "words_percent": 83.77
         },
         "semantic_search_plus_hydrate": {
-          "bytes_percent": 63.92,
-          "words_percent": 76.85
+          "bytes_percent": 61.92,
+          "words_percent": 74.51
         }
       },
-      "search_latency_ms": 71.56,
+      "search_latency_ms": 374.64,
       "semantic_search_payload": {
-        "bytes": 5659,
-        "lines": 140,
-        "words": 547
+        "bytes": 6578,
+        "lines": 153,
+        "words": 649
       },
       "semantic_search_plus_hydrate": {
-        "bytes": 9072,
-        "lines": 205,
-        "words": 836
+        "bytes": 10467,
+        "lines": 222,
+        "words": 1019
       },
       "top_hit": {
-        "confidence_state": "ambiguous",
-        "score": 0.476,
-        "source_path": "TECHNICAL_SPEC.md",
-        "title": "Memory note"
+        "confidence_state": "medium",
+        "score": 0.686,
+        "source_path": "README.md",
+        "title": "2. Memory Writing Discipline"
       }
     }
   ],
   "summary": {
-    "average_hydrate_latency_ms": 41.63,
-    "average_search_latency_ms": 68.13,
-    "average_semantic_search_only_bytes_saved_percent": 63.96,
-    "average_semantic_search_only_words_saved_percent": 75.02,
-    "average_semantic_search_plus_hydrate_bytes_saved_percent": 44.1,
-    "average_semantic_search_plus_hydrate_words_saved_percent": 63.51,
-    "median_hydrate_latency_ms": 41.1,
-    "median_search_latency_ms": 72.19,
-    "median_semantic_search_only_bytes_saved_percent": 65.1,
-    "median_semantic_search_plus_hydrate_bytes_saved_percent": 45.67,
+    "average_hydrate_latency_ms": 367.71,
+    "average_search_latency_ms": 401.06,
+    "average_semantic_search_only_bytes_saved_percent": 83.79,
+    "average_semantic_search_only_words_saved_percent": 88.28,
+    "average_semantic_search_plus_hydrate_bytes_saved_percent": 74.5,
+    "average_semantic_search_plus_hydrate_words_saved_percent": 81.72,
+    "median_hydrate_latency_ms": 364.54,
+    "median_search_latency_ms": 386.18,
+    "median_semantic_search_only_bytes_saved_percent": 84.86,
+    "median_semantic_search_plus_hydrate_bytes_saved_percent": 75.16,
     "query_count": 6
   }
 }

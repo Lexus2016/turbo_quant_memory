@@ -1,9 +1,9 @@
 # Benchmark Results
 
-- Generated at: `2026-03-28T17:20:15.198620+00:00`
-- Corpus: `17` Markdown files, `247` indexed blocks
-- Full index: `5553.57` ms
-- Idle incremental: `844.25` ms
+- Generated at: `2026-05-29T06:20:34.132360+00:00`
+- Corpus: `18` Markdown files, `384` indexed blocks
+- Full index: `8687.48` ms
+- Idle incremental: `397.33` ms
 
 ![Benchmark summary](summary-en.svg)
 
@@ -11,13 +11,13 @@
 
 | Metric | Result | Why it matters |
 |---|---:|---|
-| Corpus | 17 files · 247 blocks | This is measured on the real repository corpus |
-| Full index | 5.55 s | First-time indexing is short |
-| Idle incremental | 0.84 s | Re-indexing after small changes is light |
-| Avg `semantic_search` | 68.13 ms | Fast enough to use as the default retrieval path |
-| Avg `hydrate` | 41.63 ms | Opening more context stays cheap |
-| Search-only byte savings | 63.96% | Much less text is sent to the model |
-| Search + hydrate byte savings | 44.1% | Even the guided path stays clearly smaller than opening full files |
+| Corpus | 18 files · 384 blocks | This is measured on the real repository corpus |
+| Full index | 8.69 s | First-time indexing is short |
+| Idle incremental | 0.4 s | Re-indexing after small changes is light |
+| Avg `semantic_search` | 401.06 ms | Fast enough to use as the default retrieval path |
+| Avg `hydrate` | 367.71 ms | Opening more context stays cheap |
+| Search-only byte savings | 83.79% | Much less text is sent to the model |
+| Search + hydrate byte savings | 74.5% | Even the guided path stays clearly smaller than opening full files |
 
 ## What These Results Mean
 
@@ -29,19 +29,19 @@
 
 | Strategy | Average byte savings | Median byte savings | Average word savings |
 |---|---:|---:|---:|
-| `semantic_search` only | 63.96% | 65.1% | 75.02% |
-| `semantic_search` + `hydrate(top1)` | 44.1% | 45.67% | 63.51% |
+| `semantic_search` only | 83.79% | 84.86% | 88.28% |
+| `semantic_search` + `hydrate(top1)` | 74.5% | 75.16% | 81.72% |
 
 ## Query Breakdown
 
 | Query | Top hit | Full files bytes | Search bytes | Search+hydrate bytes | Search savings | Guided savings |
 |---|---|---:|---:|---:|---:|---:|
-| `namespace model project global hybrid` | ``hybrid`` | 9151 | 5486 | 8409 | 40.05% | 8.11% |
-| `hydrate bounded neighborhood related mode` | `Hydration Strategy` | 22069 | 5963 | 8845 | 72.98% | 59.92% |
-| `current project resolution git remote overrides` | `Project Identity` | 17837 | 6102 | 9114 | 65.79% | 48.9% |
-| `storage stats freshness index status` | `Acceptance Criteria` | 15996 | 5913 | 9206 | 63.03% | 42.45% |
-| `Claude Code Codex Cursor OpenCode integrations` | `OpenCode` | 18582 | 6613 | 10905 | 64.41% | 41.31% |
-| `remember note decision lesson handoff pattern` | `Memory note` | 25147 | 5659 | 9072 | 77.5% | 63.92% |
+| `namespace model project global hybrid` | ``hybrid`` | 32911 | 6213 | 9243 | 81.12% | 71.92% |
+| `hydrate bounded neighborhood related mode` | `Hydration Strategy` | 44730 | 6700 | 10007 | 85.02% | 77.63% |
+| `current project resolution git remote overrides` | `Project Identity` | 48925 | 6397 | 9510 | 86.92% | 80.56% |
+| `storage stats freshness index status` | `Added` | 41418 | 6331 | 11308 | 84.71% | 72.7% |
+| `Claude Code Codex Cursor OpenCode integrations` | `👋 What is this awesome tool? (For Humans)` | 59152 | 6566 | 10504 | 88.9% | 82.24% |
+| `remember note decision lesson handoff pattern` | `2. Memory Writing Discipline` | 27488 | 6578 | 10467 | 76.07% | 61.92% |
 
 ## Method
 

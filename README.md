@@ -19,8 +19,8 @@ Instead of reading massive files every time, your AI agent uses **Compact Retrie
 
 | Metric | Value | Benefit for You |
 | :--- | :--- | :--- |
-| **Context Savings** | 📉 **~63.96% fewer bytes** | Reduced API costs, longer context windows |
-| **Search Latency** | ⚡ **<70 ms** | Instant AI responses with zero lag |
+| **Context Savings** | 📉 **~83.79% fewer bytes** | Reduced API costs, longer context windows |
+| **Search Latency** | ⚡ **~400 ms** | Fast enough as the default retrieval path (incl. CPU query embedding) |
 | **Architectural Focus** | 🎯 **Dynamic Pruning** | AI sees only what matters, ignoring session noise |
 | **Linked Knowledge** | 🕸️ **Knowledge Graph** | AI understands relationships between code, tasks, and decisions |
 | **Self-Cleaning Graph** | 🔄 **Dynamic Lifecycle** | Stale relationships are deprecated or unlinked automatically |
