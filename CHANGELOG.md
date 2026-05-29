@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-05-29
+
+Patch release. Improves hybrid-retrieval ranking so exact keyword (BM25)
+matches are no longer suppressed, and hardens secrets test isolation.
+
+### Fixed
+- Hybrid retrieval scored every BM25/FTS-only hit with a flat synthetic
+  distance (0.5) regardless of its BM25 rank, capping even a perfect
+  exact-term match at "medium" confidence and discarding the BM25 lane's
+  ranking signal in the additive scorer. An FTS-only hit's synthetic distance
+  is now derived from its BM25 rank (rank 1 → 0.15, +0.08 per rank, capped at
+  0.6), so a strong exact match can reach high confidence. The
+  `_rank_candidates` sort-key rounding was also tightened (2 → 3 decimals) so
+  fine relevance differences are no longer flattened into recency-ordered
+  ties. Runtime-only: no stored data, schema, or format-version change;
+  existing indexes work unchanged (no migration required).
+
+### Tests
+- Added `test_semantic_search_bm25_only_hit_ranks_first_with_high_confidence`
+  as a regression guard for the BM25 scoring fix, and updated `test_rrf_merge`
+  to assert the rank-aware synthesized distance.
+- Isolated the two `*_unavailable_key_returns_structured_error` secrets tests
+  from a `TQMEMORY_SECRETS_PASSPHRASE` inherited from the developer's shell
+  (the key resolver reads the real process env via priority 1), which produced
+  false failures on machines that have the passphrase configured.
+
 ## [0.7.1] - 2026-05-28
 
 Patch release. Fixes a stale-lockfile deadlock that could block
