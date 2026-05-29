@@ -93,8 +93,12 @@ def test_set_secret_returns_ok_status(tmp_path, in_memory_keyring):
 
 
 def test_set_secret_unavailable_key_returns_structured_error(
-    tmp_path, fail_keyring
+    tmp_path, fail_keyring, monkeypatch
 ):
+    # Resolver priority 1 reads the real process env, so a passphrase set in
+    # the developer's shell would leak in and resolve the key. Strip it so the
+    # "unavailable key" path is genuinely exercised regardless of host env.
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
     env = _env_without_passphrase(tmp_path)
     payload = set_secret_impl("k", "v", environ=env)
     assert payload["status"] == "error"
@@ -139,7 +143,10 @@ def test_get_secret_unavailable_key_returns_structured_error_when_vault_exists(
     env_with = _env_with_passphrase(tmp_path)
     set_secret_impl("k", "v", environ=env_with)
 
-    # Now strip the passphrase from env and break the keyring.
+    # Now strip the passphrase from env and break the keyring. delenv also
+    # removes any passphrase inherited from the developer's real shell, which
+    # the resolver reads via os.environ (priority 1) and would otherwise leak.
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
     env_without = {k: v for k, v in env_with.items() if k != ENV_PASSPHRASE}
     original = keyring.get_keyring()
     keyring.set_keyring(_fail_backend.Keyring())
