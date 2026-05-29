@@ -71,8 +71,8 @@ If you prefer the manual way, run this 60-second flow:
 
 ## 🌟 Advanced Features (Under the Hood)
 
-### 1. Hybrid BM25 + Vector Search
-Every query searches both dense-vector spaces (for semantic meaning) and BM25 full-text indexes (for exact term matches like function names, file paths, or IDs) in parallel. Results are fused using Reciprocal Rank Fusion (RRF, `k=60`). If a lane fails, it degrades gracefully to vector-only search.
+### 1. Hybrid BM25 + Vector Search (vector-first gated)
+Every query searches a dense-vector space (semantic meaning) and a BM25 full-text index (exact terms like function names, file paths, or IDs). The dense lane leads: when its top hit is confident, it is returned directly; otherwise the BM25 lane is fused in via Reciprocal Rank Fusion (RRF, `k=60`) as a **down-weighted rescue**. This vector-first gating measurably beat plain equal-weight RRF on real multilingual corpora (it stops a noisy keyword lane from dragging a confident semantic hit down). If a lane fails, search degrades gracefully to vector-only.
 
 ### 2. Knowledge Graph Relations
 You can build associations between notes, source files, issues, or tasks using directed relations. The memory server automatically enriches search and hydration results with these relations, letting AI agents browse associated context effortlessly.
@@ -106,6 +106,16 @@ Memory notes are separated into logical tiers:
 * `reference`: Markdown blocks, file references.
 
 Default searches return only `durable` + `reference` so session noise never drowns out critical architectural decisions!
+
+### 4. Lightweight ONNX backend (low-RAM, opt-in)
+By default the embedder runs on PyTorch. On a small machine (e.g. ~2 GB RAM) you can run the **same multilingual model** through ONNX Runtime instead — dropping the heavy PyTorch footprint for a much smaller resident size, with **no quality change and no reindex** (the embeddings stay compatible).
+
+```bash
+pip install 'turbo-memory-mcp[onnx]'
+export TQMEMORY_EMBEDDING_BACKEND=fastembed   # default: sentence-transformers
+```
+
+The default install is unchanged — this is purely opt-in.
 
 ---
 

@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Opt-in ONNX embedding backend.** `TQMEMORY_EMBEDDING_BACKEND=fastembed` (with
+  `pip install turbo-memory-mcp[onnx]`) runs the same multilingual model via ONNX
+  Runtime instead of PyTorch — a much smaller RAM footprint for ~2 GB machines,
+  vector-compatible with the default backend so no reindex is needed. The default
+  backend (`sentence-transformers`) is unchanged.
+- **Write-time duplicate/conflict hints.** `remember_note` now surfaces highly
+  similar existing project notes as `similar_notes` (supersede or
+  review-for-conflict candidates) so the agent can reconcile. The server only
+  surfaces candidates — it never auto-deprecates.
+
+### Changed
+- **Retrieval fusion is now vector-first and gated.** When the dense lane's top
+  hit is confident the BM25 lane is skipped; otherwise BM25 is fused via RRF as a
+  down-weighted rescue (previously an equal-weight RRF). Measured to cut the
+  hybrid-vs-vector MRR deficit from -0.049 to -0.006 across 28 real corpora while
+  preserving the cases where the keyword lane genuinely helps.
+- The retrieval vector dimension is now derived from the active embedding model
+  (no longer hardcoded to 384), so switching to a different-dimension model needs
+  no schema change.
+
 ## [0.8.1] - 2026-05-29
 
 Patch release. Fixes the reported server version, which was hardcoded and had
