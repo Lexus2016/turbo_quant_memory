@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-05-29
+
+Patch release. Fixes the reported server version, which was hardcoded and had
+drifted from the actual release.
+
+### Fixed
+- `__version__` (surfaced by `server_info`, `health`, the CLI `--version`, and
+  the daemon handshake) was a hardcoded literal still reading `0.7.1` even on
+  the 0.7.2 and 0.8.0 installs. It now derives from the installed package
+  metadata (single source of truth, driven by `pyproject.toml`), so it can no
+  longer drift from the release. Falls back to a literal only when running from
+  un-installed source. Note: the 0.7.2 and 0.8.0 tags still report `0.7.1` via
+  `server_info`; upgrade to 0.8.1 to get accurate version reporting.
+
 ## [0.8.0] - 2026-05-29
 
 Minor release. Switches the default embedding model to a multilingual one,
