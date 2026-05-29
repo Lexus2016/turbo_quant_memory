@@ -12,3 +12,4 @@ benchmarks/retrieval_quality.json
 benchmarks/retrieval_quality.md
 benchmarks/retrieval_quality_global.json
 benchmarks/retrieval_quality_global.md
+benchmarks/paraphrase_fixture.json
