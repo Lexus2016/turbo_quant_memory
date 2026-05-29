@@ -1490,9 +1490,16 @@ def test_rrf_merge_combines_two_lanes_in_rank_order() -> None:
     assert set(ids) == {"v_top", "shared", "v_low", "fts_top"}
     # Every row carries the RRF score for downstream debugging.
     assert all("_rrf_score" in r for r in merged)
-    # `_distance` is preserved for vector hits and synthesized for FTS-only.
+    # Vector hits keep their real distance; an item present in both lanes
+    # keeps the vector row's distance (more downstream signal than _score).
+    shared = next(r for r in merged if r["item_id"] == "shared")
+    assert shared["_distance"] == 0.4
+    # FTS-only hits get a distance synthesized from their BM25 rank
+    # (rank 1 -> 0.15, +0.08 per rank), not a flat neutral. `fts_top` is
+    # BM25 rank 2 -> 0.15 + 0.08 = 0.23, so a strong BM25 match scores well
+    # downstream instead of being capped at the old flat 0.5.
     fts_only = next(r for r in merged if r["item_id"] == "fts_top")
-    assert fts_only["_distance"] == 0.5
+    assert fts_only["_distance"] == 0.23
 
 
 def test_rrf_merge_skips_rows_without_item_id() -> None:

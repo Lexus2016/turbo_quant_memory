@@ -295,3 +295,38 @@ def test_semantic_search_full_reindexes_when_markdown_manifest_format_is_stale(t
 
     assert payload["result_count"] >= 1
     assert repaired_manifest["format_version"] == MARKDOWN_FORMAT_VERSION
+
+
+def test_semantic_search_bm25_only_hit_ranks_first_with_high_confidence(tmp_path: Path) -> None:
+    """A term absent from the vector keyword space but present verbatim in a
+    block must still surface via the BM25/FTS lane, rank first, and earn high
+    confidence — not be pinned below by a flat synthetic distance.
+
+    Regression guard for the RRF/BM25 scoring fix: before it, an FTS-only hit
+    received a flat synthetic `_distance` (0.5) regardless of its BM25 rank, so
+    the strongest exact-term match could not exceed ~0.74 ("medium").
+    """
+    env = _test_env(tmp_path)
+    # "kubernetes"/"helm" are NOT in KeywordEmbedder.KEYWORDS, so the dense
+    # vector lane is blind to them; only the BM25/FTS lane can match.
+    _seed_markdown_block(
+        tmp_path,
+        env,
+        block_id="block-kubernetes",
+        text="Kubernetes helm chart rollout and pod autoscaling runbook.",
+        source_path="docs/kubernetes.md",
+    )
+    _seed_markdown_block(
+        tmp_path,
+        env,
+        block_id="block-auth",
+        text="Auth refresh rotation keeps session cache stable for login flows.",
+        source_path="docs/auth.md",
+    )
+
+    payload = semantic_search_impl("kubernetes helm", scope="project", limit=5, environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["items"][0]["block_id"] == "block-kubernetes"
+    assert payload["items"][0]["confidence_state"] == "high"
+    assert payload["items"][0]["score"] >= 0.82

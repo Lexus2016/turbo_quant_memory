@@ -164,7 +164,7 @@ def _ensure_scope_synced(index: RetrievalIndex, store: MemoryStore, scope: str) 
 def _rank_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates.sort(
         key=lambda item: (
-            -round(float(item["effective_score"]), 2),
+            -round(float(item["effective_score"]), 3),
             item["scope_priority"],
             item["source_priority"],
             -item["updated_epoch"],

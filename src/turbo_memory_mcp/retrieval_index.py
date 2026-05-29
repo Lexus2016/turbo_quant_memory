@@ -392,18 +392,28 @@ def _rrf_merge(
     is better. `k=60` is the standard from the original RRF paper and
     keeps the formula robust to outliers.
 
-    Items that appeared only in the FTS lane lack a `_distance` field;
-    downstream scoring uses 0.5 as a synthetic neutral so a strong FTS
-    hit still gets a reasonable base score from `_distance_to_score`.
+    By convention ``result_lists`` is ``[vector_rows, fts_rows]``. Items
+    that appeared only in the FTS lane lack a real `_distance`. Rather than
+    a flat neutral value (which pinned every BM25-only hit to the same
+    base score regardless of how strongly BM25 matched), we synthesize a
+    `_distance` from the item's BM25 rank: rank 1 -> ~0.15 (a strong
+    exact-term match can then reach high confidence), decaying with rank.
+    This is what lets the BM25 lane actually influence the downstream
+    additive score instead of being silently capped.
     """
     scores: dict[str, float] = {}
     rows: dict[str, dict[str, Any]] = {}
-    for hits in result_lists:
+    fts_rank: dict[str, int] = {}
+    for lane_index, hits in enumerate(result_lists):
         for rank, row in enumerate(hits, start=1):
             iid = str(row.get("item_id") or "")
             if not iid:
                 continue
             scores[iid] = scores.get(iid, 0.0) + 1.0 / (k + rank)
+            # Lane 1 is the FTS lane by convention; remember each item's
+            # best BM25 rank so FTS-only hits can be scored by it below.
+            if lane_index == 1:
+                fts_rank.setdefault(iid, rank)
             if iid not in rows:
                 rows[iid] = dict(row)
             elif "_distance" not in rows[iid] and "_distance" in row:
@@ -415,7 +425,13 @@ def _rrf_merge(
     output: list[dict[str, Any]] = []
     for iid, rrf_score in ordered[:limit]:
         record = rows[iid]
-        record.setdefault("_distance", 0.5)
+        if "_distance" not in record:
+            # FTS-only hit: map its BM25 rank to a synthetic distance so the
+            # additive scorer reflects how well BM25 matched (rank 1 -> 0.15,
+            # +0.08 per rank, capped at 0.6) instead of a flat neutral that
+            # capped every BM25 hit at the same mid-range base.
+            rank = fts_rank.get(iid, limit)
+            record["_distance"] = round(min(0.15 + 0.08 * (rank - 1), 0.6), 4)
         record["_rrf_score"] = round(rrf_score, 6)
         output.append(record)
     return output
