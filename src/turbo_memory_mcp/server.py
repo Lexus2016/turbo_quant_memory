@@ -935,6 +935,68 @@ def get_related_entities_impl(
     }
 
 
+# Write-time similarity surfacing thresholds. A near-duplicate (>= DUP) of the
+# SAME kind is offered as a supersede candidate; merely related notes (>= RELATED)
+# are surfaced for the agent to check for contradiction/overlap. The server never
+# auto-deprecates — it only surfaces candidates; the calling agent (an LLM) judges.
+_DUPLICATE_SCORE_THRESHOLD = 0.88
+_RELATED_SCORE_THRESHOLD = 0.78
+_SIMILARITY_HINT_LIMIT = 4
+
+
+def _build_similarity_hints(store: MemoryStore, note: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Best-effort write-time hints: pre-existing project notes highly similar to
+    the one just written. Lets the agent decide whether the new note SUPERSEDES an
+    old one (near-duplicate) or CONTRADICTS it (related). Any failure degrades to an
+    empty list and never blocks the write."""
+    try:
+        index = RetrievalIndex(store)
+        text = f"{note.get('title', '')}\n{note.get('content', '')}"
+        neighbours = index.find_similar(
+            text,
+            PROJECT_SCOPE,
+            limit=_SIMILARITY_HINT_LIMIT,
+            exclude_item_id=str(note.get("note_id", "")),
+        )
+    except Exception:  # noqa: BLE001 — hints are advisory; never fail a write
+        return []
+
+    new_kind = str(note.get("note_kind", ""))
+    hints: list[dict[str, Any]] = []
+    for neighbour in neighbours:
+        # The project index also holds markdown doc blocks; only surface notes,
+        # otherwise a hint could point deprecate_note at a non-note item_id.
+        if neighbour.get("source_kind") != NOTE_SOURCE_KIND:
+            continue
+        score = float(neighbour.get("score", 0.0))
+        if score < _RELATED_SCORE_THRESHOLD:
+            continue
+        same_kind = bool(new_kind) and neighbour.get("note_kind") == new_kind
+        if score >= _DUPLICATE_SCORE_THRESHOLD and same_kind:
+            suggestion = "supersede_candidate"
+            hint = (
+                "Near-duplicate of an existing note. If this note replaces it, link a "
+                "'supersedes' relation and deprecate_note(old, replacement_note_id=new)."
+            )
+        else:
+            suggestion = "review_for_conflict"
+            hint = (
+                "Closely related existing note. Check for contradiction or overlap "
+                "and reconcile if they disagree."
+            )
+        hints.append(
+            {
+                "item_id": neighbour.get("item_id"),
+                "title": neighbour.get("title"),
+                "note_kind": neighbour.get("note_kind"),
+                "score": score,
+                "suggestion": suggestion,
+                "hint": hint,
+            }
+        )
+    return hints
+
+
 def remember_note_impl(
     title: str,
     content: str,
@@ -963,13 +1025,17 @@ def remember_note_impl(
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     note = store.write_project_note(title, content, note_kind=resolved_kind, tags=tags, source_refs=source_refs)
     warning = _sync_with_warning(lambda: _sync_project_note_change(store, str(note["note_id"])))
-    return build_note_write_payload(
+    payload = build_note_write_payload(
         note,
         source_path=str(store.note_source_path(note)),
         action="stored",
         content_preview=build_content_preview(note["content"]),
         warning=warning,
     )
+    similar_notes = _build_similarity_hints(store, note)
+    if similar_notes:
+        payload["similar_notes"] = similar_notes
+    return payload
 
 
 def promote_note_impl(

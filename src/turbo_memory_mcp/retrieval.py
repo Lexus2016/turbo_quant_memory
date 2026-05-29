@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .contracts import build_search_payload, build_semantic_item_payload
-from .retrieval_index import RetrievalIndex
+from .retrieval_index import HIGH_CONFIDENCE_SCORE, RetrievalIndex
 from .store import (
     DEFAULT_SEARCH_TIERS,
     GLOBAL_SCOPE,
@@ -257,7 +257,7 @@ def _resolve_overall_state(candidates: list[Mapping[str, Any]]) -> tuple[str, st
 
 
 def _confidence_state(score: float) -> str:
-    if score >= 0.82:
+    if score >= HIGH_CONFIDENCE_SCORE:
         return "high"
     if score >= 0.62:
         return "medium"

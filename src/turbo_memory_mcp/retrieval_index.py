@@ -20,17 +20,37 @@ if TYPE_CHECKING:  # pragma: no cover - type-only imports
     from sentence_transformers import SentenceTransformer
 
 DEFAULT_EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-# Multilingual default (EN/UK/RU/PL/ES/ZH); 384-dim like the previous
-# all-MiniLM-L6-v2, so VECTOR_DIMENSIONS is unchanged and no schema change is
-# needed. Override per-install via the TQMEMORY_EMBEDDING_MODEL env var without
-# touching code. Changing the model requires a retrieval re-embed migration
-# (RETRIEVAL v3 -> v4); a different-dimension model would also need a schema bump.
+# Multilingual default (EN/UK/RU/PL/ES/ZH). Override per-install via the
+# TQMEMORY_EMBEDDING_MODEL env var without touching code — e.g. a deployer who
+# wants maximum multilingual quality can point this at a stronger model such as
+# BAAI/bge-m3. The retrieval table's vector dimension is DERIVED from whatever
+# model is configured (see _resolve_vector_dimensions), so a higher-dimensional
+# model just works after a reindex — there is no hardcoded dimension to bump.
+# Switching the model requires a retrieval re-embed (reset + re-sync) because the
+# old vectors are dimension/space-incompatible.
 EMBEDDING_MODEL_NAME = os.environ.get("TQMEMORY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL_NAME)
 RETRIEVAL_TABLE_NAME = "items"
-VECTOR_DIMENSIONS = 384
+# Fallback only — used when the active embedder cannot be probed (e.g. an empty
+# schema built before any model is available). The real dimension comes from the
+# model via _resolve_vector_dimensions().
+DEFAULT_VECTOR_DIMENSIONS = 384
+VECTOR_DIMENSIONS = DEFAULT_VECTOR_DIMENSIONS  # back-compat export; default fallback
 PROJECT_RETRIEVAL_LAYOUT = "projects/<project_id>/retrieval/"
 GLOBAL_RETRIEVAL_LAYOUT = "global/retrieval/"
 ITEM_ID_FIELD = "item_id"
+
+# Retrieval fusion tuning. Equal-weight RRF was measured to underperform pure
+# vector on real corpora (the BM25 lane surfaces lexically-similar-but-wrong rows
+# and drags a confident dense hit down, worst on doc-heavy corpora). So we gate
+# the BM25 lane on dense confidence, and down-weight it when it does run.
+#
+# HIGH_CONFIDENCE_SCORE is the SINGLE source of truth for the "high confidence"
+# cosine band, reused by retrieval._confidence_state. One number means a deployer
+# who swaps the embedding model recalibrates in exactly one place instead of
+# chasing a corpus-tuned literal scattered across modules.
+HIGH_CONFIDENCE_SCORE = 0.82
+VECTOR_GATE_THRESHOLD = HIGH_CONFIDENCE_SCORE
+FTS_LANE_WEIGHT = 0.3
 
 
 class TextEmbedder(Protocol):
@@ -197,10 +217,76 @@ class RetrievalIndex:
         fetch_limit = max(limit * 3, limit)
         query_vector = self._embed_texts([query])[0]
         vector_rows = _safe_vector_search(table, query_vector, fetch_limit, where_clause)
-        fts_rows = _safe_fts_search(table, query, fetch_limit, where_clause)
 
-        merged = _rrf_merge([vector_rows, fts_rows], k=60, limit=limit)
+        # Vector-first gating: when the dense lane already has a confident top hit,
+        # return it directly and skip BM25 entirely. Equal-weight RRF was measured
+        # to drag a confident dense hit DOWN when BM25 surfaced lexically-similar-
+        # but-wrong rows (worst on doc-heavy corpora). Gating fixes that and also
+        # saves the FTS query on the common confident case.
+        if vector_rows:
+            top_distance = float(vector_rows[0].get("_distance", 1.0))
+            if (1.0 - min(top_distance, 1.0)) >= VECTOR_GATE_THRESHOLD:
+                return vector_rows[:limit]
+
+        # Low dense confidence: bring in BM25 as a DOWN-WEIGHTED rescue lane so it
+        # can recover recall without overruling the dense lane.
+        fts_rows = _safe_fts_search(table, query, fetch_limit, where_clause)
+        merged = _rrf_merge(
+            [vector_rows, fts_rows], k=60, limit=limit, weights=[1.0, FTS_LANE_WEIGHT]
+        )
         return merged
+
+    def find_similar(
+        self,
+        text: str,
+        scope: str,
+        *,
+        limit: int = 5,
+        project_id: str | None = None,
+        exclude_item_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Dense-vector nearest neighbours for write-time duplicate/conflict
+        surfacing.
+
+        Unlike :meth:`search`, this uses ONLY the vector lane and returns a
+        ``score`` that is an interpretable cosine similarity in ``[0, 1]``
+        (``1`` = identical). Duplicate/supersede detection needs an absolute
+        similarity, not an RRF rank-fusion score whose magnitude is meaningless
+        on its own. Best-effort: degrades to an empty list if the index is
+        unavailable or empty, so it can never block a write.
+        """
+        if not text.strip():
+            return []
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return []
+        query_vector = self._embed_texts([text])[0]
+        # Fetch one extra when excluding self so we still return up to `limit`.
+        fetch = limit + (1 if exclude_item_id else 0)
+        rows = _safe_vector_search(table, query_vector, fetch, None)
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item_id = str(row.get("item_id", ""))
+            if exclude_item_id and item_id == exclude_item_id:
+                continue
+            distance = float(row.get("_distance", 1.0))
+            results.append(
+                {
+                    "item_id": item_id,
+                    "title": str(row.get("title", "")),
+                    "note_kind": row.get("note_kind"),
+                    "tier": row.get("tier"),
+                    "source_kind": row.get("source_kind"),
+                    "source_path": row.get("source_path"),
+                    "updated_at": row.get("updated_at"),
+                    # Mirrors retrieval._distance_to_score; inlined to avoid a
+                    # retrieval -> retrieval_index import cycle.
+                    "score": round(max(0.0, 1.0 - min(distance, 1.0)), 4),
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
 
     def list_rows(self, scope: str, *, project_id: str | None = None) -> list[dict[str, Any]]:
         table = self._open_scope_table(scope, project_id=project_id)
@@ -392,6 +478,7 @@ def _rrf_merge(
     *,
     k: int = 60,
     limit: int,
+    weights: Sequence[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Reciprocal Rank Fusion.
 
@@ -412,11 +499,14 @@ def _rrf_merge(
     rows: dict[str, dict[str, Any]] = {}
     fts_rank: dict[str, int] = {}
     for lane_index, hits in enumerate(result_lists):
+        lane_weight = (
+            weights[lane_index] if weights is not None and lane_index < len(weights) else 1.0
+        )
         for rank, row in enumerate(hits, start=1):
             iid = str(row.get("item_id") or "")
             if not iid:
                 continue
-            scores[iid] = scores.get(iid, 0.0) + 1.0 / (k + rank)
+            scores[iid] = scores.get(iid, 0.0) + lane_weight / (k + rank)
             # Lane 1 is the FTS lane by convention; remember each item's
             # best BM25 rank so FTS-only hits can be scored by it below.
             if lane_index == 1:
@@ -528,9 +618,25 @@ def mirror_note_record(store: MemoryStore, note: Mapping[str, Any]) -> dict[str,
     }
 
 
-def _table_schema() -> "pa.Schema":
+def _resolve_vector_dimensions() -> int:
+    """Embedding dimension of the ACTIVE model, probed once via a tiny encode.
+
+    Derived rather than hardcoded so a deployer can point TQMEMORY_EMBEDDING_MODEL
+    at a higher-quality / different-dimension model (e.g. BAAI/bge-m3 at 1024) and
+    have the retrieval schema follow automatically after a reindex. Falls back to
+    DEFAULT_VECTOR_DIMENSIONS if the model cannot be probed.
+    """
+    try:
+        probe = build_default_embedder().encode(["dimension probe"])
+        return int(len(list(probe[0])))
+    except Exception:  # noqa: BLE001
+        return DEFAULT_VECTOR_DIMENSIONS
+
+
+def _table_schema(dimensions: int | None = None) -> "pa.Schema":
     import pyarrow as pa
 
+    vector_dim = dimensions if dimensions is not None else _resolve_vector_dimensions()
     return pa.schema(
         [
             pa.field("scope", pa.string()),
@@ -549,7 +655,7 @@ def _table_schema() -> "pa.Schema":
             pa.field("content_search", pa.string()),
             pa.field("content_summary_seed", pa.string()),
             pa.field("updated_at", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), VECTOR_DIMENSIONS)),
+            pa.field("vector", pa.list_(pa.float32(), vector_dim)),
         ]
     )
 
