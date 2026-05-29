@@ -40,11 +40,11 @@ NOTE_TIER_REFERENCE = "reference"
 NOTE_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_EPISODIC, NOTE_TIER_REFERENCE)
 DEFAULT_SEARCH_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_REFERENCE)
 MARKDOWN_FORMAT_VERSION = 1
-RETRIEVAL_FORMAT_VERSION = 3
+RETRIEVAL_FORMAT_VERSION = 4
 USAGE_STATS_FORMAT_VERSION = 2
 NOTES_FORMAT_VERSION = 1
 SECRETS_FORMAT_VERSION = 2
-# RETRIEVAL is at 3 (post Phase 3 BM25 FTS index). NOTES still ships at 1
+# RETRIEVAL is at 4 (post multilingual re-embed; v3 was Phase 3 BM25 FTS index). NOTES still ships at 1
 # because legacy installs need the v1->v2 reclass to run before manifests bump.
 # SECRETS ships at 2: v1 is the conceptual "subsystem exists but no per-project
 # vaults provisioned yet" baseline (matches NOTES' legacy-v1 convention); the

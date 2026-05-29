@@ -8,6 +8,7 @@ vector table, it never pays the ~470 MB import cost of these libraries.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
@@ -18,7 +19,13 @@ if TYPE_CHECKING:  # pragma: no cover - type-only imports
     import pyarrow as pa
     from sentence_transformers import SentenceTransformer
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+DEFAULT_EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+# Multilingual default (EN/UK/RU/PL/ES/ZH); 384-dim like the previous
+# all-MiniLM-L6-v2, so VECTOR_DIMENSIONS is unchanged and no schema change is
+# needed. Override per-install via the TQMEMORY_EMBEDDING_MODEL env var without
+# touching code. Changing the model requires a retrieval re-embed migration
+# (RETRIEVAL v3 -> v4); a different-dimension model would also need a schema bump.
+EMBEDDING_MODEL_NAME = os.environ.get("TQMEMORY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL_NAME)
 RETRIEVAL_TABLE_NAME = "items"
 VECTOR_DIMENSIONS = 384
 PROJECT_RETRIEVAL_LAYOUT = "projects/<project_id>/retrieval/"
@@ -548,6 +555,7 @@ def _table_schema() -> "pa.Schema":
 
 
 __all__ = [
+    "DEFAULT_EMBEDDING_MODEL_NAME",
     "EMBEDDING_MODEL_NAME",
     "GLOBAL_RETRIEVAL_LAYOUT",
     "ITEM_ID_FIELD",

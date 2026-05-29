@@ -132,6 +132,35 @@ def upgrade_retrieval_v2_to_v3(store: MemoryStore) -> None:
         _ensure_fts_index(table)
 
 
+@migration(
+    Subsystem.RETRIEVAL,
+    from_version=3,
+    to_version=4,
+    description="re-embed all retrieval vectors with the multilingual embedding model",
+)
+def upgrade_retrieval_v3_to_v4(store: MemoryStore) -> None:
+    """Re-embed project + global retrieval tables with the new default
+    embedding model (multilingual paraphrase-MiniLM-L12-v2).
+
+    The vector dimension is unchanged (384), so the LanceDB schema stays
+    compatible; only the vector values change. Source data (note JSONs and
+    markdown blocks) is untouched — the derived index is wiped and rebuilt
+    from the canonical store, so nothing is lost.
+
+    Idempotent: re-running rebuilds from the same canonical source. This is
+    the slowest retrieval migration because it re-encodes every block and
+    note; cost scales with corpus size.
+    """
+    from ..retrieval_index import RetrievalIndex
+    from ..store import GLOBAL_SCOPE, PROJECT_SCOPE
+
+    index = RetrievalIndex(store)
+    index.reset_scope(PROJECT_SCOPE, project_id=store.project.project_id)
+    index.reset_scope(GLOBAL_SCOPE)
+    index.sync_project()
+    index.sync_global()
+
+
 # --------------------------------------------------------------------------- #
 # Internals
 # --------------------------------------------------------------------------- #

@@ -281,8 +281,10 @@ def test_apply_pending_retrieval_bumps_both_project_and_global(
     apply_pending(store, subsystems=[Subsystem.RETRIEVAL], snapshot=False)
     proj = store.read_project_retrieval_manifest()
     glob = store.read_global_retrieval_manifest()
-    assert proj is not None and proj["format_version"] == 3
-    assert glob is not None and glob["format_version"] == 3
+    from turbo_memory_mcp.store import RETRIEVAL_FORMAT_VERSION
+
+    assert proj is not None and proj["format_version"] == RETRIEVAL_FORMAT_VERSION
+    assert glob is not None and glob["format_version"] == RETRIEVAL_FORMAT_VERSION
 
 
 def test_format_pending_warning_is_none_when_up_to_date(store: MemoryStore) -> None:
@@ -1094,6 +1096,42 @@ def test_retrieval_v1_to_v2_upgrade_resets_and_resyncs_both_scopes(
     assert set(reset_scopes) == {"project", "global"}
 
 
+def test_upgrade_retrieval_v3_to_v4_reembeds_both_scopes(
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v3 -> v4 swaps the embedding model, so it must wipe and re-embed BOTH
+    project and global retrieval tables from the canonical store. Same
+    reset-then-resync shape as v1 -> v2; stub RetrievalIndex to avoid LanceDB."""
+    from turbo_memory_mcp.migrations.upgrades import upgrade_retrieval_v3_to_v4
+
+    calls: list[str] = []
+
+    class StubIndex:
+        def __init__(self, *_args, **_kwargs):
+            calls.append("__init__")
+
+        def reset_scope(self, scope, *, project_id=None):
+            calls.append(f"reset_scope:{scope}")
+
+        def sync_project(self):
+            calls.append("sync_project")
+
+        def sync_global(self):
+            calls.append("sync_global")
+
+    monkeypatch.setattr("turbo_memory_mcp.retrieval_index.RetrievalIndex", StubIndex)
+
+    upgrade_retrieval_v3_to_v4(store)
+
+    assert calls[0] == "__init__"
+    assert "reset_scope:project" in calls
+    assert "reset_scope:global" in calls
+    # Resync must happen after the resets so we rebuild from canonical source.
+    assert calls.index("sync_project") > calls.index("reset_scope:project")
+    assert calls.index("sync_global") > calls.index("reset_scope:global")
+
+
 def test_table_has_tier_column_detects_phase2_schema() -> None:
     from turbo_memory_mcp.retrieval_index import _table_has_tier_column
 
@@ -1268,7 +1306,7 @@ def test_write_retrieval_manifests_preserve_existing_format_version(
             "scope": "project",
             "project_id": store.project.project_id,
             "source_kind": "retrieval",
-            "format_version": 3,
+            "format_version": 999,
         },
     )
     write_json_atomic(
@@ -1276,13 +1314,15 @@ def test_write_retrieval_manifests_preserve_existing_format_version(
         {
             "scope": "global",
             "source_kind": "retrieval",
-            "format_version": 3,
+            "format_version": 999,
         },
     )
     proj = store.write_project_retrieval_manifest()
     glob = store.write_global_retrieval_manifest()
-    assert proj["format_version"] == 3
-    assert glob["format_version"] == 3
+    # A higher (future) on-disk version must be preserved, never downgraded to
+    # the code's current RETRIEVAL_FORMAT_VERSION.
+    assert proj["format_version"] == 999
+    assert glob["format_version"] == 999
 
 
 def test_bump_notes_manifest_writes_full_payload_when_manifest_missing(

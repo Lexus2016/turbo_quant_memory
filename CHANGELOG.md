@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-29
+
+Minor release. Switches the default embedding model to a multilingual one,
+dramatically improving retrieval for non-English content (Cyrillic, Polish,
+Spanish, Chinese). Requires a one-time re-embed migration.
+
+### Changed
+- Default embedding model is now
+  `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (was
+  `all-MiniLM-L6-v2`). On a controlled 6-language probe (EN/UK/RU/PL/ES/ZH),
+  avg recall@1 rose from 0.55 to 0.98; Cyrillic in particular went from ~0.25
+  to 1.0. The model is still 384-dimensional, so the LanceDB schema is
+  unchanged.
+- The embedding model is now overridable per install via the
+  `TQMEMORY_EMBEDDING_MODEL` environment variable, with no code change.
+
+### Migration
+- New retrieval migration v3 -> v4 re-embeds every block and note with the new
+  model. Source data (note JSONs, markdown) is untouched; the derived vector
+  index is rebuilt from the canonical store, so nothing is lost. After
+  upgrading, stop all MCP clients and run `turbo-memory-mcp migrate --apply`.
+  Because it re-encodes the whole corpus it can take a while on large stores —
+  the `health` / `server_info` migration hint now says so explicitly.
+
+### Tests
+- Added `test_upgrade_retrieval_v3_to_v4_reembeds_both_scopes`; made two
+  retrieval-manifest version assertions version-agnostic so future format
+  bumps no longer require touching them.
+
 ## [0.7.2] - 2026-05-29
 
 Patch release. Improves hybrid-retrieval ranking so exact keyword (BM25)

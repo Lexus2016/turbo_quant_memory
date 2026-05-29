@@ -351,6 +351,12 @@ def _migration_pending_signal(
             "automatically; on failure the CLI prints the exact "
             "`--restore-from` command."
         )
+        if "retrieval" in pending_subs:
+            hint += (
+                " Note: the retrieval upgrade re-embeds every block and note "
+                "with the current embedding model, so it can take a while on "
+                "large corpora; canonical notes and markdown are not modified."
+            )
         return True, hint
     except Exception:  # noqa: BLE001
         return False, None
