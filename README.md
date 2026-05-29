@@ -1,4 +1,4 @@
-# 🧠 Turbo Quant Memory for AI Agents (v0.7.1)
+# 🧠 Turbo Quant Memory for AI Agents (v0.9.0)
 
 > **The first self-installable, trilingual local-first memory & knowledge graph for AI coding agents.** Save up to 60% of your token budget while giving your AI assistant a permanent, hyper-fast, and highly connected brain.
 
