@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from turbo_memory_mcp.identity import ProjectIdentity
 from turbo_memory_mcp.migrations import (
     Migration,
-    MigrationOutcome,
     Subsystem,
     apply_pending,
     clear_registry,
@@ -1555,7 +1553,9 @@ def test_rrf_merge_skips_rows_without_item_id() -> None:
 def test_ensure_fts_index_is_idempotent() -> None:
     """`_ensure_fts_index` swallows the 'already exists' error so callers
     can invoke it on every search without worrying about state."""
-    import tempfile, pyarrow as pa, lancedb
+    import tempfile
+    import pyarrow as pa
+    import lancedb
     from turbo_memory_mcp.retrieval_index import _ensure_fts_index
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1583,7 +1583,9 @@ def test_ensure_fts_index_is_idempotent() -> None:
 def test_safe_fts_search_returns_empty_on_legacy_table_without_index() -> None:
     """A table that the test never indexed must yield zero FTS rows without
     raising — so search() can degrade to vector-only on legacy installs."""
-    import tempfile, pyarrow as pa, lancedb
+    import tempfile
+    import pyarrow as pa
+    import lancedb
     from turbo_memory_mcp.retrieval_index import _safe_fts_search
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1650,7 +1652,8 @@ def test_hybrid_search_returns_results_on_live_lancedb(tmp_path) -> None:
     """End-to-end probe: a freshly-built LanceDB table with both a vector
     column and an FTS index returns hits for a query that matches by
     BM25 even when the vector signal is poor."""
-    import lancedb, pyarrow as pa
+    import lancedb
+    import pyarrow as pa
     from turbo_memory_mcp.retrieval_index import _safe_vector_search, _safe_fts_search, _rrf_merge
 
     db = lancedb.connect(str(tmp_path))

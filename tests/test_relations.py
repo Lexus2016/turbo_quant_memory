@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from turbo_memory_mcp.identity import ProjectIdentity

@@ -11,10 +11,8 @@ from typing import Any, Mapping
 
 import pytest
 
-from turbo_memory_mcp import daemon
 from turbo_memory_mcp.daemon import (
     DAEMON_PROTOCOL_VERSION,
-    BootstrapResult,
     DaemonClient,
     DaemonEndpoint,
     DaemonListener,
