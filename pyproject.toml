@@ -41,6 +41,14 @@ dependencies = [
   "sentence-transformers>=5.3.0,<6.0",
 ]
 
+[project.optional-dependencies]
+# Opt-in ONNX embedding backend: runs the same model via ONNX Runtime instead of
+# PyTorch, cutting RAM enough to be comfortable on a ~2GB machine. Enable with
+# `pip install turbo-memory-mcp[onnx]` + TQMEMORY_EMBEDDING_BACKEND=fastembed.
+onnx = [
+  "fastembed>=0.4.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/Lexus2016/turbo_quant_memory"
 Documentation = "https://github.com/Lexus2016/turbo_quant_memory#readme"

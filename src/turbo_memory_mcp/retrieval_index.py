@@ -58,7 +58,20 @@ class TextEmbedder(Protocol):
         """Return one embedding vector per text item."""
 
 
-def build_default_embedder() -> "SentenceTransformer":
+def build_default_embedder() -> "TextEmbedder":
+    """Return the active embedder, selected by the TQMEMORY_EMBEDDING_BACKEND env:
+    'sentence-transformers' (default, PyTorch) or 'fastembed' (ONNX runtime).
+
+    The fastembed backend runs the SAME model far lighter — it drops the PyTorch
+    runtime (~1GB+ resident) for ONNX Runtime, which is what makes the server
+    comfortable on a ~2GB-RAM machine. It is OPT-IN so the default install is
+    unchanged: enable with `pip install turbo-memory-mcp[onnx]` and
+    TQMEMORY_EMBEDDING_BACKEND=fastembed. Both backends produce vector-compatible
+    embeddings for the default multilingual model, so switching needs no reindex.
+    """
+    backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "sentence-transformers").strip().lower()
+    if backend == "fastembed":
+        return _load_fastembed_embedder()
     return _load_default_embedder()
 
 
@@ -67,6 +80,25 @@ def _load_default_embedder() -> "SentenceTransformer":
     from sentence_transformers import SentenceTransformer
 
     return SentenceTransformer(EMBEDDING_MODEL_NAME)
+
+
+class _FastEmbedEmbedder:
+    """Adapter exposing the TextEmbedder.encode interface over fastembed's ONNX
+    embedding. Sized for symmetric models (our multilingual MiniLM default); an
+    asymmetric query/passage model (e.g. e5) would need prefix handling added here."""
+
+    def __init__(self, model_name: str) -> None:
+        from fastembed import TextEmbedding
+
+        self._model = TextEmbedding(model_name)
+
+    def encode(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[float(value) for value in vector] for vector in self._model.embed(list(texts))]
+
+
+@lru_cache(maxsize=1)
+def _load_fastembed_embedder() -> "_FastEmbedEmbedder":
+    return _FastEmbedEmbedder(EMBEDDING_MODEL_NAME)
 
 
 class RetrievalIndex:
