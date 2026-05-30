@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **User-flagged memory (`provenance`).** `remember_note` now accepts an optional
+  `provenance` parameter (`human-explicit` | `agent`, default `agent`). Notes the
+  user explicitly asks to remember are flagged `human-explicit` and rank above
+  agent-written notes of equal relevance — via a deterministic provenance
+  tie-breaker plus a small score bonus for close matches. The field is optional
+  and backward compatible: legacy notes read as `agent` (lazy normalize-on-read),
+  so no migration and no format-version bump are required.
+
 ## [0.9.0] - 2026-05-29
 
 ### Added

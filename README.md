@@ -207,6 +207,8 @@ When you learn something important, solve a complex bug, or make an architectura
 * **Patterns (`kind="pattern"`):** Store reusable templates or styling conventions.
 * **Handoffs (`kind="handoff"`):** Store episodic progress before pausing or ending a session (automatically assigned to `episodic` tier).
 
+**User-flagged notes:** when the USER explicitly asks to remember something ("remember this", "save this to my knowledge base"), call `remember_note(..., provenance="human-explicit")`. Notes you write on your own initiative keep the default `provenance="agent"` — human-flagged notes rank above agent-written ones of equal relevance.
+
 *Format your notes in English. Keep them concise, technical, and actionable. Add semantic tags.*
 
 ### 3. Knowledge Graph Linking
