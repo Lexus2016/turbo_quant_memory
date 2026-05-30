@@ -99,3 +99,12 @@ def test_remember_note_human_explicit(tmp_path):
     _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
     note = store.read_project_note(payload["item"]["item_id"])
     assert note["provenance"] == "human-explicit"
+
+
+def test_remember_payload_surfaces_provenance(tmp_path):
+    env = _env(tmp_path)
+    payload = remember_note_impl(
+        "T", "body", kind="decision",
+        provenance="human-explicit", cwd=tmp_path / "repo", environ=env,
+    )
+    assert payload["item"]["provenance"] == "human-explicit"

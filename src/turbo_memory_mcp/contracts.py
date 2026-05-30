@@ -186,6 +186,7 @@ def build_note_item_payload(
         "item_id": note["note_id"],
         "source_path": source_path,
         "updated_at": note["updated_at"],
+        "provenance": note.get("provenance", "agent"),
         "confidence": round(float(confidence), 3),
         "can_hydrate": can_hydrate,
     }
@@ -274,6 +275,8 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
         payload["note_status"] = item["note_status"]
     if item.get("tier"):
         payload["tier"] = item["tier"]
+    if item.get("provenance"):
+        payload["provenance"] = item["provenance"]
     if item.get("promoted_from"):
         payload["promoted_from"] = dict(item["promoted_from"])
     if "relations" in item:
@@ -335,6 +338,8 @@ def build_hydrated_note_item_payload(
     }
     if note.get("tier"):
         payload["tier"] = note["tier"]
+    if note.get("provenance"):
+        payload["provenance"] = note["provenance"]
     if note.get("promoted_from"):
         payload["promoted_from"] = dict(note["promoted_from"])
     if note.get("deprecated_at"):
