@@ -286,6 +286,7 @@ class MemoryStore:
         created_at: str | None = None,
         promoted_from: dict[str, Any] | None = None,
         tier: str | None = None,
+        provenance: str | None = None,
     ) -> dict[str, Any]:
         note = self._build_note_record(
             scope=PROJECT_SCOPE,
@@ -298,6 +299,7 @@ class MemoryStore:
             created_at=created_at,
             promoted_from=promoted_from,
             tier=tier,
+            provenance=provenance,
         )
         self.write_project_manifest()
         _write_json_atomic(self.project_note_path(note["note_id"]), note)
@@ -317,6 +319,7 @@ class MemoryStore:
         project_name: str | None = None,
         promoted_from: dict[str, Any] | None = None,
         tier: str | None = None,
+        provenance: str | None = None,
     ) -> dict[str, Any]:
         note = self._build_note_record(
             scope=GLOBAL_SCOPE,
@@ -331,6 +334,7 @@ class MemoryStore:
             project_name=project_name,
             promoted_from=promoted_from,
             tier=tier,
+            provenance=provenance,
         )
         self.write_global_manifest()
         _write_json_atomic(self.global_note_path(note["note_id"]), note)
@@ -394,6 +398,7 @@ class MemoryStore:
             project_name=project_note["project_name"],
             promoted_from=promoted_from,
             tier=project_note.get("tier"),
+            provenance=project_note.get("provenance"),
         )
 
     def deprecate_note(
@@ -681,10 +686,12 @@ class MemoryStore:
         project_name: str | None = None,
         promoted_from: dict[str, Any] | None = None,
         tier: str | None = None,
+        provenance: str | None = None,
     ) -> dict[str, Any]:
         resolved_created_at = created_at or utc_now()
         resolved_kind = normalize_note_kind(note_kind)
         resolved_tier = tier if tier in NOTE_TIERS else tier_for_kind(resolved_kind)
+        resolved_provenance = normalize_provenance(provenance)
         note = {
             "note_id": note_id or generate_note_id(),
             "scope": scope,
@@ -694,6 +701,7 @@ class MemoryStore:
             "content": content.strip(),
             "note_kind": resolved_kind,
             "tier": resolved_tier,
+            "provenance": resolved_provenance,
             "tags": list(tags or []),
             "source_refs": list(source_refs or []),
             "source_kind": NOTE_SOURCE_KIND,
@@ -711,6 +719,7 @@ class MemoryStore:
             payload.get("note_kind") or payload.get("kind"),
         )
         payload["note_status"] = normalize_note_status(payload.get("note_status"))
+        payload["provenance"] = normalize_provenance(payload.get("provenance"))
         return payload
 
     def _write_note_record(self, note: Mapping[str, Any]) -> None:
