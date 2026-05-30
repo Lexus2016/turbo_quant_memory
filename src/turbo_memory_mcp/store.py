@@ -39,6 +39,13 @@ NOTE_TIER_EPISODIC = "episodic"
 NOTE_TIER_REFERENCE = "reference"
 NOTE_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_EPISODIC, NOTE_TIER_REFERENCE)
 DEFAULT_SEARCH_TIERS = (NOTE_TIER_DURABLE, NOTE_TIER_REFERENCE)
+# User-flagged memory: who created this note. `human-explicit` = the user
+# explicitly ordered it remembered; `agent` = the agent wrote it on its own
+# initiative. Used to rank human-flagged knowledge above agent guesses.
+NOTE_PROVENANCE_HUMAN = "human-explicit"
+NOTE_PROVENANCE_AGENT = "agent"
+NOTE_PROVENANCES = (NOTE_PROVENANCE_HUMAN, NOTE_PROVENANCE_AGENT)
+DEFAULT_PROVENANCE = NOTE_PROVENANCE_AGENT
 MARKDOWN_FORMAT_VERSION = 1
 RETRIEVAL_FORMAT_VERSION = 4
 USAGE_STATS_FORMAT_VERSION = 2
@@ -832,6 +839,21 @@ def normalize_note_status(value: str | None) -> str:
     return resolved
 
 
+def normalize_provenance(value: str | None) -> str:
+    """Normalize a provenance value. Unknown/empty -> DEFAULT_PROVENANCE.
+
+    Unlike normalize_note_kind, this NEVER raises: provenance is advisory
+    metadata and legacy notes lack the field entirely, so a missing or
+    unrecognized value degrades gracefully to `agent`.
+    """
+    if value is None or not str(value).strip():
+        return DEFAULT_PROVENANCE
+    resolved = str(value).strip().lower()
+    if resolved not in NOTE_PROVENANCES:
+        return DEFAULT_PROVENANCE
+    return resolved
+
+
 def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -884,6 +906,10 @@ __all__ = [
     "MARKDOWN_SOURCE_KIND",
     "MemoryStore",
     "NOTE_SOURCE_KIND",
+    "NOTE_PROVENANCE_HUMAN",
+    "NOTE_PROVENANCE_AGENT",
+    "NOTE_PROVENANCES",
+    "DEFAULT_PROVENANCE",
     "NOTE_STATUSES",
     "RETRIEVAL_FORMAT_VERSION",
     "SUPERSEDED_NOTE_STATUS",
@@ -891,6 +917,7 @@ __all__ = [
     "USAGE_STATS_FORMAT_VERSION",
     "generate_note_id",
     "normalize_note_status",
+    "normalize_provenance",
     "resolve_storage_root",
     "sha256_path",
     "sha256_text",
