@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from turbo_memory_mcp.server import build_runtime_context
+from turbo_memory_mcp.server import build_runtime_context, remember_note_impl
 from turbo_memory_mcp.store import (
     DEFAULT_PROVENANCE,
     NOTE_PROVENANCE_AGENT,
@@ -78,3 +78,24 @@ def test_legacy_note_without_field_reads_as_agent(tmp_path):
     path.write_text(json.dumps(raw))
     reread = store.read_project_note(note["note_id"])
     assert reread["provenance"] == "agent"
+
+
+def test_remember_note_defaults_to_agent(tmp_path):
+    env = _env(tmp_path)
+    payload = remember_note_impl(
+        "T", "body", kind="lesson", cwd=tmp_path / "repo", environ=env
+    )
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    note = store.read_project_note(payload["item"]["item_id"])
+    assert note["provenance"] == "agent"
+
+
+def test_remember_note_human_explicit(tmp_path):
+    env = _env(tmp_path)
+    payload = remember_note_impl(
+        "T", "body", kind="decision",
+        provenance="human-explicit", cwd=tmp_path / "repo", environ=env,
+    )
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    note = store.read_project_note(payload["item"]["item_id"])
+    assert note["provenance"] == "human-explicit"

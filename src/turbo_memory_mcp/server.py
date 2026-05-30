@@ -133,6 +133,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         tags: list[str] | None = None,
         source_refs: list[str] | None = None,
         scope: str = "project",
+        provenance: str = "agent",
     ) -> dict[str, object]:
         return dispatcher(
             "remember_note",
@@ -143,6 +144,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
                 "tags": tags,
                 "source_refs": source_refs,
                 "scope": scope,
+                "provenance": provenance,
             },
         )
 
@@ -378,6 +380,7 @@ def _tool_remember_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) ->
         tags=kwargs.get("tags"),
         source_refs=kwargs.get("source_refs"),
         scope=str(kwargs.get("scope", "project")),
+        provenance=str(kwargs.get("provenance", "agent")),
         cwd=cwd,
         environ=environ,
     )
@@ -1005,6 +1008,7 @@ def remember_note_impl(
     tags: list[str] | None = None,
     source_refs: list[str] | None = None,
     scope: str = "project",
+    provenance: str = "agent",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
@@ -1023,7 +1027,10 @@ def remember_note_impl(
         raise ValueError(f"remember_note requires kind in: {supported}.")
 
     _, store = build_runtime_context(cwd=cwd, environ=environ)
-    note = store.write_project_note(title, content, note_kind=resolved_kind, tags=tags, source_refs=source_refs)
+    note = store.write_project_note(
+        title, content, note_kind=resolved_kind, tags=tags,
+        source_refs=source_refs, provenance=provenance,
+    )
     warning = _sync_with_warning(lambda: _sync_project_note_change(store, str(note["note_id"])))
     payload = build_note_write_payload(
         note,
