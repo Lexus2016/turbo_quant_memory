@@ -46,6 +46,7 @@ New notes get the field on write; old notes get it on read. They converge withou
 ### Retrieval boost (`retrieval.py`)
 - New constant `PROVENANCE_HUMAN_BONUS = 0.06` next to the existing `MARKDOWN_KIND_BONUS`.
 - Applied in `_query_scope` (where `effective_score` is composed from `base_score + lexical_bonus + project_bias + kind_bonus`), NOT in `_rrf_merge`. The LanceDB row has no provenance column, so the bonus is decided by reading the **canonical note JSON** (`store.read_note`) for note-kind rows only — cheap at our scale (hundreds of small JSONs, <5ms each). Best-effort: any read failure falls back to a zero bonus and never breaks search.
+- **Tie-breaker (added during implementation).** The additive bonus alone is absorbed by the `1.0` score cap when both notes are a perfect match (common on short exact queries). So `_query_scope` also tags each candidate with `provenance_priority` (`0` = human-explicit, `1` = agent) and `_rank_candidates` orders by it immediately after `effective_score`. This guarantees a human-flagged note wins on equal/capped relevance, deterministically — the bonus still lifts close-but-not-tied human notes.
 - **Calibration caveat** (learned from P1's uncalibrated 0.88/0.78 thresholds): `0.06` is a heuristic. The boost must lift a `human-explicit` note when relevance is close — it must NOT override relevance and drag an unrelated human note to the top. Tune on a real corpus.
 
 ### Result payload (`contracts.py` + `retrieval.py`)
