@@ -117,6 +117,9 @@ export TQMEMORY_EMBEDDING_BACKEND=fastembed   # default: sentence-transformers
 
 The default install is unchanged — this is purely opt-in.
 
+### 5. User-Flagged Memory (provenance)
+Every note records **who created it**: `human-explicit` when you explicitly ask the agent to remember something ("remember this", "save this to my knowledge base"), or `agent` when the agent saves a lesson/decision on its own. Human-flagged notes are trusted more — they **rank above agent-written notes of equal relevance** (a deterministic tie-breaker plus a small score bonus). The field is optional and backward compatible: existing notes simply read as `agent`, so no migration is needed.
+
 ---
 
 ## 🔐 Secrets Vault (NEW in v0.7.0)
