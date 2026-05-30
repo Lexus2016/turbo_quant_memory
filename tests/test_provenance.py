@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
+from turbo_memory_mcp.retrieval import semantic_search
 from turbo_memory_mcp.server import build_runtime_context, remember_note_impl
 from turbo_memory_mcp.store import (
     DEFAULT_PROVENANCE,
@@ -108,3 +111,44 @@ def test_remember_payload_surfaces_provenance(tmp_path):
         provenance="human-explicit", cwd=tmp_path / "repo", environ=env,
     )
     assert payload["item"]["provenance"] == "human-explicit"
+
+
+class _KeywordEmbedder:
+    KEYWORDS = ("auth", "token", "rotation", "refresh", "session", "cache")
+
+    def encode(self, texts):
+        out = []
+        for text in texts:
+            low = text.lower()
+            vec = [0.0] * 384
+            for i, kw in enumerate(self.KEYWORDS):
+                vec[i] = 1.0 if kw in low else 0.0
+            out.append(vec)
+        return out
+
+
+def test_human_explicit_ranks_above_agent(tmp_path):
+    env = _env(tmp_path)
+    cwd = tmp_path / "repo"
+    with patch(
+        "turbo_memory_mcp.retrieval_index.build_default_embedder",
+        return_value=_KeywordEmbedder(),
+    ):
+        # Two notes with identical embedding (same keywords) -> equal base
+        # relevance. Only provenance differs.
+        remember_note_impl(
+            "Agent note", "auth token rotation refresh", kind="lesson",
+            provenance="agent", cwd=cwd, environ=env,
+        )
+        remember_note_impl(
+            "Human note", "auth token rotation refresh", kind="lesson",
+            provenance="human-explicit", cwd=cwd, environ=env,
+        )
+        _, store = build_runtime_context(cwd=cwd, environ=env)
+        result = semantic_search(
+            store, "auth token rotation refresh", scope="project", limit=5
+        )
+    titles = [item["title"] for item in result["items"]]
+    assert titles.index("Human note") < titles.index("Agent note")
+    human = next(i for i in result["items"] if i["title"] == "Human note")
+    assert human["provenance"] == "human-explicit"

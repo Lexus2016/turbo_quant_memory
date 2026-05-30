@@ -13,6 +13,7 @@ from .store import (
     GLOBAL_SCOPE,
     MARKDOWN_SOURCE_KIND,
     MemoryStore,
+    NOTE_PROVENANCE_HUMAN,
     NOTE_SOURCE_KIND,
     NOTE_TIERS,
     PROJECT_SCOPE,
@@ -20,6 +21,11 @@ from .store import (
 
 HYBRID_PROJECT_BIAS = 0.15
 MARKDOWN_KIND_BONUS = 0.02
+# Additive bonus for notes the user explicitly flagged (provenance=human-explicit).
+# Small enough not to override relevance, large enough to win ties and lift a
+# close-but-not-top human note. UNCALIBRATED heuristic — tune on a real corpus
+# (see lesson e1b9b1df42094746 on the P1 threshold miscalibration).
+PROVENANCE_HUMAN_BONUS = 0.06
 MAX_SEMANTIC_LIMIT = 20
 AMBIGUOUS_SCORE_DELTA = 0.03
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -132,8 +138,19 @@ def _query_scope(
         lexical_bonus = _lexical_bonus(row, query)
         project_bias = HYBRID_PROJECT_BIAS if hybrid and scope == PROJECT_SCOPE else 0.0
         kind_bonus = MARKDOWN_KIND_BONUS if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 0.0
+        # Read the canonical note JSON (the LanceDB mirror has no provenance
+        # column) to learn if the user explicitly flagged this note. Cheap on
+        # our scale (hundreds of small JSONs); advisory, never breaks search.
+        is_human_flagged = False
+        if row.get("source_kind") == NOTE_SOURCE_KIND:
+            try:
+                cand_note = store.read_note(str(row["note_id"]), scope)
+                is_human_flagged = cand_note.get("provenance") == NOTE_PROVENANCE_HUMAN
+            except Exception:  # noqa: BLE001 — advisory; never break search
+                is_human_flagged = False
+        provenance_bonus = PROVENANCE_HUMAN_BONUS if is_human_flagged else 0.0
         score = min(base_score + lexical_bonus, 1.0)
-        effective_score = min(score + project_bias + kind_bonus, 1.0)
+        effective_score = min(score + project_bias + kind_bonus + provenance_bonus, 1.0)
         candidates.append(
             {
                 **row,
@@ -142,6 +159,7 @@ def _query_scope(
                 "effective_score": effective_score,
                 "scope_priority": 0 if scope == PROJECT_SCOPE else 1,
                 "source_priority": 0 if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 1,
+                "provenance_priority": 0 if is_human_flagged else 1,
                 "updated_epoch": _updated_epoch(str(row["updated_at"])),
                 "item_identity": str(row["item_id"]),
             }
@@ -165,6 +183,7 @@ def _rank_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates.sort(
         key=lambda item: (
             -round(float(item["effective_score"]), 3),
+            item.get("provenance_priority", 1),
             item["scope_priority"],
             item["source_priority"],
             -item["updated_epoch"],
@@ -216,6 +235,7 @@ def _decorate_candidate(
         note = store.read_note(str(candidate["note_id"]), str(candidate["scope"]))
         payload["note_kind"] = note["note_kind"]
         payload["note_status"] = note["note_status"]
+        payload["provenance"] = note.get("provenance") or "agent"
         if note.get("promoted_from"):
             payload["promoted_from"] = dict(note["promoted_from"])
         # The note JSON is authoritative for tier — overwrite any value the
