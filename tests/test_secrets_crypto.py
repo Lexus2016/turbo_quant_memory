@@ -12,6 +12,7 @@ from turbo_memory_mcp.secrets.crypto import (
     decrypt,
     derive_key_from_passphrase,
     encrypt,
+    key_fingerprint,
 )
 
 KEY_A = b"\x00" * KEY_SIZE
@@ -114,3 +115,29 @@ def test_kdf_output_drives_aes_roundtrip() -> None:
     key = derive_key_from_passphrase("strong passphrase 42", "project-xyz")
     blob = encrypt(b"hello", key)
     assert decrypt(blob, key) == b"hello"
+
+
+# --- key fingerprint (DEFECT B: provenance check) --------------------------
+
+
+def test_key_fingerprint_is_deterministic() -> None:
+    assert key_fingerprint(KEY_A) == key_fingerprint(KEY_A)
+
+
+def test_key_fingerprint_differs_per_key() -> None:
+    assert key_fingerprint(KEY_A) != key_fingerprint(KEY_B)
+
+
+def test_key_fingerprint_is_short_lowercase_hex() -> None:
+    fp = key_fingerprint(KEY_A)
+    assert len(fp) == 16
+    assert all(c in "0123456789abcdef" for c in fp)
+
+
+def test_key_fingerprint_does_not_leak_raw_key() -> None:
+    """One-way: the fingerprint must not be a reversible encoding of the key."""
+    import base64
+
+    fp = key_fingerprint(KEY_B)
+    assert KEY_B.hex() not in fp
+    assert base64.b64encode(KEY_B).decode("ascii") not in fp

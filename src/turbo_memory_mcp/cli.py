@@ -372,11 +372,18 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
         0 - secret stored
         2 - invalid input (empty value, invalid name)
         3 - master key unavailable; stderr carries the setup hint verbatim
+        4 - master key does not match the existing vault (mismatch); stderr
+            carries the actionable hint verbatim
         130 - interrupted at the hidden-input prompt
     """
     import getpass
 
-    from .secrets import AuditLog, MasterKeyUnavailable, SecretsStore
+    from .secrets import (
+        AuditLog,
+        MasterKeyUnavailable,
+        SecretsStore,
+        VaultDecryptError,
+    )
     from .server import build_runtime_context
 
     name = args.name
@@ -404,6 +411,9 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
     except MasterKeyUnavailable as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
+    except VaultDecryptError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
 
     AuditLog(vault.secrets_dir).record("set", name)
     print(f"Stored secret '{name}' for project '{project.project_id}'.")

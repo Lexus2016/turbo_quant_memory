@@ -269,3 +269,87 @@ def test_audit_never_contains_secret_value(tmp_path, in_memory_keyring):
         / "audit.jsonl"
     )
     assert sentinel not in audit_path.read_text()
+
+
+# --- DEFECT A: a wrong key surfaces as a structured error, never a bare,
+#     message-less exception escaping the MCP boundary (the reported bug) ----
+
+
+def test_get_secret_wrong_key_returns_master_key_mismatch(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    # The resolver reads the REAL process env for the passphrase; switch it
+    # between write and read to simulate a key that no longer matches.
+    env = _env_without_passphrase(tmp_path)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    set_secret_impl("k", "v", environ=env)
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")  # derives a different key
+    payload = get_secret_impl("k", environ=env)
+    assert payload["status"] == "error"
+    assert payload["code"] == "master_key_mismatch"
+    assert payload["setup_hint"]  # actionable, non-empty
+    assert "secret_value" not in payload
+
+
+def test_list_secrets_wrong_key_returns_master_key_mismatch(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    env = _env_without_passphrase(tmp_path)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    set_secret_impl("k", "v", environ=env)
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")
+    payload = list_secrets_impl(environ=env)
+    assert payload["status"] == "error"
+    assert payload["code"] == "master_key_mismatch"
+    assert "names" not in payload
+
+
+def test_delete_secret_wrong_key_returns_master_key_mismatch(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    env = _env_without_passphrase(tmp_path)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    set_secret_impl("k", "v", environ=env)
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")
+    payload = delete_secret_impl("k", environ=env)
+    assert payload["status"] == "error"
+    assert payload["code"] == "master_key_mismatch"
+
+
+def test_set_secret_wrong_key_returns_master_key_mismatch(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    env = _env_without_passphrase(tmp_path)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    set_secret_impl("k", "v", environ=env)
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")
+    payload = set_secret_impl("k2", "v2", environ=env)
+    assert payload["status"] == "error"
+    assert payload["code"] == "master_key_mismatch"
+
+
+def test_get_secret_legacy_vault_wrong_key_returns_structured_error(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    """Even a pre-fingerprint (legacy) vault must never leak a bare InvalidTag:
+    the decrypt-time failure becomes a structured master_key_mismatch."""
+    env = _env_without_passphrase(tmp_path)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    set_secret_impl("k", "v", environ=env)
+
+    meta_path = (
+        Path(env["TQMEMORY_HOME"])
+        / "projects" / "proj-secret" / "secrets" / "meta.json"
+    )
+    meta = json.loads(meta_path.read_text())
+    meta.pop("key_fingerprint", None)  # simulate a vault created before DEFECT B
+    meta_path.write_text(json.dumps(meta))
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")
+    payload = get_secret_impl("k", environ=env)
+    assert payload["status"] == "error"
+    assert payload["code"] == "master_key_mismatch"

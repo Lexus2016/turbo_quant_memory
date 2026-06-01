@@ -23,6 +23,11 @@ Public surface:
         Sorted names, never values.
     .delete(name) -> bool
         ``True`` if an entry was removed.
+    VaultDecryptError
+        Vault exists but could not be decrypted with the resolved master key
+        (wrong / shadowing env passphrase, or tampered ciphertext). Typed so
+        the MCP layer can surface a structured error instead of a bare,
+        message-less ``InvalidTag`` (DEFECT A).
 """
 
 from __future__ import annotations
@@ -34,8 +39,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .crypto import decrypt, encrypt
+from cryptography.exceptions import InvalidTag
+
+from .crypto import decrypt, encrypt, key_fingerprint
 from .keyresolver import (
+    KeyResolutionMode,
     MasterKeyUnavailable,
     resolve_master_key,
 )
@@ -51,6 +59,33 @@ _KDF_PARAMS_RECORD = {
     "memory_cost_kib": 65536,
     "parallelism": 4,
 }
+
+
+class VaultDecryptError(RuntimeError):
+    """Vault exists but could not be decrypted with the resolved master key.
+
+    The message is a multi-line, surfaceable hint that names the most likely
+    cause: a ``TQMEMORY_SECRETS_PASSPHRASE`` that does not match the key the
+    vault was created with (e.g. vault ``key_mode == 'keyring_existing'`` but
+    an env passphrase is set / forwarded from another MCP client).
+    """
+
+    def __init__(self, *, resolved_mode: str, vault_key_mode: str) -> None:
+        self.resolved_mode = resolved_mode
+        self.vault_key_mode = vault_key_mode
+        super().__init__(
+            "Secrets vault could not be decrypted with the resolved master "
+            "key.\n"
+            f"  resolved key via : {resolved_mode}\n"
+            f"  vault created via: {vault_key_mode}\n"
+            "If TQMEMORY_SECRETS_PASSPHRASE is set (or forwarded from another "
+            "MCP client), it does NOT match this vault. Unset it so the "
+            "keyring key is used, or set the exact passphrase the vault was "
+            "created with. NOTE: the env var is a PASSPHRASE (Argon2id input), "
+            "not the raw keyring key — pasting the keyring value here derives "
+            "a different key and will not decrypt. (A tampered vault file "
+            "produces the same error.)"
+        )
 
 
 def _utc_now_iso() -> str:
@@ -111,12 +146,15 @@ class SecretsStore:
         os.chmod(self.secrets_dir, 0o700)
 
         try:
-            key, mode = resolve_master_key(self.project_id)
+            # Provisioning a fresh vault is a write path: allow bootstrap so
+            # macOS users get zero-setup secrets on first use.
+            key, mode = resolve_master_key(self.project_id, allow_bootstrap=True)
         except MasterKeyUnavailable:
             self._write_stub_meta_if_missing()
             return
 
-        if not self.vault_path.exists():
+        created = not self.vault_path.exists()
+        if created:
             empty_blob = encrypt(
                 json.dumps(
                     {"version": VAULT_VERSION, "entries": {}}
@@ -125,7 +163,13 @@ class SecretsStore:
             )
             _atomic_write_bytes(self.vault_path, empty_blob)
 
-        self._write_meta(mode=mode.value, initialized=True)
+        # Only stamp the fingerprint for a vault we actually created here.
+        # provision() never decrypts, so on a pre-existing vault a freshly
+        # resolved key cannot be trusted to match its ciphertext — preserve the
+        # recorded fingerprint instead of clobbering it (DEFECT B safety).
+        self._write_meta(
+            mode=mode.value, initialized=True, key=key if created else None
+        )
 
     def _write_stub_meta_if_missing(self) -> None:
         if self.meta_path.exists():
@@ -143,7 +187,9 @@ class SecretsStore:
             json.dumps(payload, ensure_ascii=False, indent=2),
         )
 
-    def _write_meta(self, *, mode: str, initialized: bool) -> None:
+    def _write_meta(
+        self, *, mode: str, initialized: bool, key: bytes | None = None
+    ) -> None:
         existing = self._read_meta_or_empty()
         payload = {
             "version": META_VERSION,
@@ -154,6 +200,15 @@ class SecretsStore:
             "created_at": existing.get("created_at", _utc_now_iso()),
             "updated_at": _utc_now_iso(),
         }
+        # DEFECT B: record a one-way key fingerprint so a later wrong key fails
+        # fast. Preserve any prior fingerprint when no key is supplied.
+        fingerprint = (
+            key_fingerprint(key)
+            if key is not None
+            else existing.get("key_fingerprint")
+        )
+        if fingerprint:
+            payload["key_fingerprint"] = fingerprint
         _atomic_write_text(
             self.meta_path,
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -169,11 +224,38 @@ class SecretsStore:
 
     # ----- vault I/O -----
 
-    def _load(self, key: bytes) -> dict:
+    def _verify_key_fingerprint(
+        self, key: bytes, mode: KeyResolutionMode, meta: dict
+    ) -> None:
+        """Fast-fail (DEFECT B) when the resolved key cannot match the vault.
+
+        Skipped for legacy vaults whose ``meta.json`` predates the fingerprint
+        (those fall back to the decrypt-time check in :meth:`_load`).
+        """
+        expected = meta.get("key_fingerprint")
+        if not expected:
+            return
+        if key_fingerprint(key) != expected:
+            raise VaultDecryptError(
+                resolved_mode=mode.value,
+                vault_key_mode=meta.get("key_mode", "unknown"),
+            )
+
+    def _load(self, key: bytes, mode: KeyResolutionMode) -> dict:
         if not self.vault_path.exists():
             return {"version": VAULT_VERSION, "entries": {}}
+        meta = self._read_meta_or_empty()
+        self._verify_key_fingerprint(key, mode, meta)
         blob = self.vault_path.read_bytes()
-        plain = decrypt(blob, key)
+        try:
+            plain = decrypt(blob, key)
+        except InvalidTag as exc:
+            # Wrong key (legacy vault without a fingerprint) or tampered
+            # ciphertext — surface a typed, message-bearing error (DEFECT A).
+            raise VaultDecryptError(
+                resolved_mode=mode.value,
+                vault_key_mode=meta.get("key_mode", "unknown"),
+            ) from exc
         data = json.loads(plain.decode("utf-8"))
         if not isinstance(data, dict) or "entries" not in data:
             raise ValueError("vault.tqv has unexpected structure")
@@ -185,23 +267,23 @@ class SecretsStore:
         )
         _atomic_write_bytes(self.vault_path, blob)
 
-    # ----- read paths -----
+    # ----- read paths (never bootstrap a new key: DEFECT D) -----
 
     def get(self, name: str) -> str | None:
         _validate_name(name)
         if not self.vault_path.exists():
             return None
-        key, _ = resolve_master_key(self.project_id)
-        entry = self._load(key)["entries"].get(name)
+        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        entry = self._load(key, mode)["entries"].get(name)
         return entry["value"] if entry else None
 
     def list_names(self) -> list[str]:
         if not self.vault_path.exists():
             return []
-        key, _ = resolve_master_key(self.project_id)
-        return sorted(self._load(key)["entries"].keys())
+        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        return sorted(self._load(key, mode)["entries"].keys())
 
-    # ----- write paths -----
+    # ----- write paths (may bootstrap a fresh key on first use) -----
 
     def set(self, name: str, value: str) -> None:
         _validate_name(name)
@@ -210,8 +292,8 @@ class SecretsStore:
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.secrets_dir, 0o700)
 
-        key, mode = resolve_master_key(self.project_id)
-        data = self._load(key) if self.vault_path.exists() else {
+        key, mode = resolve_master_key(self.project_id, allow_bootstrap=True)
+        data = self._load(key, mode) if self.vault_path.exists() else {
             "version": VAULT_VERSION,
             "entries": {},
         }
@@ -227,17 +309,18 @@ class SecretsStore:
                 "updated_at": now,
             }
         self._save(key, data)
-        self._write_meta(mode=mode.value, initialized=True)
+        self._write_meta(mode=mode.value, initialized=True, key=key)
 
     def delete(self, name: str) -> bool:
         _validate_name(name)
         if not self.vault_path.exists():
             return False
-        key, mode = resolve_master_key(self.project_id)
-        data = self._load(key)
+        # A delete operates on an existing vault — never mint a new key.
+        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        data = self._load(key, mode)
         if name not in data["entries"]:
             return False
         del data["entries"][name]
         self._save(key, data)
-        self._write_meta(mode=mode.value, initialized=True)
+        self._write_meta(mode=mode.value, initialized=True, key=key)
         return True

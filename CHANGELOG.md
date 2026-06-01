@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-01
+
+### Fixed
+- **Secrets vault: `InvalidTag` no longer escapes as an empty, hintless MCP
+  error.** When the resolved master key did not match the vault (most commonly a
+  `TQMEMORY_SECRETS_PASSPHRASE` shadowing — or forwarded onto — a keyring-keyed
+  vault), `get_secret` / `list_secrets` / `set_secret` / `delete_secret` raised a
+  bare `cryptography.exceptions.InvalidTag` whose `str()` is `""`, producing an
+  opaque `Error executing tool …:` with no `code` and no `setup_hint`. A new typed
+  `VaultDecryptError` is now raised at the store boundary and every secrets impl
+  translates it (and any other unexpected error) into a structured payload with a
+  distinct `code` (`master_key_mismatch` / `vault_error`) and an actionable
+  `setup_hint`. (DEFECT A)
+- **Latent data-loss: a transient keyring READ failure no longer mints a new
+  key.** `resolve_master_key` previously swallowed any `KeyringError` on read and
+  fell through to bootstrap, which could mint a fresh key and permanently orphan
+  an existing vault (locked keychain, ACL change, headless "interaction not
+  allowed"). Read paths now pass `allow_bootstrap=False` and a non-`NoKeyringError`
+  read failure raises `MasterKeyUnavailable` instead of minting. (DEFECT D)
+- **CLI `secret-set` mirrors the structured error.** A key mismatch on an
+  existing vault now exits `4` with the actionable hint on stderr instead of
+  printing a raw `VaultDecryptError` traceback.
+- **`provision()` no longer clobbers an existing vault's key fingerprint.**
+  Because provisioning never decrypts, a freshly resolved key cannot be trusted
+  to match a pre-existing vault; the recorded fingerprint is now preserved on
+  re-provision (only a vault created in the same call is stamped).
+
+### Added
+- **Key-provenance fingerprint.** A one-way `key_fingerprint` is recorded in
+  `meta.json` on vault creation / first write and verified on resolve, so a wrong
+  key fails fast with `master_key_mismatch` *before* any ciphertext is touched.
+  Legacy vaults without a fingerprint fall back to the wrapped decrypt-time check.
+  (DEFECT B)
+- **Env-var footgun warning.** When `TQMEMORY_SECRETS_PASSPHRASE` base64-decodes
+  to exactly 32 bytes (i.e. looks like the raw keyring key pasted in by mistake),
+  a one-time warning is logged. Docs and `setup_hint` now state plainly that the
+  env var is an Argon2id passphrase, not the raw key. (DEFECT C)
+
 ## [0.10.0] - 2026-05-30
 
 ### Added

@@ -56,6 +56,7 @@ from .secrets import (
     AuditLog,
     MasterKeyUnavailable,
     SecretsStore,
+    VaultDecryptError,
 )
 from .store import (
     ENV_STORAGE_HOME,
@@ -81,6 +82,15 @@ Dispatcher = Callable[[str, Mapping[str, Any]], Any]
 # stale env and would otherwise raise MasterKeyUnavailable in multi-client
 # setups). The daemon's AF_UNIX socket is 0o600 with a 32-byte authkey, so
 # the passphrase stays within the same-user local trust boundary.
+#
+# DEFECT E (cross-client poisoning): because the primary is shared, key
+# resolution depends on whichever client last forwarded a value, so a single
+# misconfigured client could break secrets for all of them. TQMEMORY_SECRETS_
+# PASSPHRASE must therefore be identical across all clients that share the
+# daemon, or set on none of them. A forwarded passphrase that does NOT match
+# the vault no longer fails silently: the key-fingerprint check (DEFECT B) now
+# converts it into a structured ``master_key_mismatch`` error instead of a
+# wrong-key derivation that crashes on decrypt.
 _FORWARDED_ENV_KEYS: tuple[str, ...] = (
     ENV_PROJECT_ROOT,
     ENV_PROJECT_ID,
@@ -1204,6 +1214,16 @@ def build_runtime_context(
 # ---------------------------------------------------------------------------
 
 
+def _vault_error_hint(exc: Exception) -> str:
+    """Build a non-empty, surfaceable hint for an unexpected vault error.
+
+    Guards against the original bug where ``str(InvalidTag()) == ""`` produced
+    an opaque, message-less MCP error (DEFECT A backstop).
+    """
+    detail = str(exc).strip()
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
 def set_secret_impl(
     name: str,
     value: str,
@@ -1221,6 +1241,20 @@ def set_secret_impl(
             project_id=project.project_id,
             code="master_key_unavailable",
             setup_hint=str(exc),
+        )
+    except VaultDecryptError as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_mismatch",
+            setup_hint=str(exc),
+        )
+    except Exception as exc:  # backstop: never an empty, opaque MCP error again
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="vault_error",
+            setup_hint=_vault_error_hint(exc),
         )
     AuditLog(vault.secrets_dir).record("set", name)
     return build_set_secret_payload(name=name, project_id=project.project_id)
@@ -1242,6 +1276,20 @@ def get_secret_impl(
             project_id=project.project_id,
             code="master_key_unavailable",
             setup_hint=str(exc),
+        )
+    except VaultDecryptError as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_mismatch",
+            setup_hint=str(exc),
+        )
+    except Exception as exc:  # backstop: never an empty, opaque MCP error again
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="vault_error",
+            setup_hint=_vault_error_hint(exc),
         )
     if vault.secrets_dir.is_dir():
         AuditLog(vault.secrets_dir).record("get", name)
@@ -1270,6 +1318,20 @@ def list_secrets_impl(
             code="master_key_unavailable",
             setup_hint=str(exc),
         )
+    except VaultDecryptError as exc:
+        return build_secret_error_payload(
+            name="*",
+            project_id=project.project_id,
+            code="master_key_mismatch",
+            setup_hint=str(exc),
+        )
+    except Exception as exc:  # backstop: never an empty, opaque MCP error again
+        return build_secret_error_payload(
+            name="*",
+            project_id=project.project_id,
+            code="vault_error",
+            setup_hint=_vault_error_hint(exc),
+        )
     if vault.secrets_dir.is_dir():
         AuditLog(vault.secrets_dir).record("list", "*")
     return build_list_secrets_payload(
@@ -1293,6 +1355,20 @@ def delete_secret_impl(
             project_id=project.project_id,
             code="master_key_unavailable",
             setup_hint=str(exc),
+        )
+    except VaultDecryptError as exc:
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="master_key_mismatch",
+            setup_hint=str(exc),
+        )
+    except Exception as exc:  # backstop: never an empty, opaque MCP error again
+        return build_secret_error_payload(
+            name=name,
+            project_id=project.project_id,
+            code="vault_error",
+            setup_hint=_vault_error_hint(exc),
         )
     if vault.secrets_dir.is_dir():
         AuditLog(vault.secrets_dir).record("delete", name)

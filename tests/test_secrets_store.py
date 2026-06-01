@@ -12,7 +12,7 @@ import pytest
 from keyring.backends import fail as _fail_backend
 
 from turbo_memory_mcp.secrets.keyresolver import ENV_PASSPHRASE
-from turbo_memory_mcp.secrets.store import SecretsStore
+from turbo_memory_mcp.secrets.store import SecretsStore, VaultDecryptError
 
 PROJECT = "test-store-project"
 
@@ -281,13 +281,106 @@ def test_file_permissions(tmp_path, env_passphrase, in_memory_keyring):
 def test_tampered_vault_file_raises(
     tmp_path, env_passphrase, in_memory_keyring
 ):
-    from cryptography.exceptions import InvalidTag
-
     s = _make_store(tmp_path)
     s.provision()
     s.set("ok", "value")
     blob = bytearray(s.vault_path.read_bytes())
     blob[20] ^= 0x01
     s.vault_path.write_bytes(bytes(blob))
-    with pytest.raises(InvalidTag):
+    # The resolved key is correct (its fingerprint matches), so the failure
+    # surfaces at decrypt and is wrapped into the typed VaultDecryptError
+    # rather than letting a bare InvalidTag escape the store boundary.
+    with pytest.raises(VaultDecryptError):
         s.get("ok")
+
+
+# --- DEFECT A+B: typed decrypt error + key-fingerprint provenance ----------
+
+
+def test_set_writes_key_fingerprint_to_meta(
+    tmp_path, env_passphrase, in_memory_keyring
+):
+    from turbo_memory_mcp.secrets.crypto import key_fingerprint
+    from turbo_memory_mcp.secrets.keyresolver import resolve_master_key
+
+    s = _make_store(tmp_path)
+    s.set("k", "v")
+    meta = json.loads(s.meta_path.read_text())
+    key, _ = resolve_master_key(PROJECT)
+    assert meta["key_fingerprint"] == key_fingerprint(key)
+
+
+def test_wrong_key_fast_fails_before_decrypt(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    """DEFECT B: a key whose fingerprint mismatches the vault raises
+    VaultDecryptError WITHOUT touching ciphertext."""
+    import turbo_memory_mcp.secrets.store as store_mod
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    s = _make_store(tmp_path)
+    s.set("k", "v")
+
+    def _boom(*_a, **_k):
+        raise AssertionError("decrypt must not run on a fingerprint mismatch")
+
+    monkeypatch.setattr(store_mod, "decrypt", _boom)
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")  # derives a different key
+    with pytest.raises(VaultDecryptError):
+        s.get("k")
+
+
+def test_legacy_vault_without_fingerprint_wraps_invalid_tag(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    """A pre-DEFECT-B vault has no key_fingerprint in meta. A wrong key then
+    fails at decrypt; the InvalidTag must be wrapped into VaultDecryptError,
+    never escape raw."""
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    s = _make_store(tmp_path)
+    s.set("k", "v")
+
+    meta = json.loads(s.meta_path.read_text())
+    meta.pop("key_fingerprint", None)
+    s.meta_path.write_text(json.dumps(meta))
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")  # derives a different key
+    with pytest.raises(VaultDecryptError):
+        s.get("k")
+
+
+def test_reprovision_with_different_key_preserves_original_fingerprint(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    """Re-provisioning an existing vault must NOT overwrite its key fingerprint
+    with a different, UNVERIFIED key. provision() does not decrypt, so trusting
+    a freshly resolved key here would mislabel a vault encrypted with another
+    key and make every later read look like a mismatch."""
+    from turbo_memory_mcp.secrets.crypto import key_fingerprint
+    from turbo_memory_mcp.secrets.keyresolver import resolve_master_key
+
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
+    s = _make_store(tmp_path)
+    s.provision()
+    key_one, _ = resolve_master_key(PROJECT)
+    fp_one = json.loads(s.meta_path.read_text())["key_fingerprint"]
+    assert fp_one == key_fingerprint(key_one)
+
+    # Re-provision under a DIFFERENT passphrase while the vault already exists.
+    monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-two")
+    s.provision()
+    fp_after = json.loads(s.meta_path.read_text())["key_fingerprint"]
+    assert fp_after == fp_one  # the original key's fingerprint must stand
+
+
+def test_set_bootstraps_with_no_env_on_writable_keyring(
+    tmp_path, in_memory_keyring, monkeypatch
+):
+    """DEFECT D guard must NOT break the zero-setup UX: first set_secret with
+    no env on a writable keyring still mints a key and succeeds."""
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
+    s = _make_store(tmp_path)
+    s.set("k", "v")  # write path => allow_bootstrap=True => mint
+    assert s.get("k") == "v"
+    meta = json.loads(s.meta_path.read_text())
+    assert meta["key_mode"] == "keyring_bootstrapped"

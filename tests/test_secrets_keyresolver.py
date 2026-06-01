@@ -116,7 +116,8 @@ def test_keyring_bootstrap_when_writable_and_empty(in_memory_keyring, monkeypatc
     monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
     assert in_memory_keyring._store == {}
 
-    key, mode = resolve_master_key(PROJECT)
+    # Bootstrap (minting a fresh key) is a WRITE-path action; opt in explicitly.
+    key, mode = resolve_master_key(PROJECT, allow_bootstrap=True)
     assert mode is KeyResolutionMode.KEYRING_BOOTSTRAPPED
     assert len(key) == KEY_SIZE
     stored = in_memory_keyring._store[(SERVICE_NAME, f"secrets-master-{PROJECT}")]
@@ -125,7 +126,8 @@ def test_keyring_bootstrap_when_writable_and_empty(in_memory_keyring, monkeypatc
 
 def test_second_call_after_bootstrap_uses_existing(in_memory_keyring, monkeypatch):
     monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
-    first_key, first_mode = resolve_master_key(PROJECT)
+    first_key, first_mode = resolve_master_key(PROJECT, allow_bootstrap=True)
+    # Second call finds the existing entry — no bootstrap needed.
     second_key, second_mode = resolve_master_key(PROJECT)
 
     assert first_mode is KeyResolutionMode.KEYRING_BOOTSTRAPPED
@@ -145,7 +147,7 @@ def test_fail_keyring_raises_master_key_unavailable(fail_keyring, monkeypatch):
 def test_readonly_keyring_raises_master_key_unavailable(readonly_keyring, monkeypatch):
     monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
     with pytest.raises(MasterKeyUnavailable) as excinfo:
-        resolve_master_key(PROJECT)
+        resolve_master_key(PROJECT, allow_bootstrap=True)
     assert "bootstrap" in str(excinfo.value).lower()
 
 
@@ -174,3 +176,97 @@ def test_invalid_base64_keyring_entry_raises_master_key_unavailable(
 def test_empty_project_id_rejected():
     with pytest.raises(ValueError):
         resolve_master_key("")
+
+
+# --- DEFECT D: bootstrap is gated and never destructive --------------------
+
+
+class _LockedReadKeyring(_InMemoryKeyring):
+    """Reads raise a transient KeyringError (e.g. a locked keychain).
+
+    Writes are recorded so a test can prove that no new key was minted while
+    an existing vault may still depend on the current one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_calls: list[tuple[str, str]] = []
+
+    def get_password(self, service: str, username: str) -> str | None:
+        raise keyring.errors.KeyringLocked("keychain is locked for the test")
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.set_calls.append((service, username))
+        super().set_password(service, username, password)
+
+
+@pytest.fixture
+def locked_read_keyring():
+    backend = _LockedReadKeyring()
+    original = keyring.get_keyring()
+    keyring.set_keyring(backend)
+    try:
+        yield backend
+    finally:
+        keyring.set_keyring(original)
+
+
+def test_bootstrap_refused_without_allow_bootstrap(in_memory_keyring, monkeypatch):
+    """Read-path resolve (allow_bootstrap defaults False) must NOT mint a key."""
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
+    assert in_memory_keyring._store == {}
+    with pytest.raises(MasterKeyUnavailable):
+        resolve_master_key(PROJECT)
+    # Nothing was written: a later read must not discover a bogus minted entry.
+    assert in_memory_keyring._store == {}
+
+
+def test_bootstrap_mints_only_when_allowed(in_memory_keyring, monkeypatch):
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
+    key, mode = resolve_master_key(PROJECT, allow_bootstrap=True)
+    assert mode is KeyResolutionMode.KEYRING_BOOTSTRAPPED
+    assert len(key) == KEY_SIZE
+
+
+def test_read_failure_refuses_to_mint_new_key(locked_read_keyring, monkeypatch):
+    """DEFECT D: a transient keyring READ failure must raise, never bootstrap.
+
+    Minting a fresh key on a read failure would permanently orphan an existing
+    vault. Even on a write path (allow_bootstrap=True) the resolver must refuse.
+    """
+    monkeypatch.delenv(ENV_PASSPHRASE, raising=False)
+    with pytest.raises(MasterKeyUnavailable) as excinfo:
+        resolve_master_key(PROJECT, allow_bootstrap=True)
+    assert "read failed" in str(excinfo.value).lower()
+    # CRITICAL: no new key was minted.
+    assert locked_read_keyring.set_calls == []
+
+
+# --- DEFECT C: env-var footgun warning -------------------------------------
+
+
+def test_env_that_looks_like_raw_key_warns(in_memory_keyring, monkeypatch, caplog):
+    import base64
+    import logging
+
+    from turbo_memory_mcp.secrets import keyresolver
+
+    keyresolver._warned_env_looks_like_raw_key = False
+    raw_key_b64 = base64.b64encode(b"\x11" * KEY_SIZE).decode("ascii")
+    monkeypatch.setenv(ENV_PASSPHRASE, raw_key_b64)
+    with caplog.at_level(logging.WARNING):
+        resolve_master_key(PROJECT)
+    assert ENV_PASSPHRASE in caplog.text
+    assert "looks like a base64-encoded 32-byte raw key" in caplog.text
+
+
+def test_normal_passphrase_does_not_warn(in_memory_keyring, monkeypatch, caplog):
+    import logging
+
+    from turbo_memory_mcp.secrets import keyresolver
+
+    keyresolver._warned_env_looks_like_raw_key = False
+    monkeypatch.setenv(ENV_PASSPHRASE, "a perfectly normal long passphrase")
+    with caplog.at_level(logging.WARNING):
+        resolve_master_key(PROJECT)
+    assert "looks like a base64-encoded 32-byte raw key" not in caplog.text

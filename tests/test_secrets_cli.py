@@ -152,6 +152,24 @@ def test_secret_set_master_key_unavailable_returns_3_with_hint(
     assert out == ""
 
 
+def test_secret_set_key_mismatch_returns_4_with_hint(
+    cli_env, in_memory_keyring, monkeypatch, capsys
+):
+    """A wrong/shadowing key on an existing vault must surface cleanly
+    (exit 4 + hint on stderr), never a raw VaultDecryptError traceback —
+    the CLI counterpart of DEFECT A."""
+    # First write establishes the vault + key fingerprint under one passphrase.
+    code, _, _ = _invoke(monkeypatch, capsys, "first", "v1\n")
+    assert code == 0
+
+    # A different passphrase derives a different key -> mismatch on next write.
+    monkeypatch.setenv(ENV_PASSPHRASE, "a-totally-different-passphrase")
+    code, out, err = _invoke(monkeypatch, capsys, "second", "v2\n")
+    assert code == 4
+    assert "could not be decrypted" in err.lower()
+    assert out == ""
+
+
 def test_secret_set_never_echoes_sentinel_value(
     cli_env, in_memory_keyring, monkeypatch, capsys
 ):

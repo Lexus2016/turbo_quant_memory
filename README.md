@@ -153,6 +153,13 @@ Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the 
    # Headless / Linux / CI / Docker:
    export TQMEMORY_SECRETS_PASSPHRASE='your-long-passphrase'   # add to shell rc
    ```
+   > ⚠️ **`TQMEMORY_SECRETS_PASSPHRASE` is a passphrase, not the raw key.** It is
+   > run through Argon2id to *derive* the master key. Do **not** paste the
+   > `keyring` base64 value into this env var — that derives a *different* key and
+   > a vault created via the keyring will fail to decrypt with a
+   > `master_key_mismatch` error. Pick **one** path: keyring **or** passphrase, and
+   > if you share one daemon across MCP clients, set the same passphrase on all of
+   > them or on none. The env var always wins over the keyring when both are set.
 2. **Save a secret once, reuse forever** — two paths, picked by *whether the value is already in the chat*:
    * **Value NOT yet in the chat — use the CLI (prophylactic path):**
      ```bash
