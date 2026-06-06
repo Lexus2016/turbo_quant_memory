@@ -896,6 +896,50 @@ def reconcile_project_identity(
     return candidate
 
 
+def detect_orphaned_buckets(storage_root: Path) -> list[dict[str, Any]]:
+    """List project buckets whose recorded ``project_root`` no longer exists
+    on disk — candidates for pruning, surfaced in ``server_info``.
+
+    Read-only: this never deletes anything. A missing root is NOT proof the
+    project is dead — an external/network volume may be unmounted, or the
+    storage root may be shared across machines where the path does exist. So
+    removal stays a deliberate, assisted action; this only makes dead weight
+    visible instead of letting it accumulate silently forever.
+    """
+    projects_root = storage_root / "projects"
+    if not projects_root.is_dir():
+        return []
+
+    orphans: list[dict[str, Any]] = []
+    for child in sorted(projects_root.iterdir()):
+        if not child.is_dir():
+            continue
+        manifest = _read_json_if_exists(child / "manifest.json")
+        if not manifest or manifest.get("scope") != PROJECT_SCOPE:
+            continue
+        root = manifest.get("project_root")
+        if not root or Path(root).exists():
+            continue
+        notes_dir = child / "notes"
+        try:
+            note_count = (
+                sum(1 for entry in notes_dir.iterdir() if entry.suffix == ".json")
+                if notes_dir.is_dir()
+                else 0
+            )
+        except OSError:
+            note_count = 0
+        orphans.append(
+            {
+                "project_id": manifest.get("project_id") or child.name,
+                "project_name": manifest.get("project_name"),
+                "project_root": str(root),
+                "note_count": note_count,
+            }
+        )
+    return orphans
+
+
 def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
     env = os.environ if environ is None else environ
     override = env.get(ENV_STORAGE_HOME)

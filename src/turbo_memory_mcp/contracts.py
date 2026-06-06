@@ -122,6 +122,7 @@ def build_server_info_payload(
     index_status: Mapping[str, Any] | None = None,
     usage_stats: Mapping[str, Any] | None = None,
     migrations: Mapping[str, Any] | None = None,
+    orphaned_buckets: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, object]:
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     if storage_stats is not None:
@@ -132,6 +133,8 @@ def build_server_info_payload(
         payload["usage_stats"] = dict(usage_stats)
     if migrations is not None:
         payload["migrations"] = dict(migrations)
+    if orphaned_buckets is not None:
+        payload["orphaned_buckets"] = [dict(bucket) for bucket in orphaned_buckets]
     return payload
 
 

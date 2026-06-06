@@ -71,6 +71,7 @@ from .store import (
     NOTE_TIERS,
     PROJECT_SCOPE,
     RETRIEVAL_FORMAT_VERSION,
+    detect_orphaned_buckets,
     reconcile_project_identity,
     resolve_storage_root,
 )
@@ -855,6 +856,7 @@ def server_info_impl(
         environ=environ,
     )
     migrations = _collect_migrations_status(store)
+    orphaned_buckets = detect_orphaned_buckets(store.storage_root)
     return build_server_info_payload(
         storage_root=str(store.storage_root),
         current_project=build_current_project_payload(project),
@@ -862,6 +864,7 @@ def server_info_impl(
         index_status=index_status,
         usage_stats=usage_stats,
         migrations=migrations,
+        orphaned_buckets=orphaned_buckets,
     )
 
 
