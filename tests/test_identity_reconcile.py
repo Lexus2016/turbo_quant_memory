@@ -205,6 +205,29 @@ def test_accumulated_alias_pins_even_from_different_root(tmp_path: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
+def test_path_only_established_project_is_unchanged(tmp_path: Path) -> None:
+    # The no-regression guarantee: a repo that has always been path-keyed (no
+    # remote) must resolve to its own existing bucket, identical to the old
+    # pure resolver. reconcile only ever changes the answer at a source change.
+    storage_root = tmp_path / "mem"
+    repo = tmp_path / "repo"
+    path_id = hash_identity_source(str(repo))
+    _seed_bucket(
+        storage_root,
+        path_id,
+        project_root=repo,
+        identity_source=str(repo),
+        identity_kind="repo_path",
+        identity_sources=[str(repo)],
+    )
+
+    candidate = _path_candidate(repo)
+    resolved = reconcile_project_identity(candidate, storage_root)
+
+    assert resolved.project_id == candidate.project_id == path_id  # unchanged, no adoption
+    assert resolved == candidate
+
+
 def test_first_time_mints_candidate_unchanged(tmp_path: Path) -> None:
     storage_root = tmp_path / "mem"  # no projects/ yet
     candidate = _remote_candidate(tmp_path / "repo", "github.com/Org/Fresh")
