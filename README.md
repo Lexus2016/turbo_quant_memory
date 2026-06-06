@@ -130,7 +130,7 @@ Tired of pasting SSH keys, DB connection strings, or API tokens into every new c
 Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the same bearer token, every session. Project memory wasn't the right home for those (anything indexed is at risk of leaking back into search results). So Phase 9 adds a separate, encrypted, **strictly project-scoped** vault next to your notes.
 
 ### What changes in your install
-* Four new MCP tools: `set_secret`, `get_secret`, `list_secrets`, `delete_secret`. Tool count grows `14 → 18`.
+* Four new MCP tools: `set_secret`, `get_secret`, `list_secrets`, `delete_secret`. Tool count grew `14 → 18` (now `19` with the v0.12.0 `recent_context` bootstrap tool).
 * A one-time migration provisions an empty `secrets/` directory under each existing project on first `turbo-memory-mcp migrate --apply` after upgrade.
 
 ### What does NOT change (read this if you're nervous)
@@ -208,7 +208,8 @@ If your threat model is bigger than ours, use a dedicated secret manager (1Passw
 
 ### 1. Pre-Flight Ritual (Every Session Start)
 1. **Check Migrations & Health:** Call `health()` and `server_info()`. If `migrations_pending` (in `health`) or `migrations.pending` (in `server_info`) is `true`, surface the `migrations_hint` verbatim to the user so they can run the CLI upgrade. **Do not run `migrate --apply` yourself** as it requires closing active MCP clients.
-2. **Retrieve Context:** Before starting any non-trivial task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines.
+2. **Resume Where You Left Off:** At session start — or right after a context compaction — call `recent_context()` first. It is a query-free bootstrap that returns your most recently updated notes (newest first), **including session `handoff` notes** that a plain `semantic_search` hides by default. This is the reliable "where did I leave off" entry point when you do not yet know what to query.
+3. **Retrieve Context:** For a specific task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines. To recover a session handoff by query, pass `tier_filter=["episodic"]`.
 
 ### 2. Memory Writing Discipline
 When you learn something important, solve a complex bug, or make an architectural decision, **immediately save it** using `remember_note()`. Do not wait until the end of the session.

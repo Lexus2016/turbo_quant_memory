@@ -34,6 +34,7 @@ EXPECTED_TOOL_NAMES = [
     "get_secret",
     "list_secrets",
     "delete_secret",
+    "recent_context",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
 
@@ -283,7 +284,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "project", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 18, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == 19, f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,
