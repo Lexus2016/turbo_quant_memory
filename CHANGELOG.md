@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-06-06
+
+### Added
+- **`recent_context` tool — query-free session bootstrap.** A new MCP tool (the
+  19th) that returns the most recently updated notes, newest first, reading
+  canonical note JSON directly (no embedding, no vector search, deterministic).
+  It includes the `episodic` tier by default, so session `handoff` notes surface
+  here even though `semantic_search` hides them. This is the reliable
+  "where did I leave off" entry point for a fresh session or a post-compaction
+  recovery, closing the cold-start gap where an agent had to guess a query
+  against context it could not yet know existed. `scope` defaults to `project`;
+  `tier_filter` defaults to all tiers.
+
+### Fixed
+- **`semantic_search` now exposes `tier_filter` on the MCP surface.** The
+  `episodic` tier (session handoffs) was reachable only from the internal
+  `semantic_search_impl`, never from the `@mcp.tool()` wrapper, so MCP clients
+  could not retrieve their own handoff notes — the very mechanism meant to bridge
+  sessions was structurally invisible. The wrapper and dispatcher now thread
+  `tier_filter` through; pass `tier_filter=["episodic"]` to recover handoffs.
+
+### Changed
+- **`remember_note` accepts an explicit `tier` override.** Storage already
+  supported it; the MCP tool now exposes it. An agent can force a `handoff` into
+  the durable (default-searched) set with `tier="durable"`, or keep a noisy note
+  out of regular search with `tier="episodic"`. Without it the kind→tier default
+  is unchanged (handoff → episodic, everything else → durable).
+
 ## [0.11.0] - 2026-06-01
 
 ### Fixed

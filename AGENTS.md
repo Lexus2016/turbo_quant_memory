@@ -23,6 +23,22 @@
 - Treat `.planning`, `.serena`, and generated benchmark artifacts as historical workflow context, not as primary user-facing memory.
 - Use Knowledge Graph relations (`link_entities`, `unlink_entities`, `get_related_entities`) to build associations between notes, source files, issues, or tasks, enabling association-based semantic retrieval.
 
+## Session Continuity (start-of-session and compaction)
+
+- **At session start, or right after a context compaction, call `recent_context` FIRST.**
+  It is query-free and returns the most recently updated notes (newest first),
+  including session `handoff` notes — the reliable "where did I leave off" entry
+  point when you do not yet know what to search for.
+- **Before a long pause or an expected compaction, write one `handoff` note**
+  (`remember_note(kind="handoff", ...)`) summarising mission, decisions, files
+  touched, current state, and open questions. Handoffs land in the `episodic`
+  tier.
+- **`semantic_search` excludes `episodic` by default** so session noise does not
+  drown durable knowledge. To retrieve handoffs by query, pass
+  `tier_filter=["episodic"]`; `recent_context` includes them automatically.
+- Use `tier="durable"` on `remember_note` only when a session-bridging note must
+  also appear in ordinary searches.
+
 ## Accessing Project Secrets (Phase 9)
 
 The four secrets tools (`set_secret`, `get_secret`, `list_secrets`, `delete_secret`) are deliberately narrow. Follow this recipe:
