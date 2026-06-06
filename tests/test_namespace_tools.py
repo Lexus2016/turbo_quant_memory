@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 
 from turbo_memory_mcp.server import (
+    build_runtime_context,
     deprecate_note_impl,
     hydrate_impl,
     index_paths_impl,
+    make_local_dispatcher,
     promote_note_impl,
     remember_note_impl,
     semantic_search_impl,
@@ -476,3 +478,57 @@ def test_semantic_search_impl_episodic_filter_returns_handoffs(tmp_path: Path) -
     titles_episodic = [it["title"] for it in episodic_payload["items"]]
     assert "Session handoff" in titles_episodic
     assert "Auth lesson" not in titles_episodic
+
+
+def test_semantic_search_mcp_dispatch_exposes_tier_filter(tmp_path: Path) -> None:
+    """The real MCP dispatch surface (not just the _impl) must carry tier_filter.
+
+    Regression guard for the gap where the @mcp.tool() wrapper accepted only
+    (query, scope, limit), so episodic handoffs were unreachable by any client.
+    """
+    env = _test_env(tmp_path)
+    remember_note_impl(
+        "Session handoff", "auth refresh login work paused", kind="handoff", tags=["auth"], environ=env
+    )
+    remember_note_impl(
+        "Auth lesson", "auth refresh login canonical implementation", kind="lesson", tags=["auth"], environ=env
+    )
+    dispatch = make_local_dispatcher(default_environ=env)
+
+    default_payload = dispatch("semantic_search", {"query": "auth refresh login", "scope": "project"})
+    default_titles = [it["title"] for it in default_payload["items"]]
+    assert "Session handoff" not in default_titles
+    assert "Auth lesson" in default_titles
+
+    episodic_payload = dispatch(
+        "semantic_search",
+        {"query": "auth refresh login", "scope": "project", "tier_filter": ["episodic"]},
+    )
+    episodic_titles = [it["title"] for it in episodic_payload["items"]]
+    assert "Session handoff" in episodic_titles
+    assert "Auth lesson" not in episodic_titles
+
+
+def test_remember_note_tier_override(tmp_path: Path) -> None:
+    """An explicit tier overrides the kind->tier default (handoff would be episodic)."""
+    env = _test_env(tmp_path)
+    stored = remember_note_impl(
+        "Durable handoff",
+        "auth refresh login durable bridge note",
+        kind="handoff",
+        tier="durable",
+        environ=env,
+    )
+    _, store = build_runtime_context(environ=env)
+    note = store.read_note(stored["item"]["item_id"], "project")
+    assert note["tier"] == "durable"
+
+    # Because the override forced durable, the handoff now appears in default search.
+    payload = semantic_search_impl("auth refresh login", scope="project", environ=env)
+    assert "Durable handoff" in [it["title"] for it in payload["items"]]
+
+
+def test_remember_note_invalid_tier_rejected(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    with pytest.raises(ValueError):
+        remember_note_impl("Bad tier", "content body", kind="lesson", tier="bogus", environ=env)

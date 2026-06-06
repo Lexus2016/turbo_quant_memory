@@ -66,6 +66,7 @@ from .store import (
     MemoryStore,
     NOTE_KINDS,
     NOTE_SOURCE_KIND,
+    NOTE_TIERS,
     PROJECT_SCOPE,
     RETRIEVAL_FORMAT_VERSION,
     resolve_storage_root,
@@ -144,7 +145,15 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         source_refs: list[str] | None = None,
         scope: str = "project",
         provenance: str = "agent",
+        tier: str | None = None,
     ) -> dict[str, object]:
+        """Store a typed project note.
+
+        The tier is normally derived from `kind` (handoff -> episodic, every
+        other kind -> durable). Pass `tier` explicitly to override — e.g.
+        tier="durable" to keep a `handoff` in the default-searchable set, or
+        tier="episodic" to keep a noisy lesson out of regular search.
+        """
         return dispatcher(
             "remember_note",
             {
@@ -155,6 +164,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
                 "source_refs": source_refs,
                 "scope": scope,
                 "provenance": provenance,
+                "tier": tier,
             },
         )
 
@@ -186,10 +196,20 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         query: str,
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 5,
+        tier_filter: list[str] | None = None,
     ) -> dict[str, object]:
+        """Compact memory retrieval (dense vector + BM25, fused via RRF).
+
+        By default only the `durable` and `reference` tiers are searched, so
+        session `handoff` notes (which live in the `episodic` tier) are NOT
+        returned. To recover handoffs / session summaries pass
+        ``tier_filter=["episodic"]`` (or list every tier to opt everything in).
+        For a query-free "where did I leave off" bootstrap at session start,
+        prefer the `recent_context` tool instead.
+        """
         return dispatcher(
             "semantic_search",
-            {"query": query, "scope": scope, "limit": limit},
+            {"query": query, "scope": scope, "limit": limit, "tier_filter": tier_filter},
         )
 
     @mcp.tool()
@@ -391,6 +411,7 @@ def _tool_remember_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) ->
         source_refs=kwargs.get("source_refs"),
         scope=str(kwargs.get("scope", "project")),
         provenance=str(kwargs.get("provenance", "agent")),
+        tier=kwargs.get("tier"),
         cwd=cwd,
         environ=environ,
     )
@@ -417,6 +438,7 @@ def _tool_semantic_search(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) 
         str(kwargs["query"]),
         scope=str(kwargs.get("scope", DEFAULT_QUERY_MODE)),
         limit=int(kwargs.get("limit", 5)),
+        tier_filter=kwargs.get("tier_filter"),
         cwd=cwd,
         environ=environ,
     )
@@ -1019,6 +1041,7 @@ def remember_note_impl(
     source_refs: list[str] | None = None,
     scope: str = "project",
     provenance: str = "agent",
+    tier: str | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
@@ -1035,11 +1058,17 @@ def remember_note_impl(
     if resolved_kind not in NOTE_KINDS:
         supported = ", ".join(NOTE_KINDS)
         raise ValueError(f"remember_note requires kind in: {supported}.")
+    resolved_tier: str | None = None
+    if tier is not None:
+        resolved_tier = tier.strip().lower()
+        if resolved_tier not in NOTE_TIERS:
+            supported = ", ".join(NOTE_TIERS)
+            raise ValueError(f"remember_note tier must be one of: {supported}.")
 
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     note = store.write_project_note(
         title, content, note_kind=resolved_kind, tags=tags,
-        source_refs=source_refs, provenance=provenance,
+        source_refs=source_refs, provenance=provenance, tier=resolved_tier,
     )
     warning = _sync_with_warning(lambda: _sync_project_note_change(store, str(note["note_id"])))
     payload = build_note_write_payload(
