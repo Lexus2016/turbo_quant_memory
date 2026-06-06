@@ -10,4 +10,4 @@ try:
     # actual release, as a hardcoded literal did through 0.7.2 and 0.8.0.
     __version__ = version("turbo-memory-mcp")
 except PackageNotFoundError:  # running from un-installed source
-    __version__ = "0.12.0"
+    __version__ = "0.13.0"

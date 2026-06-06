@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-06-06
+
+### Added
+- **Sticky project-identity resolution — a repo no longer loses its memory when
+  a git remote is added (or removed).** Previously `resolve_project_identity`
+  was a pure function of the current git/path state, so adding `origin` to a
+  repo that already had path-keyed notes flipped `identity_source` and minted a
+  brand-new, empty bucket — stranding every existing note (the kind of split
+  that had to be healed by hand). New `store.reconcile_project_identity` reads
+  the manifests already on disk and adopts the matching bucket: by a
+  previously-seen identity source, or by repo root — **unless** a different
+  recorded remote proves a different project reused the same path, in which case
+  a new bucket is minted (the safety boundary). It is wired into the single
+  `build_runtime_context` chokepoint, so every MCP tool and the CLI get it.
+  Identity-preserving for all already-established projects; it only changes the
+  answer at the moment the identity source actually transitions.
+- **`identity_sources` on the project manifest.** `write_project_manifest` now
+  accumulates every identity source ever resolved to a bucket (union, lazy-
+  seeded from the legacy single `identity_source`). This pins the bucket on a
+  later remote add/remove and is a transparent on-disk record of how a project
+  has been addressed. Additive — **no `format_version` bump and no migration**;
+  v2 manifests converge on next write (same lazy-normalize approach as the
+  provenance field).
+- **Orphaned-bucket detection in `server_info`.** New `orphaned_buckets` field
+  lists project buckets whose recorded `project_root` no longer exists on disk
+  (`{project_id, project_name, project_root, note_count}`) so dead weight is
+  visible instead of accumulating silently forever. Read-only and surfaced on
+  the diagnostic call only (not `health`, the liveness probe). It never deletes:
+  a missing root is not proof a project is dead (an external/network volume may
+  be unmounted, or the storage root shared across machines), so pruning stays a
+  deliberate, assisted action.
+
+### Notes
+- Backward compatible; no migration required. The bucket id of an established
+  project never changes — see `docs/superpowers/specs/2026-06-06-project-identity-lifecycle-design.md`.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added
