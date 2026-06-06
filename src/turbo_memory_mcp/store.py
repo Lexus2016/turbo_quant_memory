@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -182,9 +183,22 @@ class MemoryStore:
         # revert format_version to the constant and re-trigger the
         # detect/apply loop after each migration.
         format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
+        # Accumulate every identity source ever resolved to this bucket. A
+        # later remote-add (or -remove) then keeps pinning the same id via
+        # reconcile_project_identity instead of minting a new bucket, and the
+        # set is a transparent on-disk record of how the project has been
+        # addressed. Lazy: seed from a legacy single ``identity_source`` when
+        # the list field is absent, so v2 manifests converge without a
+        # migration (same approach as the provenance field).
+        prior_sources = existing.get("identity_sources")
+        if not prior_sources:
+            legacy = existing.get("identity_source")
+            prior_sources = [legacy] if legacy else []
+        identity_sources = sorted({*prior_sources, self.project.identity_source})
         manifest = {
             "scope": PROJECT_SCOPE,
             **self.project.as_dict(),
+            "identity_sources": identity_sources,
             "format_version": format_version,
             "updated_at": utc_now(),
         }
@@ -812,6 +826,74 @@ class MemoryStore:
                     filtered.append(rel)
         return filtered
 
+
+
+def reconcile_project_identity(
+    candidate: ProjectIdentity,
+    storage_root: Path,
+) -> ProjectIdentity:
+    """Return the canonical identity for a repo, reusing an existing bucket
+    instead of minting a new id when a project's identity *source* changes.
+
+    ``resolve_project_identity`` is a pure function of the current git/path
+    state, so adding a git remote to a repo that already has path-keyed notes
+    flips ``identity_source`` and would mint a brand-new (empty) bucket,
+    stranding the existing notes. This is the only storage-aware seam: it reads
+    the manifests already on disk and decides whether ``candidate`` should
+    adopt an existing bucket.
+
+    Rules (override always wins and is handled first):
+      1. A previously-seen identity source (remote or path) pins its bucket.
+      2. Otherwise, the same repo root adopts the existing bucket — UNLESS a
+         different recorded remote proves a different project reused the path,
+         in which case we mint a new bucket (the safety boundary).
+      3. Otherwise the candidate is a genuinely new project; mint as-is.
+
+    It never writes; ``MemoryStore.write_project_manifest`` records the
+    accumulated sources. Idempotent and side-effect free.
+    """
+    if candidate.identity_kind == "override":
+        return candidate
+
+    projects_root = storage_root / "projects"
+    if not projects_root.is_dir():
+        return candidate
+
+    source_to_bucket: dict[str, str] = {}
+    root_to_bucket: dict[str, tuple[str, str | None]] = {}
+    for child in sorted(projects_root.iterdir()):
+        if not child.is_dir():
+            continue
+        manifest = _read_json_if_exists(child / "manifest.json")
+        if not manifest or manifest.get("scope") != PROJECT_SCOPE:
+            continue
+        project_id = manifest.get("project_id") or child.name
+        sources = manifest.get("identity_sources")
+        if not sources:
+            legacy = manifest.get("identity_source")
+            sources = [legacy] if legacy else []
+        for source in sources:
+            source_to_bucket.setdefault(source, project_id)
+        root = manifest.get("project_root")
+        if root:
+            root_to_bucket.setdefault(str(Path(root)), (project_id, manifest.get("remote_url")))
+
+    pinned = source_to_bucket.get(candidate.identity_source)
+    if pinned is not None:
+        return replace(candidate, project_id=pinned)
+
+    match = root_to_bucket.get(str(candidate.project_root))
+    if match is not None:
+        existing_id, existing_remote = match
+        remote_conflict = (
+            candidate.remote_url is not None
+            and existing_remote is not None
+            and existing_remote != candidate.remote_url
+        )
+        if not remote_conflict:
+            return replace(candidate, project_id=existing_id)
+
+    return candidate
 
 
 def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:

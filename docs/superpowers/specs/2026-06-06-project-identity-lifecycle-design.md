@@ -1,7 +1,7 @@
 # Design: Project Identity Stability & Lifecycle Hygiene
 
 - **Date:** 2026-06-06
-- **Status:** Proposed (awaiting user review before implementation)
+- **Status:** Feature 1 (identity stability) **implemented** 2026-06-06 — see "What shipped" below. Feature 2 (orphan lifecycle) proposed/deferred.
 - **Scope decision:** Approach **#1 refined** — manifest-indexed *sticky* identity resolution (no central registry file). Approach #2 (re-key all buckets off a git root-commit hash) **rejected** — mass re-home, large blast radius, edge cases. Approach #3 (repo-local `.git/tqmemory-id` pin) **deferred** — leaky on non-git trees and fresh clones, adds a second source of truth. Orphan handling: **detect + surface + assisted prune**, never silent auto-delete.
 - **Related memory:** lesson `2dcf8eba8f824fef` (identity-split merge procedure), handoff `5311d703f9134fe9` (memory storage audit), code `identity.py:47` (`resolve_project_identity`).
 
@@ -99,6 +99,17 @@ return mint(sha256(source)[:16], sources=[source], history=[{minted}])
 - **Orphan detect:** a bucket with a non-existent root appears in `orphaned_buckets`; one with an existing root does not.
 - **Prune:** dry-run lists, no filesystem change; apply moves to `staging/` and is reversible; no path is hard-deleted without explicit confirm.
 - Update `tests/test_identity.py` (currently locks the pure path/remote behavior at lines 36/49) to the sticky-resolution contract.
+
+## What shipped (Feature 1, 2026-06-06)
+
+Refined toward necessary-minimal vs the original design; capabilities unchanged:
+
+- **No `format_version` bump, no migration.** `identity_sources` is additive and lazy: `write_project_manifest` seeds it from a legacy single `identity_source` and accumulates the current source on every write (union, idempotent). v2 manifests converge without a migration — the same lazy-normalize approach proven by the provenance design. The migration-time split-detection report is dropped from this increment (recomputable on demand later).
+- **No timestamped `identity_history`.** The persisted `identity_sources` *set* is the transparency record (you can see a bucket addressed by both a path and a remote). A timestamped audit log was deferred as forensic, not necessary for the stated stability+transparency goal.
+- **`identity.py` stays a pure git/path resolver** (its tests are unchanged). All storage awareness lives in one new function `store.reconcile_project_identity(candidate, storage_root)`, wired into the single chokepoint `server.build_runtime_context` (covers every MCP tool and the CLI).
+- **`server_info` surface deferred to Feature 2** — the manifest already persists `identity_sources` (inspectable); live echo is better homed next to orphan/`detected_splits` surfacing.
+
+Files: `src/turbo_memory_mcp/store.py` (`reconcile_project_identity`, manifest accumulation, `replace` import), `src/turbo_memory_mcp/server.py` (seam in `build_runtime_context` + import), `tests/test_identity_reconcile.py` (9 tests: adopt-on-remote-add, same-root-different-remote-mints, remote-removed-adopts, source-pin incl. moved checkout, first-time mint, override bypass, manifest accumulation, real-git end-to-end). Full suite: 358 passed.
 
 ## Necessity self-check
 Each piece is necessary and minimal. Drop `identity_sources` → no way to recognize a returning project → split persists. Drop the **remote-conflict** branch → path-reuse silently cross-contaminates memory (worse than the bug we fix). Drop `identity_history`/`identity_event` → healing becomes the silent magic the user explicitly rejected ("стабільність та прозорість"). Choosing manifest-as-truth over a central `registry.json` removes a hot shared file and a second SSoT without losing any capability. Orphan handling is detect-and-surface only — the destructive half stays assisted, honoring the project-wide principle that the server never silently destroys user memory.

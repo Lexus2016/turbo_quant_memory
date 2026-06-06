@@ -71,6 +71,7 @@ from .store import (
     NOTE_TIERS,
     PROJECT_SCOPE,
     RETRIEVAL_FORMAT_VERSION,
+    reconcile_project_identity,
     resolve_storage_root,
 )
 from .telemetry import build_usage_snapshot, record_hydration_usage, record_semantic_search_usage
@@ -1347,8 +1348,13 @@ def build_runtime_context(
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[ProjectIdentity, MemoryStore]:
-    project = resolve_project_identity(cwd=cwd, environ=environ)
-    store = MemoryStore(project, storage_root=resolve_storage_root(environ))
+    candidate = resolve_project_identity(cwd=cwd, environ=environ)
+    storage_root = resolve_storage_root(environ)
+    # Reconcile the pure git/path identity against existing buckets so a repo
+    # that gains (or loses) a git remote keeps its original memory bucket
+    # instead of silently splitting into a fresh one.
+    project = reconcile_project_identity(candidate, storage_root)
+    store = MemoryStore(project, storage_root=storage_root)
     return project, store
 
 
