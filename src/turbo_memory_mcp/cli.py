@@ -119,6 +119,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     secret_set_parser.set_defaults(handler=_handle_secret_set)
 
+    prune_parser = subparsers.add_parser(
+        "prune-orphans",
+        help="List or move orphaned project buckets (recorded root no longer exists).",
+        description=(
+            "Surface project buckets whose recorded project_root no longer "
+            "exists on disk and, with --apply, MOVE them to staging/ "
+            "(reversible) instead of deleting. Default is a dry run that only "
+            "lists them. A missing root is not proof a project is dead (an "
+            "unmounted volume, or storage shared across machines), so removal "
+            "is never automatic and never a hard delete."
+        ),
+    )
+    prune_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Move orphaned buckets to staging/ (reversible). Default lists only.",
+    )
+    prune_parser.set_defaults(handler=_handle_prune_orphans)
+
     return parser
 
 
@@ -126,6 +145,58 @@ def _handle_serve(_: argparse.Namespace) -> int:
     from .server import run_stdio_server
 
     run_stdio_server()
+    return 0
+
+
+def _handle_prune_orphans(args: argparse.Namespace) -> int:
+    """List orphaned project buckets, or (with --apply) move them to staging/.
+
+    Never hard-deletes and never runs automatically: a missing project_root is
+    not proof a project is dead (an unmounted external/network volume, or a
+    storage root shared across machines), so the operator decides, and the move
+    is reversible. Orphan buckets are by definition not the active project, so
+    moving them is safe even while a daemon is running.
+    """
+    import shutil
+    import time
+
+    from .store import detect_orphaned_buckets, resolve_storage_root
+
+    storage_root = resolve_storage_root()
+    orphans = detect_orphaned_buckets(storage_root)
+    if not orphans:
+        print("No orphaned buckets — every project bucket maps to an existing root.")
+        return 0
+
+    print(f"Orphaned buckets ({len(orphans)} — recorded project_root missing on disk):")
+    for orphan in orphans:
+        print(
+            f"  {orphan['project_id']}  {orphan['project_name']}  "
+            f"notes={orphan['note_count']}  root={orphan['project_root']}"
+        )
+
+    if not args.apply:
+        print(
+            "\nDry run. Re-run with --apply to MOVE these to staging/ "
+            "(reversible; no hard delete)."
+        )
+        return 0
+
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dest_root = storage_root / "staging" / f"orphan-prune-{stamp}"
+    dest_root.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for orphan in orphans:
+        src = storage_root / "projects" / orphan["project_id"]
+        if not src.is_dir():
+            continue
+        shutil.move(str(src), str(dest_root / orphan["project_id"]))
+        moved += 1
+    print(f"\nMoved {moved} bucket(s) to {dest_root}")
+    print(
+        "Reversible: move a bucket back under projects/ to restore it, or delete "
+        "the staging directory to purge."
+    )
     return 0
 
 

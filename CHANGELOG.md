@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`prune-orphans` CLI — the action half of orphaned-bucket lifecycle.**
+  `turbo-memory-mcp prune-orphans` lists project buckets whose recorded
+  `project_root` no longer exists on disk (the same set surfaced in
+  `server_info.orphaned_buckets`); `--apply` MOVES them to
+  `staging/orphan-prune-<ts>/` (reversible) rather than deleting. Dry run by
+  default, never a hard delete, never automatic — a missing root is not proof a
+  project is dead (an unmounted volume, or storage shared across machines).
+  Orphan buckets are by definition not the active project, so the move is safe
+  with a daemon running.
+
 ## [0.13.0] - 2026-06-06
 
 ### Added
