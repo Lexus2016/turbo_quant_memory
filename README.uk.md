@@ -48,7 +48,7 @@
 
 1. **Встановіть CLI-інструмент:**
    ```bash
-   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.7.1
+   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.12.0
    ```
 
 2. **Додайте MCP-сервер `tqmemory` у ваш клієнт:**
