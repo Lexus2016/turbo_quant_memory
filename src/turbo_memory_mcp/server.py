@@ -25,6 +25,8 @@ from .contracts import (
     build_health_payload,
     build_list_secrets_payload,
     build_note_write_payload,
+    build_recent_context_item_payload,
+    build_recent_context_payload,
     build_scope_payload,
     build_secret_error_payload,
     build_self_test_payload,
@@ -50,7 +52,7 @@ from .identity import (
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
 from .migrations import format_pending_warning
-from .retrieval import semantic_search
+from .retrieval import MAX_SEMANTIC_LIMIT, semantic_search
 from .retrieval_index import RetrievalIndex
 from .secrets import (
     AuditLog,
@@ -340,6 +342,30 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         """Delete a project secret by exact name."""
         return dispatcher("delete_secret", {"name": name})
 
+    @mcp.tool()
+    def recent_context(
+        scope: str = DEFAULT_QUERY_MODE,
+        limit: int = 10,
+        tier_filter: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Query-free session bootstrap: the most recently updated notes.
+
+        Call this FIRST when starting a new session or resuming after a context
+        compaction, when you do not yet know what to search for. Returns notes
+        ordered by recency (newest first), NOT by relevance — including
+        `handoff` notes (episodic tier), which a plain semantic_search hides by
+        default. This is the reliable "where did I leave off" entry point.
+
+        scope: 'project' (default), 'global', or 'hybrid'. Use 'hybrid' to also
+        surface promoted cross-project knowledge.
+        tier_filter: defaults to all tiers (so handoffs are included). Pass e.g.
+        ["durable"] to exclude episodic session notes.
+        """
+        return dispatcher(
+            "recent_context",
+            {"scope": scope, "limit": limit, "tier_filter": tier_filter},
+        )
+
     return mcp
 
 
@@ -454,6 +480,16 @@ def _tool_hydrate(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     )
 
 
+def _tool_recent_context(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    return recent_context_impl(
+        scope=str(kwargs.get("scope", DEFAULT_QUERY_MODE)),
+        limit=int(kwargs.get("limit", 10)),
+        tier_filter=kwargs.get("tier_filter"),
+        cwd=cwd,
+        environ=environ,
+    )
+
+
 def _tool_index_paths(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     return index_paths_impl(
         paths=kwargs.get("paths"),
@@ -535,6 +571,7 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "deprecate_note": _tool_deprecate_note,
     "semantic_search": _tool_semantic_search,
     "hydrate": _tool_hydrate,
+    "recent_context": _tool_recent_context,
     "index_paths": _tool_index_paths,
     "lint_knowledge_base": _tool_lint_knowledge_base,
     "link_entities": _tool_link_entities,
@@ -1202,6 +1239,83 @@ def hydrate_impl(
     return payload
 
 
+def recent_context_impl(
+    *,
+    scope: str = DEFAULT_QUERY_MODE,
+    limit: int = 10,
+    tier_filter: Sequence[str] | None = None,
+    cwd: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Query-free session bootstrap: most-recently-updated notes, newest first.
+
+    Reads canonical note JSON directly (no embedding, no vector search), so it
+    is deterministic and cheap. Includes every tier by default — crucially the
+    `episodic` tier, so session `handoff` notes surface here even though a plain
+    semantic_search hides them. This closes the cold-start gap: a fresh session
+    can recover "where did I leave off" without guessing a query.
+    """
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    resolved_scope = scope.strip().lower()
+    if resolved_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE, "hybrid"}:
+        raise ValueError(f"Unsupported scope: {scope}")
+
+    allowed_tiers: set[str] | None = None
+    resolved_tier_filter: list[str] | None = None
+    if tier_filter is not None:
+        normalized = [str(t).strip().lower() for t in tier_filter]
+        if not normalized:
+            raise ValueError("tier_filter must be None or a non-empty sequence.")
+        unknown = [t for t in normalized if t not in NOTE_TIERS]
+        if unknown:
+            raise ValueError(f"Unknown tier(s) in tier_filter: {unknown}")
+        allowed_tiers = set(normalized)
+        resolved_tier_filter = normalized
+
+    normalized_limit = max(1, min(int(limit), MAX_SEMANTIC_LIMIT))
+
+    scopes_to_read: list[str] = []
+    if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
+        scopes_to_read.append(PROJECT_SCOPE)
+    if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
+        scopes_to_read.append(GLOBAL_SCOPE)
+
+    collected: list[tuple[str, dict[str, Any]]] = []
+    for read_scope in scopes_to_read:
+        for note in store.list_notes(read_scope):
+            note_tier = str(note.get("tier") or "")
+            if allowed_tiers is not None and note_tier and note_tier not in allowed_tiers:
+                continue
+            collected.append((read_scope, note))
+
+    # Newest first; note_id as a stable tiebreaker for equal timestamps.
+    collected.sort(
+        key=lambda pair: (str(pair[1].get("updated_at", "")), str(pair[1].get("note_id", ""))),
+        reverse=True,
+    )
+
+    items: list[dict[str, object]] = []
+    for read_scope, note in collected[:normalized_limit]:
+        relations = store.get_relations_for_entity(
+            uri=f"note://{note['note_id']}",
+            scope="hybrid",
+            project_id=note.get("project_id"),
+        )
+        items.append(
+            build_recent_context_item_payload(
+                note,
+                scope=read_scope,
+                source_path=str(store.note_source_path(note)),
+                compressed_summary=build_content_preview(str(note.get("content", "")), limit=220),
+                relations=relations,
+            )
+        )
+
+    return build_recent_context_payload(
+        scope=resolved_scope, items=items, tier_filter=resolved_tier_filter
+    )
+
+
 def index_paths_impl(
     paths: list[str] | None = None,
     *,
@@ -1805,6 +1919,7 @@ __all__ = [
     "make_local_dispatcher",
     "make_proxy_dispatcher",
     "promote_note_impl",
+    "recent_context_impl",
     "remember_note_impl",
     "run_stdio_server",
     "semantic_search_impl",

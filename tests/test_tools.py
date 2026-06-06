@@ -38,6 +38,7 @@ EXPECTED_TOOL_NAMES = [
     "get_secret",
     "list_secrets",
     "delete_secret",
+    "recent_context",
 ]
 
 
@@ -144,7 +145,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     install_contract = build_install_contract()
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 18
+    assert payload["tool_count"] == 19
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-memory-mcp"

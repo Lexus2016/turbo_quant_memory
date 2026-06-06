@@ -41,7 +41,8 @@ PHASE_9_TOOL_NAMES = PHASE_7_TOOL_NAMES + (
     "list_secrets",
     "delete_secret",
 )
-CURRENT_TOOL_NAMES = PHASE_9_TOOL_NAMES
+PHASE_10_TOOL_NAMES = PHASE_9_TOOL_NAMES + ("recent_context",)
+CURRENT_TOOL_NAMES = PHASE_10_TOOL_NAMES
 
 
 
@@ -284,6 +285,62 @@ def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
     return payload
 
 
+def build_recent_context_item_payload(
+    note: Mapping[str, Any],
+    *,
+    scope: str,
+    source_path: str,
+    compressed_summary: str,
+    relations: list[dict[str, Any]] | None = None,
+) -> dict[str, object]:
+    """Compact, query-free note payload for the `recent_context` bootstrap tool.
+
+    Shaped to be familiar to clients that already consume `semantic_search`
+    hits (same key names) but carries no relevance score — ordering is purely
+    by recency.
+    """
+    payload: dict[str, object] = {
+        "scope": scope,
+        "project_id": note["project_id"],
+        "project_name": note["project_name"],
+        "source_kind": note["source_kind"],
+        "item_id": note["note_id"],
+        "source_path": source_path,
+        "title": note["title"],
+        "note_kind": note["note_kind"],
+        "note_status": note.get("note_status", "active"),
+        "tags": list(note.get("tags", [])),
+        "updated_at": note["updated_at"],
+        "provenance": note.get("provenance", "agent"),
+        "compressed_summary": compressed_summary,
+        "can_hydrate": True,
+    }
+    if note.get("tier"):
+        payload["tier"] = str(note["tier"])
+    if note.get("promoted_from"):
+        payload["promoted_from"] = dict(note["promoted_from"])
+    if relations:
+        payload["relations"] = list(relations)
+    return payload
+
+
+def build_recent_context_payload(
+    *,
+    scope: str,
+    items: list[dict[str, object]],
+    tier_filter: list[str] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "ok",
+        "mode": "recent_context",
+        "scope": scope,
+        "result_count": len(items),
+        "items": items,
+    }
+    if tier_filter is not None:
+        payload["tier_filter"] = list(tier_filter)
+    return payload
+
 
 def build_hydrated_markdown_item_payload(
     block: Mapping[str, Any],
@@ -513,6 +570,8 @@ __all__ = [
     "build_list_secrets_payload",
     "build_note_item_payload",
     "build_note_write_payload",
+    "build_recent_context_item_payload",
+    "build_recent_context_payload",
     "build_scope_payload",
     "build_search_payload",
     "build_secret_error_payload",
