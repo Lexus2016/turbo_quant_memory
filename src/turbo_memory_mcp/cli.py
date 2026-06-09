@@ -138,6 +138,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prune_parser.set_defaults(handler=_handle_prune_orphans)
 
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Quick diagnostics for daemon lock, migrations, and storage health.",
+        description=(
+            "Run a suite of quick checks: lockfile state, migration status, "
+            "storage directory health, and socket reachability. Prints "
+            "PASS/FAIL for each check with a short summary."
+        ),
+    )
+    doctor_parser.set_defaults(handler=_handle_doctor)
+
     return parser
 
 
@@ -489,6 +500,110 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
     AuditLog(vault.secrets_dir).record("set", name)
     print(f"Stored secret '{name}' for project '{project.project_id}'.")
     return 0
+
+
+def _handle_doctor(_: argparse.Namespace) -> int:
+    """Run quick diagnostics: lock, migrations, storage, socket."""
+    import socket
+
+    from .daemon import (
+        HEALTH_CONNECT_TIMEOUT_SECONDS,
+        _is_pid_alive,
+        _read_lockfile,
+    )
+    from .server import build_runtime_context
+    from .store import resolve_storage_root
+
+    issues = 0
+
+    # 1. Storage root
+    try:
+        storage_root = resolve_storage_root()
+        if storage_root.is_dir():
+            print(f"[PASS] storage_root: {storage_root}")
+        else:
+            print(f"[FAIL] storage_root missing: {storage_root}")
+            issues += 1
+    except Exception as exc:
+        print(f"[FAIL] storage_root resolution: {exc}")
+        issues += 1
+        return issues
+
+    # 2. Lockfile
+    lock = storage_root / ".daemon.lock"
+    payload = _read_lockfile(lock)
+    if payload is None:
+        print("[PASS] lockfile: no lock present (standalone or no daemon)")
+    else:
+        pid = payload.get("pid")
+        proto = payload.get("protocol_version", "?")
+        ver = payload.get("server_version", "?")
+        addr = payload.get("address", "?")
+        if not isinstance(pid, int):
+            print(f"[WARN] lockfile present but malformed (no pid): {lock}")
+            issues += 1
+        elif _is_pid_alive(pid):
+            print(f"[PASS] lockfile: live primary PID={pid} proto={proto} ver={ver}")
+        else:
+            print(f"[WARN] lockfile stale: PID {pid} is dead — {lock}")
+            print(f"       Remove with: rm {lock}")
+            issues += 1
+
+        # 3. Socket reachability (only if lock claims a live owner).
+        # The daemon listens on an AF_UNIX socket (Unix) or a named pipe
+        # (Windows AF_PIPE). Only AF_UNIX is a connectable socket at a
+        # filesystem address; a named pipe is not probeable this way, so skip
+        # it cleanly rather than forcing a false failure.
+        if isinstance(pid, int) and _is_pid_alive(pid) and addr and addr != "?":
+            family = payload.get("family", "AF_UNIX")
+            if family != "AF_UNIX":
+                print(f"[INFO] socket: probe skipped for family={family}")
+            elif not Path(addr).exists():
+                print(f"[FAIL] socket missing: {addr} (PID {pid} alive but no socket)")
+                issues += 1
+            else:
+                try:
+                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    sock.settimeout(HEALTH_CONNECT_TIMEOUT_SECONDS)
+                    sock.connect(addr)
+                    sock.close()
+                    print(f"[PASS] socket: reachable at {addr}")
+                except OSError as exc:
+                    print(f"[FAIL] socket: cannot connect to {addr} — {exc}")
+                    issues += 1
+
+    # 4 & 5. Migrations + project identity share one runtime context so a
+    # single resolution failure is reported once, not double-counted.
+    try:
+        project, store = build_runtime_context()
+    except Exception as exc:
+        print(f"[WARN] runtime context: cannot resolve project/store — {exc}")
+        issues += 1
+    else:
+        try:
+            from .migrations import detect_status
+
+            statuses = detect_status(store)
+            pending = [s for s in statuses.values() if s.needs_upgrade]
+            if pending:
+                subs = [s.subsystem.value for s in pending]
+                print(f"[WARN] migrations: {len(pending)} pending — {', '.join(subs)}")
+                print("       Run: turbo-memory-mcp migrate --status")
+                issues += 1
+            else:
+                print("[PASS] migrations: all subsystems up to date")
+        except Exception as exc:
+            print(f"[WARN] migrations: cannot detect status — {exc}")
+            issues += 1
+
+        print(f"[PASS] project: {project.project_name} (id={project.project_id})")
+
+    # Summary
+    if issues == 0:
+        print("\nAll checks passed.")
+    else:
+        print(f"\n{issues} issue(s) found. Review WARN/FAIL items above.")
+    return issues
 
 
 def main(argv: Sequence[str] | None = None) -> int:

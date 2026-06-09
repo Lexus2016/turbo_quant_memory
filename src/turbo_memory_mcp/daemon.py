@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import secrets
+import sys
 import tempfile
 import threading
 import time
@@ -40,17 +41,24 @@ from .store import resolve_storage_root
 
 DAEMON_PROTOCOL_VERSION = "1.0"
 ENV_DAEMON_DISABLE = "TQMEMORY_DAEMON_DISABLE"
+ENV_MIGRATE_ON_STARTUP = "TQMEMORY_MIGRATE_ON_STARTUP"
 LOCKFILE_NAME = ".daemon.lock"
 AUTHKEY_BYTES = 32
 CONNECT_TIMEOUT_SECONDS = 5.0
+HEALTH_CONNECT_TIMEOUT_SECONDS = 2.0
 RPC_TIMEOUT_SECONDS = 120.0
 LISTENER_BACKLOG = 32
+_STARTUP_LOG_PREFIX = "[tqmemory]"
 
 MESSAGE_CALL = "call"
 MESSAGE_OK = "ok"
 MESSAGE_ERROR = "error"
 MESSAGE_HELLO = "hello"
 MESSAGE_HELLO_ACK = "hello_ack"
+
+
+def _startup_log(msg: str) -> None:
+    print(f"{_STARTUP_LOG_PREFIX} {msg}", file=sys.stderr, flush=True)
 
 
 def daemon_is_disabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -552,25 +560,28 @@ def acquire_daemon_role(
     """
 
     if daemon_is_disabled(environ):
+        _startup_log("daemon disabled via env, standalone mode")
         return BootstrapResult(role="standalone", endpoint=None, client=None)
 
     lock_path = lockfile_path(environ)
-    for _ in range(max_retries):
+    for attempt in range(max_retries):
         existing = maybe_existing_endpoint(lock_path, environ=environ)
         if existing is not None:
             try:
                 client = DaemonClient(existing)
                 client.ping()
+                _startup_log(f"connected as proxy to PID {existing.pid}")
                 return BootstrapResult(role="proxy", endpoint=existing, client=client)
             except Exception:
-                # Endpoint advertised but unreachable; treat as stale.
+                _startup_log(
+                    f"endpoint unreachable (PID {existing.pid}), removing stale lock"
+                )
                 try:
                     lock_path.unlink()
                 except FileNotFoundError:
                     pass
         elif lock_path.exists():
-            # Lockfile present but owner is dead / payload unreadable / protocol
-            # mismatch. Remove it so the next claim can succeed.
+            _startup_log("lockfile stale (owner dead), reclaiming")
             try:
                 lock_path.unlink()
             except FileNotFoundError:
@@ -578,11 +589,14 @@ def acquire_daemon_role(
 
         new_endpoint = make_primary_endpoint(environ=environ)
         if _try_claim_lockfile(lock_path, new_endpoint):
+            _startup_log(f"claimed primary role (PID {os.getpid()})")
             return BootstrapResult(role="primary", endpoint=new_endpoint, client=None)
 
-        # Another process wrote the lockfile between our check and claim; wait and retry.
+        if attempt < max_retries - 1:
+            _startup_log(f"lock contention, retry {attempt + 1}/{max_retries}")
         time.sleep(retry_sleep_seconds)
 
+    _startup_log(f"falling back to standalone after {max_retries} retries")
     return BootstrapResult(role="standalone", endpoint=None, client=None)
 
 
@@ -628,6 +642,8 @@ __all__ = [
     "DaemonEndpoint",
     "DaemonListener",
     "ENV_DAEMON_DISABLE",
+    "ENV_MIGRATE_ON_STARTUP",
+    "HEALTH_CONNECT_TIMEOUT_SECONDS",
     "LOCKFILE_NAME",
     "MESSAGE_CALL",
     "MESSAGE_ERROR",

@@ -99,6 +99,8 @@ def build_health_payload(
     *,
     migrations_pending: bool = False,
     migrations_hint: str | None = None,
+    daemon_role: str | None = None,
+    migration_auto_result: str | None = None,
 ) -> dict[str, object]:
     payload = build_contract_snapshot()
     result: dict[str, object] = {
@@ -111,6 +113,10 @@ def build_health_payload(
     }
     if migrations_pending and migrations_hint:
         result["migrations_hint"] = migrations_hint
+    if daemon_role is not None:
+        result["daemon_role"] = daemon_role
+    if migration_auto_result is not None:
+        result["migration_auto_result"] = migration_auto_result
     return result
 
 

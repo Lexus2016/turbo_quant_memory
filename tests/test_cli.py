@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -134,3 +135,98 @@ def test_prune_orphans_reports_none_when_clean(
 
     assert exit_code == 0
     assert "No orphaned buckets" in out
+
+
+def test_doctor_clean_storage_reports_all_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+
+    exit_code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[PASS] storage_root" in out
+    assert "no lock present" in out
+    assert "All checks passed." in out
+
+
+def test_doctor_flags_stale_lock_with_dead_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+    # A lockfile naming a PID that cannot be alive — the classic stale-lock
+    # state behind silent MCP timeouts after an unclean shutdown.
+    lock = home / ".daemon.lock"
+    lock.write_text(
+        json.dumps(
+            {
+                "pid": 2**31 - 1,
+                "protocol_version": "1.0",
+                "server_version": "0.0.0",
+                "address": str(home / ".phantom.sock"),
+                "family": "AF_UNIX",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert exit_code >= 1  # exit code == number of issues found
+    assert "lockfile stale" in out
+    assert "is dead" in out
+    assert str(lock) in out  # exact `rm` target is surfaced
+
+
+def test_doctor_flags_pending_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    # A storage root with project buckets but no secrets marker is exactly the
+    # secrets v1->v2 "pending migration" state from the bug report.
+    (home / "projects" / "somebucket000000").mkdir(parents=True)
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+
+    exit_code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert exit_code >= 1
+    assert "migrations:" in out
+    assert "pending" in out
+    assert "secrets" in out
+
+
+def test_doctor_skips_socket_probe_for_named_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+    # A live primary on Windows advertises a named pipe (AF_PIPE), which is not
+    # a connectable filesystem socket — doctor must skip the probe cleanly
+    # instead of emitting a false [FAIL].
+    (home / ".daemon.lock").write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),  # this process — guaranteed alive
+                "protocol_version": "1.0",
+                "server_version": "0.0.0",
+                "address": r"\\.\pipe\tqmemory-test",
+                "family": "AF_PIPE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert "live primary" in out  # live PID is not treated as stale
+    assert "probe skipped for family=AF_PIPE" in out
+    assert exit_code == 0  # a skipped probe is not an issue

@@ -34,10 +34,12 @@ from .contracts import (
     build_set_secret_payload,
 )
 from .daemon import (
+    ENV_MIGRATE_ON_STARTUP,
     BootstrapResult,
     DaemonClient,
     DaemonListener,
     PrimaryUnreachable,
+    _startup_log,
     acquire_daemon_role,
     release_daemon_lock,
 )
@@ -76,6 +78,9 @@ from .store import (
     resolve_storage_root,
 )
 from .telemetry import build_usage_snapshot, record_hydration_usage, record_semantic_search_usage
+
+_cached_bootstrap: BootstrapResult | None = None
+_auto_migration_result: str | None = None
 
 
 Dispatcher = Callable[[str, Mapping[str, Any]], Any]
@@ -378,7 +383,12 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
 
 def _tool_health(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     pending, hint = _migration_pending_signal(cwd=cwd, environ=environ)
-    return build_health_payload(migrations_pending=pending, migrations_hint=hint)
+    return build_health_payload(
+        migrations_pending=pending,
+        migrations_hint=hint,
+        daemon_role=_cached_bootstrap.role if _cached_bootstrap else None,
+        migration_auto_result=_auto_migration_result,
+    )
 
 
 def _tool_server_info(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
@@ -773,6 +783,48 @@ class ProxyRuntime:
                 pass
 
 
+def _startup_auto_migrate() -> str | None:
+    """Apply pending migrations automatically on startup when opted in.
+
+    Controlled by ``TQMEMORY_MIGRATE_ON_STARTUP=1``. Only runs when this
+    process is primary or standalone (we own storage). Takes a rolling
+    snapshot before applying. Returns a short status string on attempt,
+    or None if skipped.
+    """
+    global _auto_migration_result
+    if os.environ.get(ENV_MIGRATE_ON_STARTUP, "").strip() not in {"1", "true", "yes"}:
+        return None
+    if _cached_bootstrap is None or _cached_bootstrap.role not in ("primary", "standalone"):
+        return None
+    try:
+        _, store = build_runtime_context()
+        from .migrations import apply_pending, create_snapshot, detect_status
+
+        statuses = detect_status(store)
+        if not any(s.needs_upgrade for s in statuses.values()):
+            _startup_log("auto-migrate: no pending migrations")
+            _auto_migration_result = "skipped: nothing pending"
+            return _auto_migration_result
+
+        _startup_log("auto-migrate: creating snapshot before applying...")
+        snap_path = create_snapshot(store.storage_root)
+        _startup_log(f"auto-migrate: snapshot at {snap_path}")
+
+        outcomes = apply_pending(store, dry_run=False, snapshot=False)
+        failed = [o for o in outcomes if not o.success]
+        if failed:
+            errs = "; ".join(f"{o.migration.subsystem.value}: {o.error}" for o in failed)
+            _startup_log(f"auto-migrate: {len(failed)} step(s) FAILED — {errs}")
+            _auto_migration_result = f"failed: {len(failed)} step(s)"
+        else:
+            _startup_log(f"auto-migrate: applied {len(outcomes)} step(s) OK")
+            _auto_migration_result = f"applied: {len(outcomes)} step(s)"
+    except Exception as exc:
+        _startup_log(f"auto-migrate: error — {exc}")
+        _auto_migration_result = f"error: {exc}"
+    return _auto_migration_result
+
+
 def _warn_about_pending_migrations() -> None:
     """Detect pending schema migrations and surface a warning on stderr.
 
@@ -791,14 +843,24 @@ def _warn_about_pending_migrations() -> None:
 def run_stdio_server() -> None:
     """Entry point used by the CLI. Handles daemon bootstrap transparently."""
 
+    global _cached_bootstrap
     bootstrap = acquire_daemon_role()
-    if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+    _cached_bootstrap = bootstrap
+
+    _startup_log(
+        f"role={bootstrap.role} PID={os.getpid()} "
+        f"storage={resolve_storage_root()}"
+    )
+
+    if bootstrap.role in ("primary", "standalone"):
+        _startup_auto_migrate()
         _warn_about_pending_migrations()
+
+    if bootstrap.role == "primary" and bootstrap.endpoint is not None:
         _run_primary(bootstrap)
     elif bootstrap.role == "proxy" and bootstrap.client is not None:
         _run_proxy(bootstrap)
     else:
-        _warn_about_pending_migrations()
         _run_standalone()
 
 

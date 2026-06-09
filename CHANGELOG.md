@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-06-09
+
+### Added
+- **Daemon startup observability.** `acquire_daemon_role()` now logs every
+  bootstrap decision to stderr with a `[tqmemory]` prefix — primary claimed,
+  proxy connected, endpoint unreachable, stale lock reclaimed, lock
+  contention, standalone fallback. A client that sees an MCP timeout can read
+  *why* from the gateway logs (`[tqmemory] role=...`) instead of guessing
+  between a network, lock, or migration problem.
+- **Opt-in migration auto-apply on startup.** Set
+  `TQMEMORY_MIGRATE_ON_STARTUP=1` and a primary/standalone server applies any
+  pending schema migrations on boot, taking a rolling snapshot first. Off by
+  default — apply stays an explicit, snapshotted operation. A proxy never
+  migrates (it does not own storage), and a failure is captured rather than
+  crashing startup.
+- **`turbo-memory-mcp doctor`** — one-shot diagnostics for the failure mode
+  behind silent MCP timeouts: storage-root presence, stale `.daemon.lock`
+  (dead-PID detection with the exact `rm` command), socket reachability,
+  pending migrations, and project identity. Exit code equals the number of
+  issues found.
+- **`health()` reports daemon state.** The payload now carries `daemon_role`
+  (primary / proxy / standalone, snapshotted at startup) and
+  `migration_auto_result`, so a client can distinguish a lock/migration
+  problem from a network one without waiting for a 120s timeout.
+- README troubleshooting section (EN/RU/UK) for the Hermes Agent: stale-lock
+  recovery, auto-migration setup, and a symptom → cause → fix table.
+
+### Notes
+- No schema change — `migrate --apply` is **not** required for this release.
+
 ## [0.14.0] - 2026-06-06
 
 ### Added

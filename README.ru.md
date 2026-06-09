@@ -235,6 +235,84 @@ export TQMEMORY_EMBEDDING_BACKEND=fastembed   # по умолчанию: sentenc
 
 ---
 
+## 🛰️ Специфика платформ: Hermes Agent
+
+[Hermes](https://github.com/nicepkg/hermes) запускает MCP-серверы через systemd-управляемый шлюз — это другой подход, чем Claude Code или Cursor.
+
+### Установка
+
+```bash
+uv tool install turbo-quant-memory
+```
+
+Добавь в `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  tqmemory:
+    command: turbo-memory-mcp
+    args: ["serve"]
+    enabled: true
+```
+
+Перезапусти шлюз:
+
+```bash
+systemctl --user restart hermes-gateway
+```
+
+### Решение проблем с MCP-таймаутами
+
+Если MCP-инструменты выдают таймаут "MCP call timed out after 120.0s" — скорее всего, блокировка демона зависла после предыдущего круша или сна хоста. Восстановление:
+
+```bash
+# 1. Завершить все процессы демона
+pkill -f turbo-memory-mcp
+
+# 2. Удалить зависший lock-файл
+rm -f ~/.turbo-quant-memory/.daemon.lock
+
+# 3. Проверить и применить миграции
+turbo-memory-mcp migrate --status
+turbo-memory-mcp migrate --apply
+
+# 4. Быстрая диагностика
+turbo-memory-mcp doctor
+
+# 5. Перезапустить шлюз
+systemctl --user restart hermes-gateway
+
+# 6. Подождать 30-60с для повторного подключения MCP
+```
+
+### Автоматические миграции при старте
+
+Установи `TQMEMORY_MIGRATE_ON_STARTUP=1` в окружении, чтобы сервер автоматически применял ожидающие миграции (с rolling-снимком) при старте в роли primary или standalone:
+
+```yaml
+mcp_servers:
+  tqmemory:
+    command: turbo-memory-mcp
+    args: ["serve"]
+    enabled: true
+    env:
+      TQMEMORY_MIGRATE_ON_STARTUP: "1"
+```
+
+Результат авто-миграции виден в ответе `health()` в поле `migration_auto_result`.
+
+### Типичные проблемы с Hermes
+
+| Симптом | Причина | Исправление |
+|---------|---------|-------------|
+| MCP-таймаут | Зависший `.daemon.lock` | `rm -f ~/.turbo-quant-memory/.daemon.lock` |
+| Несколько демонов | Краш оставил сироты | `pkill -f turbo-memory-mcp` |
+| Инструменты возвращают ошибки | Ожидаются миграции схемы | `turbo-memory-mcp migrate --apply` |
+| Шлюз не загружает MCP | Ошибка синтаксиса config | Проверить `config.yaml` |
+| Тихий сбой старта | Нет видимости роли демона | Проверить stderr: `[tqmemory] role=...` |
+
+---
+
 ## 🌍 Языковые версии документации
 Эта документация поддерживается в трех синхронизированных версиях:
 * 🇺🇸 [English README](README.md)
