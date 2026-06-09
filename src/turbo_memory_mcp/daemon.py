@@ -454,10 +454,12 @@ class DaemonListener:
         handler: Callable[[str, Mapping[str, Any]], Any],
         *,
         dispatch_lock: threading.RLock | None = None,
+        ready_event: threading.Event | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._handler = handler
         self._dispatch_lock = dispatch_lock or threading.RLock()
+        self._ready_event = ready_event
         self._listener: Listener | None = None
         self._accept_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -546,6 +548,14 @@ class DaemonListener:
                 tool = str(msg.get("tool", ""))
                 kwargs_raw = msg.get("kwargs") or {}
                 kwargs: Mapping[str, Any] = kwargs_raw if isinstance(kwargs_raw, Mapping) else {}
+                # Defer tool dispatch until the primary is ready (e.g. startup
+                # migration finished). HELLO/ping above is never gated, so a
+                # racing process still sees us as live and proxies instead of
+                # evicting our lockfile mid-migration (audit H1-residual).
+                if self._ready_event is not None:
+                    while not self._ready_event.wait(0.5):
+                        if self._stop_event.is_set():
+                            return
                 with self._dispatch_lock:
                     try:
                         result = self._handler(tool, kwargs)

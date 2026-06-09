@@ -852,15 +852,16 @@ def run_stdio_server() -> None:
         f"storage={resolve_storage_root()}"
     )
 
-    if bootstrap.role in ("primary", "standalone"):
-        _startup_auto_migrate()
-        _warn_about_pending_migrations()
-
     if bootstrap.role == "primary" and bootstrap.endpoint is not None:
+        # _run_primary migrates AFTER binding the listener (audit H1-residual),
+        # so the startup migration is not done here for the primary path.
         _run_primary(bootstrap)
     elif bootstrap.role == "proxy" and bootstrap.client is not None:
         _run_proxy(bootstrap)
     else:
+        # Standalone has no listener, so migrate inline before serving.
+        _startup_auto_migrate()
+        _warn_about_pending_migrations()
         _run_standalone()
 
 
@@ -869,14 +870,28 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     assert endpoint is not None  # guarded by run_stdio_server
     dispatch_lock = threading.RLock()
     dispatcher = make_local_dispatcher(dispatch_lock=dispatch_lock)
+    ready = threading.Event()
 
     def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
         # Listener thread uses same dispatcher, which holds the shared lock.
         return dispatcher(tool, kwargs)
 
-    listener = DaemonListener(endpoint, _listener_handler, dispatch_lock=dispatch_lock)
+    # Bind the listener BEFORE the (possibly minutes-long) startup migration so
+    # a racing process can reach us and proxy instead of judging our lockfile
+    # stale and evicting it mid-migration (audit H1-residual). The listener
+    # answers HELLO/ping immediately; tool calls are held behind `ready` until
+    # migration finishes, so no proxy observes a half-migrated store.
+    listener = DaemonListener(
+        endpoint,
+        _listener_handler,
+        dispatch_lock=dispatch_lock,
+        ready_event=ready,
+    )
     listener.start()
     try:
+        _startup_auto_migrate()
+        _warn_about_pending_migrations()
+        ready.set()
         build_server(dispatcher).run(transport="stdio")
     finally:
         listener.stop()

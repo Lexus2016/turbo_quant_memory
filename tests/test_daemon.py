@@ -242,6 +242,43 @@ def test_client_connect_is_bounded_when_primary_is_wedged(
     assert elapsed < 2.0  # bounded, not hung
 
 
+def test_listener_defers_calls_until_ready_event(storage_env: dict[str, str]) -> None:
+    """With a ready_event, HELLO/ping is answered immediately but tool calls are
+    held until the event is set (audit H1-residual barrier)."""
+
+    recorded: list[tuple[str, dict[str, Any]]] = []
+    ready = threading.Event()
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, _make_handler(recorded), ready_event=ready)
+    listener.start()
+    try:
+        client = DaemonClient(endpoint)
+        client.ping()  # HELLO succeeds even though ready is not set
+
+        results: dict[str, Any] = {}
+
+        def _call() -> None:
+            results["reply"] = client.call("echo_tool", {"x": 1})
+
+        caller = threading.Thread(target=_call, daemon=True)
+        caller.start()
+        caller.join(0.6)
+
+        assert caller.is_alive()  # the tool call is blocked behind the barrier
+        assert recorded == []  # handler not invoked while not ready
+
+        ready.set()
+        caller.join(5.0)
+
+        assert not caller.is_alive()
+        assert results["reply"] == {"echo": "echo_tool", "kwargs": {"x": 1}}
+        assert recorded == [("echo_tool", {"x": 1})]
+        client.close()
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)
+
+
 def test_client_propagates_value_error(storage_env: dict[str, str]) -> None:
     recorded: list[tuple[str, dict[str, Any]]] = []
     listener, endpoint = _start_primary(storage_env, _make_handler(recorded))
