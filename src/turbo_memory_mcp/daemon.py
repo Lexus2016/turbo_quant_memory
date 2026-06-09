@@ -354,11 +354,15 @@ class DaemonClient:
         )
         thread.start()
         thread.join(timeout)
-        if thread.is_alive():
-            raise TimeoutError(f"daemon connect exceeded {timeout}s (primary may be wedged)")
+        # Inspect the result, not is_alive(): a worker that finished right at the
+        # join deadline may still read as alive for an instant, and we must not
+        # discard a connection it already established. Neither key set => the
+        # worker is genuinely still blocked => timeout.
+        if "conn" in result:
+            return result["conn"]
         if "error" in result:
             raise result["error"]
-        return result["conn"]
+        raise TimeoutError(f"daemon connect exceeded {timeout}s (primary may be wedged)")
 
     def _ensure_conn(self, connect_timeout: float = CONNECT_TIMEOUT_SECONDS) -> Any:
         if self._conn is None:
