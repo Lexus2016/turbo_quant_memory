@@ -215,6 +215,33 @@ def test_bootstrap_reclaims_after_live_primary_stays_unreachable(
             release_daemon_lock(result.endpoint)
 
 
+def test_client_connect_is_bounded_when_primary_is_wedged(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A primary that accepts the socket but never completes the handshake must
+    not hang the client forever; connect is time-bounded and raises so the
+    bootstrap can retry/reclaim (field bug: a stale primary hung all clients)."""
+
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    client = DaemonClient(endpoint)
+
+    block = threading.Event()
+
+    def _hang(self: DaemonClient) -> Any:
+        block.wait(5.0)  # emulate a blocking, never-answering authkey handshake
+        raise AssertionError("connect worker should have been abandoned")
+
+    monkeypatch.setattr(DaemonClient, "_connect", _hang)
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        client.ping(connect_timeout=0.3)
+    elapsed = time.monotonic() - start
+    block.set()  # release the abandoned worker thread
+
+    assert elapsed < 2.0  # bounded, not hung
+
+
 def test_client_propagates_value_error(storage_env: dict[str, str]) -> None:
     recorded: list[tuple[str, dict[str, Any]]] = []
     listener, endpoint = _start_primary(storage_env, _make_handler(recorded))

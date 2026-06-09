@@ -329,14 +329,45 @@ class DaemonClient:
             raise
         return conn
 
-    def _ensure_conn(self) -> Any:
+    def _connect_bounded(self, timeout: float) -> Any:
+        """Run ``_connect()`` under an overall timeout.
+
+        multiprocessing's ``Client()`` performs a blocking authkey handshake
+        with no timeout of its own. A wedged primary that accepts the socket but
+        never answers the challenge would block ``Client()`` — and therefore
+        every new client's bootstrap ping — forever (observed in the field: a
+        stale primary from a prior version hung all new clients indefinitely).
+        We bound the whole connect in a worker thread; on timeout we abandon it
+        (daemon thread, reaped at process exit) and raise, so the caller can
+        retry or reclaim instead of hanging.
+        """
+        result: dict[str, Any] = {}
+
+        def _worker() -> None:
+            try:
+                result["conn"] = self._connect()
+            except BaseException as exc:  # noqa: BLE001 - re-raised on caller thread
+                result["error"] = exc
+
+        thread = threading.Thread(
+            target=_worker, name="tqmemory-client-connect", daemon=True
+        )
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            raise TimeoutError(f"daemon connect exceeded {timeout}s (primary may be wedged)")
+        if "error" in result:
+            raise result["error"]
+        return result["conn"]
+
+    def _ensure_conn(self, connect_timeout: float = CONNECT_TIMEOUT_SECONDS) -> Any:
         if self._conn is None:
-            self._conn = self._connect()
+            self._conn = self._connect_bounded(connect_timeout)
         return self._conn
 
-    def ping(self) -> None:
+    def ping(self, connect_timeout: float = CONNECT_TIMEOUT_SECONDS) -> None:
         with self._lock:
-            self._ensure_conn()
+            self._ensure_conn(connect_timeout)
 
     def close(self) -> None:
         with self._lock:
