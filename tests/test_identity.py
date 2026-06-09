@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from turbo_memory_mcp.identity import (
     hash_identity_source,
     normalize_remote_url,
@@ -71,6 +73,31 @@ def test_explicit_override_precedence_bypasses_git_discovery(tmp_path: Path) -> 
     assert identity.project_name == "Manual Name"
     assert identity.identity_kind == "override"
     assert identity.identity_source == "manual-project-id"
+    assert identity.remote_url is None
+
+
+@pytest.mark.parametrize(
+    "git_failure",
+    [
+        subprocess.TimeoutExpired(cmd=["git"], timeout=3.0),
+        FileNotFoundError("git"),
+    ],
+    ids=["hung_git", "missing_git"],
+)
+def test_hung_or_missing_git_falls_back_to_path_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_failure: Exception,
+) -> None:
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise git_failure
+
+    monkeypatch.setattr("turbo_memory_mcp.identity.subprocess.run", _raise)
+
+    identity = resolve_project_identity(cwd=tmp_path)
+
+    assert identity.identity_kind == "repo_path"
+    assert identity.project_root == tmp_path.resolve()
     assert identity.remote_url is None
 
 

@@ -16,6 +16,7 @@ ENV_PROJECT_ID = "TQMEMORY_PROJECT_ID"
 ENV_PROJECT_NAME = "TQMEMORY_PROJECT_NAME"
 GIT_SHOW_TOPLEVEL_COMMAND = "git rev-parse --show-toplevel"
 GIT_ORIGIN_URL_COMMAND = "git remote get-url origin"
+_GIT_COMMAND_TIMEOUT_SECONDS = 3.0
 
 _SCP_REMOTE_RE = re.compile(r"^(?:(?P<user>[^@]+)@)?(?P<host>[^:/]+):(?P<path>.+)$")
 
@@ -151,13 +152,19 @@ def _strip_dot_git(value: str) -> str:
 
 
 def _run_git_command(cwd: Path, *args: str) -> str | None:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        # A hung or missing git must not stall identity resolution: fall back
+        # to path identity exactly as a non-zero exit would.
+        return None
     if result.returncode != 0:
         return None
     value = result.stdout.strip()
