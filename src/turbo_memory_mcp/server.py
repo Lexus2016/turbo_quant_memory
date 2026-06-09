@@ -1798,10 +1798,8 @@ def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, o
             index.sync_project_blocks(upsert_block_ids)
 
         _repair_project_retrieval_if_needed(store, index)
-    except Exception:
-        # Lance incremental merge/delete paths can fail under spill pressure; rebuild the
-        # derived retrieval mirror instead of surfacing an indexing failure to the caller.
-        index.sync_project()
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
 
 
 def _sync_project_note_change(store: MemoryStore, note_id: str) -> None:
@@ -1812,8 +1810,8 @@ def _sync_project_note_change(store: MemoryStore, note_id: str) -> None:
             return
         index.sync_project_notes([note_id])
         _repair_project_retrieval_if_needed(store, index)
-    except Exception:
-        index.sync_project()
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
 
 
 def _sync_global_note_change(store: MemoryStore, note_id: str) -> None:
@@ -1824,8 +1822,8 @@ def _sync_global_note_change(store: MemoryStore, note_id: str) -> None:
             return
         index.sync_global_notes([note_id])
         _repair_global_retrieval_if_needed(store, index)
-    except Exception:
-        index.sync_global()
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, GLOBAL_SCOPE, exc)
 
 
 def _remove_retrieval_note(store: MemoryStore, scope: str, note_id: str) -> None:
@@ -1836,22 +1834,49 @@ def _remove_retrieval_note(store: MemoryStore, scope: str, note_id: str) -> None
             _repair_project_retrieval_if_needed(store, index)
         else:
             _repair_global_retrieval_if_needed(store, index)
-    except Exception:
-        if scope == PROJECT_SCOPE:
-            index.sync_project()
-        else:
-            index.sync_global()
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, scope, exc)
+
+
+def _rebuild_scope_index_after_error(index: RetrievalIndex, scope: str, exc: BaseException) -> None:
+    """Log and full-rebuild a retrieval scope after an incremental update failed.
+
+    The incremental Lance merge/delete paths can fail under spill pressure; we
+    rebuild the derived mirror rather than surface an indexing error to the
+    caller. Logging keeps that expensive fallback from being silent (audit M2/M4).
+    """
+    print(
+        f"[tqmemory] incremental {scope} index update failed "
+        f"({type(exc).__name__}: {exc}); full re-sync",
+        file=sys.stderr,
+    )
+    if scope == GLOBAL_SCOPE:
+        index.sync_global()
+    else:
+        index.sync_project()
 
 
 def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
     expected_rows = len(store.list_markdown_blocks()) + len(store.list_notes(PROJECT_SCOPE))
-    if index.count_rows(PROJECT_SCOPE) != expected_rows:
+    actual_rows = index.count_rows(PROJECT_SCOPE)
+    if actual_rows != expected_rows:
+        print(
+            f"[tqmemory] project retrieval drift (have {actual_rows}, expected "
+            f"{expected_rows}); full re-sync",
+            file=sys.stderr,
+        )
         index.sync_project()
 
 
 def _repair_global_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
     expected_rows = len(store.list_notes(GLOBAL_SCOPE))
-    if index.count_rows(GLOBAL_SCOPE) != expected_rows:
+    actual_rows = index.count_rows(GLOBAL_SCOPE)
+    if actual_rows != expected_rows:
+        print(
+            f"[tqmemory] global retrieval drift (have {actual_rows}, expected "
+            f"{expected_rows}); full re-sync",
+            file=sys.stderr,
+        )
         index.sync_global()
 
 
