@@ -543,11 +543,48 @@ class BootstrapResult:
     client: DaemonClient | None
 
 
+def _reach_endpoint(
+    endpoint: DaemonEndpoint,
+    *,
+    retries: int,
+    backoff_seconds: float,
+) -> DaemonClient | None:
+    """Connect to a primary, retrying to absorb the listener-startup window.
+
+    A freshly-claimed primary writes its lockfile (here, in
+    ``acquire_daemon_role``) before its listener begins accepting connections
+    (later, in ``_run_primary``/``_failover``). A racing process that pinged
+    only once would see the not-yet-listening socket, judge the *live* primary
+    stale, unlink its lockfile and claim primary itself -> two primaries, both
+    holding LanceDB write handles (audit H1). Retrying with a short backoff lets
+    the legitimate primary finish binding so we proxy to it instead of evicting
+    it.
+
+    Returns a connected client on success, or None if unreachable across all
+    attempts (a genuinely wedged primary, or a dead pid that has been reused).
+    """
+    for attempt in range(retries + 1):
+        client = DaemonClient(endpoint)
+        try:
+            client.ping()
+            return client
+        except Exception:
+            try:
+                client.close()
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(backoff_seconds * (attempt + 1))
+    return None
+
+
 def acquire_daemon_role(
     *,
     environ: Mapping[str, str] | None = None,
     max_retries: int = 5,
     retry_sleep_seconds: float = 0.1,
+    ping_retries: int = 3,
+    ping_backoff_seconds: float = 0.1,
 ) -> BootstrapResult:
     """Decide whether this process should be primary, proxy, or standalone.
 
@@ -567,19 +604,22 @@ def acquire_daemon_role(
     for attempt in range(max_retries):
         existing = maybe_existing_endpoint(lock_path, environ=environ)
         if existing is not None:
-            try:
-                client = DaemonClient(existing)
-                client.ping()
+            client = _reach_endpoint(
+                existing,
+                retries=ping_retries,
+                backoff_seconds=ping_backoff_seconds,
+            )
+            if client is not None:
                 _startup_log(f"connected as proxy to PID {existing.pid}")
                 return BootstrapResult(role="proxy", endpoint=existing, client=client)
-            except Exception:
-                _startup_log(
-                    f"endpoint unreachable (PID {existing.pid}), removing stale lock"
-                )
-                try:
-                    lock_path.unlink()
-                except FileNotFoundError:
-                    pass
+            _startup_log(
+                f"endpoint unreachable after {ping_retries + 1} attempts "
+                f"(PID {existing.pid}), removing stale lock"
+            )
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
         elif lock_path.exists():
             _startup_log("lockfile stale (owner dead), reclaiming")
             try:

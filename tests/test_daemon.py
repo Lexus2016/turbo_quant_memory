@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import threading
@@ -146,6 +147,69 @@ def test_bootstrap_reclaims_stale_lockfile(storage_env: dict[str, str]) -> None:
         assert result.role == "primary"
         assert result.endpoint is not None
         assert result.endpoint.pid == os.getpid()
+    finally:
+        if result.endpoint is not None:
+            release_daemon_lock(result.endpoint)
+
+
+def test_bootstrap_waits_for_starting_primary_instead_of_evicting(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live primary whose listener is still binding must be proxied to, not
+    evicted (audit H1 split-brain)."""
+
+    # Lockfile points at a live pid (this process) whose listener is not up yet.
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    path = lockfile_path()
+    path.write_text(json.dumps(endpoint.to_lockfile()), encoding="utf-8")
+
+    attempts = {"n": 0}
+
+    def _flaky_ping(self: DaemonClient) -> None:
+        attempts["n"] += 1
+        if attempts["n"] < 3:  # unreachable for the first two attempts
+            raise ConnectionError("listener still binding")
+
+    monkeypatch.setattr(DaemonClient, "ping", _flaky_ping)
+
+    result = acquire_daemon_role(ping_retries=3, ping_backoff_seconds=0.0)
+    try:
+        assert result.role == "proxy"
+        assert result.client is not None
+        assert attempts["n"] == 3  # retried until the primary became reachable
+        # The live primary's lockfile was preserved, not unlinked + reclaimed.
+        assert path.exists()
+        preserved = DaemonEndpoint.from_lockfile(json.loads(path.read_text(encoding="utf-8")))
+        assert preserved.authkey == endpoint.authkey
+    finally:
+        if result.client is not None:
+            result.client.close()
+        release_daemon_lock(endpoint)
+
+
+def test_bootstrap_reclaims_after_live_primary_stays_unreachable(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely wedged primary (live pid, never reachable) must still be
+    reclaimed after the retries are exhausted, without hanging."""
+
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    path = lockfile_path()
+    path.write_text(json.dumps(endpoint.to_lockfile()), encoding="utf-8")
+
+    attempts = {"n": 0}
+
+    def _wedged_ping(self: DaemonClient) -> None:
+        attempts["n"] += 1
+        raise ConnectionError("wedged")
+
+    monkeypatch.setattr(DaemonClient, "ping", _wedged_ping)
+
+    result = acquire_daemon_role(ping_retries=2, ping_backoff_seconds=0.0)
+    try:
+        assert result.role == "primary"
+        assert result.client is None
+        assert attempts["n"] == 3  # ping_retries + 1, then gave up and reclaimed
     finally:
         if result.endpoint is not None:
             release_daemon_lock(result.endpoint)
