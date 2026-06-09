@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -42,6 +43,27 @@ def index_paths(
 ) -> dict[str, object]:
     payload, _ = index_paths_with_sync_plan(store, paths=paths, mode=mode, cwd=cwd)
     return payload
+
+
+MAX_INDEXABLE_FILE_BYTES = 5 * 1024 * 1024  # 5 MiB; larger files are skipped
+
+
+def _read_source_text(file_path: Path, size: int) -> str | None:
+    """Read a markdown file for indexing without letting one odd file abort the
+    whole pass (audit M3).
+
+    Returns the text, or None when the file should be skipped (too large to
+    embed safely). Non-UTF-8 bytes are replaced rather than raising, so a file
+    with a few bad bytes still indexes instead of breaking index/staleness.
+    """
+    if size > MAX_INDEXABLE_FILE_BYTES:
+        print(
+            f"[tqmemory] skipping oversized markdown ({size} bytes > "
+            f"{MAX_INDEXABLE_FILE_BYTES}): {file_path}",
+            file=sys.stderr,
+        )
+        return None
+    return file_path.read_text(encoding="utf-8", errors="replace")
 
 
 def index_paths_with_sync_plan(
@@ -108,7 +130,10 @@ def index_paths_with_sync_plan(
                 skipped_files += 1
                 continue
 
-            source_text = file_path.read_text(encoding="utf-8")
+            source_text = _read_source_text(file_path, size)
+            if source_text is None:
+                skipped_files += 1
+                continue
             source_checksum = sha256_text(source_text)
             file_key = build_file_key(root_id, source_path)
             indexed_at = utc_now()
@@ -246,7 +271,9 @@ def assess_project_index_freshness(
             if int(manifest["size"]) == size and int(manifest["mtime_ns"]) == mtime_ns:
                 continue
 
-            source_text = file_path.read_text(encoding="utf-8")
+            source_text = _read_source_text(file_path, size)
+            if source_text is None:
+                continue
             source_checksum = sha256_text(source_text)
             if str(manifest["source_checksum"]) != source_checksum:
                 changed_file_count += 1

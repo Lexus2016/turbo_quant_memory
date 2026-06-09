@@ -9,6 +9,7 @@ vector table, it never pays the ~470 MB import cost of these libraries.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
@@ -468,7 +469,10 @@ def _safe_vector_search(
         if where_clause:
             builder = builder.where(where_clause)
         return [dict(row) for row in builder.to_list()]
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # The vector lane is primary; a persistent failure here (corrupt table,
+        # disk full) otherwise looks like "no results". Make it visible (M2).
+        print(f"[tqmemory] vector search lane failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return []
 
 
@@ -489,7 +493,10 @@ def _safe_fts_search(
         if where_clause:
             builder = builder.where(where_clause)
         return [dict(row) for row in builder.to_list()]
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # FTS is the secondary lane; on current installs the index exists, so a
+        # failure here (not just a legacy missing-index) is worth surfacing (M2).
+        print(f"[tqmemory] fts search lane failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return []
 
 
