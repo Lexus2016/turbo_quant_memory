@@ -1615,6 +1615,7 @@ def collect_storage_stats(store: MemoryStore) -> dict[str, object]:
             "markdown_file_count": snapshot["markdown_file_count"],
             "markdown_block_count": snapshot["markdown_block_count"],
             "retrieval_row_count": retrieval_index.count_rows(PROJECT_SCOPE),
+            "quarantined_notes": store.scan_quarantined_notes(PROJECT_SCOPE),
         },
         "global": {
             "note_count": snapshot["global_note_count"],
@@ -1623,6 +1624,7 @@ def collect_storage_stats(store: MemoryStore) -> dict[str, object]:
             "archived_note_count": snapshot["global_archived_note_count"],
             "superseded_note_count": snapshot["global_superseded_note_count"],
             "retrieval_row_count": retrieval_index.count_rows(GLOBAL_SCOPE),
+            "quarantined_notes": store.scan_quarantined_notes(GLOBAL_SCOPE),
         },
     }
 

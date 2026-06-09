@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -367,20 +368,56 @@ class MemoryStore:
             return self.read_global_note(note_id)
         raise ValueError(f"Unsupported scope: {scope}")
 
-    def list_notes(self, scope: str, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+    def _notes_dir_for_scope(self, scope: str) -> Path:
         if scope == PROJECT_SCOPE:
-            note_dir = self.project_notes_dir()
-        elif scope == GLOBAL_SCOPE:
-            note_dir = self.global_notes_dir()
-        else:
-            raise ValueError(f"Unsupported scope: {scope}")
+            return self.project_notes_dir()
+        if scope == GLOBAL_SCOPE:
+            return self.global_notes_dir()
+        raise ValueError(f"Unsupported scope: {scope}")
 
+    def _try_load_note_record(self, path: Path) -> tuple[dict[str, Any] | None, str | None]:
+        """Parse and normalize a single note file.
+
+        Returns ``(record, None)`` on success, or ``(None, reason)`` when the
+        file is unreadable or malformed. This isolates one corrupt note so it
+        cannot break a whole scan and every tool that depends on it (audit H3).
+        """
+        try:
+            return self._normalize_note_record(_read_json(path)), None
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def list_notes(self, scope: str, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        note_dir = self._notes_dir_for_scope(scope)
         if not note_dir.exists():
             return []
-        notes = [self._normalize_note_record(_read_json(path)) for path in sorted(note_dir.glob("*.json"))]
+        notes: list[dict[str, Any]] = []
+        for path in sorted(note_dir.glob("*.json")):
+            record, reason = self._try_load_note_record(path)
+            if record is None:
+                print(f"[tqmemory] skipping unreadable note {path}: {reason}", file=sys.stderr)
+                continue
+            notes.append(record)
         if include_inactive:
             return notes
         return [note for note in notes if note["note_status"] == ACTIVE_NOTE_STATUS]
+
+    def scan_quarantined_notes(self, scope: str) -> list[dict[str, str]]:
+        """List note files in a scope that fail to parse, for diagnostics.
+
+        Pairs with ``list_notes`` skip-with-warning so corruption that would
+        otherwise be silent can be surfaced (e.g. in ``server_info``). Does not
+        warn or raise.
+        """
+        note_dir = self._notes_dir_for_scope(scope)
+        if not note_dir.exists():
+            return []
+        quarantined: list[dict[str, str]] = []
+        for path in sorted(note_dir.glob("*.json")):
+            _record, reason = self._try_load_note_record(path)
+            if reason is not None:
+                quarantined.append({"path": str(path), "reason": reason})
+        return quarantined
 
     def note_source_path(self, note: Mapping[str, Any]) -> Path:
         note_id = str(note["note_id"])

@@ -401,7 +401,12 @@ def _normalize_text(value: str) -> str:
 
 
 def _updated_epoch(value: str) -> float:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        # A malformed updated_at must not break retrieval ordering; sort an
+        # unparseable timestamp as the oldest possible row (audit H3).
+        return 0.0
 
 
 def _tokenize(value: str) -> list[str]:
