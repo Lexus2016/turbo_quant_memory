@@ -4,8 +4,10 @@ from typing import Any
 
 import pytest
 
+import turbo_memory_mcp.server as server_module
 from turbo_memory_mcp.server import (
     _rebuild_scope_index_after_error,
+    _rebuild_scope_index_for_format_change,
     _repair_global_retrieval_if_needed,
     _repair_project_retrieval_if_needed,
 )
@@ -66,6 +68,34 @@ def test_repair_global_logs_and_resyncs_on_drift(capsys: pytest.CaptureFixture[s
     _repair_global_retrieval_if_needed(store, index)
     assert index.global_synced == 1
     assert "global retrieval drift" in capsys.readouterr().err
+
+
+def test_format_change_rebuild_logs_and_syncs_scope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = {"project": 0, "global": 0}
+
+    class _FakeRetrievalIndex:
+        def __init__(self, _store: Any) -> None:
+            pass
+
+        def sync_project(self) -> None:
+            calls["project"] += 1
+
+        def sync_global(self) -> None:
+            calls["global"] += 1
+
+    monkeypatch.setattr(server_module, "RetrievalIndex", _FakeRetrievalIndex)
+
+    _rebuild_scope_index_for_format_change(object(), PROJECT_SCOPE)
+    assert calls == {"project": 1, "global": 0}
+    err = capsys.readouterr().err
+    assert "project retrieval index out of date" in err
+    assert "full re-embed" in err
+
+    _rebuild_scope_index_for_format_change(object(), GLOBAL_SCOPE)
+    assert calls == {"project": 1, "global": 1}
+    assert "global retrieval index out of date" in capsys.readouterr().err
 
 
 def test_rebuild_after_error_logs_and_selects_scope(capsys: pytest.CaptureFixture[str]) -> None:

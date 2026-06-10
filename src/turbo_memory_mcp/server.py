@@ -1773,12 +1773,12 @@ def _refresh_project_indexes_if_needed(store: MemoryStore) -> None:
         _refresh_project_markdown_if_stale(store)
 
     if _project_retrieval_requires_rebuild(store):
-        RetrievalIndex(store).sync_project()
+        _rebuild_scope_index_for_format_change(store, PROJECT_SCOPE)
 
 
 def _refresh_global_retrieval_if_needed(store: MemoryStore) -> None:
     if _global_retrieval_requires_rebuild(store):
-        RetrievalIndex(store).sync_global()
+        _rebuild_scope_index_for_format_change(store, GLOBAL_SCOPE)
 
 
 def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, object]) -> None:
@@ -1850,6 +1850,25 @@ def _rebuild_scope_index_after_error(index: RetrievalIndex, scope: str, exc: Bas
         f"({type(exc).__name__}: {exc}); full re-sync",
         file=sys.stderr,
     )
+    if scope == GLOBAL_SCOPE:
+        index.sync_global()
+    else:
+        index.sync_project()
+
+
+def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> None:
+    """Full re-embed when a scope's retrieval manifest is missing or its
+    format_version changed (the lazy post-upgrade rebuild).
+
+    Logged so the first search in a project that was dormant during an upgrade
+    is not a silent multi-minute re-embed (audit M4 / Logic-Analysis note).
+    """
+    print(
+        f"[tqmemory] {scope} retrieval index out of date "
+        f"(missing/changed format_version); full re-embed",
+        file=sys.stderr,
+    )
+    index = RetrievalIndex(store)
     if scope == GLOBAL_SCOPE:
         index.sync_global()
     else:
