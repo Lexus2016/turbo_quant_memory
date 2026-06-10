@@ -5,6 +5,50 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-06-10
+
+### Fixed
+- **Split-brain race in daemon bootstrap (H1).** Between claiming the lockfile
+  and starting its listener a freshly-elected primary was briefly unreachable;
+  a racing process pinged once, judged the live primary stale, evicted its
+  lockfile and became a second primary — two processes holding LanceDB write
+  handles. `acquire_daemon_role()` now retries the ping with backoff before
+  evicting a live-pid endpoint, so the loser of the atomic claim waits for the
+  winner's listener and proxies instead.
+- **A hung `git` froze the whole daemon (H2).** `resolve_project_identity()`
+  ran `git` with no timeout on every tool call; a stuck git (network disk,
+  credential helper) blocked every client behind the single dispatch lock. The
+  git subprocess now has a 3s timeout and falls back to path identity; a
+  missing git binary degrades the same way instead of raising.
+- **One corrupt note broke every scan (H3).** A single malformed note JSON (or
+  an unknown status/kind) made `list_notes()` raise, taking down
+  `recent_context`, scope sync, retrieval repair and `server_info`. Unreadable
+  notes are now quarantined — skipped with a `[tqmemory]` warning and surfaced
+  per scope in `server_info` as `quarantined_notes`; a malformed `updated_at`
+  no longer breaks retrieval ordering.
+- **A wedged primary hung every new client.** The multiprocessing connect
+  handshake had no timeout, so a stale primary that accepted the socket but
+  never answered blocked all new clients indefinitely (a server that "never
+  connects"). The client connect is now time-bounded, after which the bootstrap
+  reclaims a genuinely wedged primary.
+
+### Changed
+- **Listener binds before the startup migration (H1 follow-up).** A minutes-long
+  startup re-embed used to run between the lockfile claim and the listener
+  start, re-opening the split-brain window. The primary now binds its listener
+  first and answers HELLO/ping immediately while deferring tool calls until the
+  migration finishes, so a racing process always reaches a live primary.
+- **Resilient markdown indexing.** A non-UTF-8 or oversized file no longer
+  aborts the whole index/staleness pass — files are decoded with replacement
+  and capped at 5 MiB (skipped with a warning).
+- **Silent expensive work is now visible.** Retrieval search-lane failures and
+  every full re-sync (row-count drift, post-upgrade format rebuild, and
+  incremental-update fallbacks) log a `[tqmemory]` line, so a multi-minute
+  re-embed in the middle of a normal write is no longer silent.
+
+### Notes
+- No schema change — `migrate --apply` is **not** required for this release.
+
 ## [0.15.0] - 2026-06-09
 
 ### Added
