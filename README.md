@@ -120,6 +120,15 @@ The default install is unchanged — this is purely opt-in.
 ### 5. User-Flagged Memory (provenance)
 Every note records **who created it**: `human-explicit` when you explicitly ask the agent to remember something ("remember this", "save this to my knowledge base"), or `agent` when the agent saves a lesson/decision on its own. Human-flagged notes are trusted more — they **rank above agent-written notes of equal relevance** (a deterministic tie-breaker plus a small score bonus). The field is optional and backward compatible: existing notes simply read as `agent`, so no migration is needed.
 
+### 6. Full-text search language (multilingual, opt-in)
+The BM25 full-text lane tokenizes on Unicode word boundaries with lower-casing and accent folding, so **Ukrainian, Russian and other non-English *exact* terms already match** (case- and accent-insensitive) out of the box — Cyrillic is never mangled. What one index cannot do is stem more than one language at once. The default stems **English**; a Cyrillic-dominant deployment can switch the stemmer:
+
+```bash
+export TQMEMORY_FTS_LANGUAGE=Russian   # default: English
+```
+
+Russian stemming additionally matches *inflected* Cyrillic forms (`документ` ↔ `документами`, plus many shared Ukrainian suffixes) — at the cost of English stemming, since LanceDB applies one stemmer per index. Ukrainian has no dedicated Snowball stemmer, so Russian is the closest option; an unsupported value safely falls back to English with a warning. The change takes effect after the FTS index is rebuilt (a retrieval reset + reindex), like switching the embedding model — and inflected matching is in any case already covered semantically by the dense vector lane.
+
 ---
 
 ## 🔐 Secrets Vault (NEW in v0.7.0)

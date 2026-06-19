@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`TQMEMORY_FTS_LANGUAGE` env var (default `English`).** Selects the Snowball
+  stemmer for the BM25 full-text lane. A Cyrillic-dominant deployment can set
+  `Russian` to also match *inflected* Ukrainian/Russian forms (e.g. `документ` ↔
+  `документами`), at the cost of English stemming — LanceDB applies one stemmer
+  per index. Unsupported values (including `Ukrainian`, which has no Snowball
+  stemmer) fall back to English with a stderr warning instead of silently
+  killing the FTS lane. Apply a change with a retrieval reset + reindex (or
+  `RetrievalIndex.rebuild_fts`). Empirically verified on LanceDB 0.30.1: the
+  default tokenizer already matches UA/RU/EN *exact* terms (case- and
+  accent-insensitive, Cyrillic preserved); a stemmer only adds inflection
+  matching, which the dense vector lane already covers semantically.
+
+### Changed
+- **FTS tokenizer config is now pinned explicitly** in `_fts_index_kwargs()`
+  rather than inherited from LanceDB's implicit defaults, so a future LanceDB
+  upgrade cannot silently change retrieval tokenization. Behavior is
+  byte-identical for existing English indexes — **no rebuild required**.
+
 ## [0.16.0] - 2026-06-10
 
 ### Fixed

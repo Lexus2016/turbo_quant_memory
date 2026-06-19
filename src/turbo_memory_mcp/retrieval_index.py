@@ -53,6 +53,47 @@ HIGH_CONFIDENCE_SCORE = 0.82
 VECTOR_GATE_THRESHOLD = HIGH_CONFIDENCE_SCORE
 FTS_LANE_WEIGHT = 0.3
 
+# BM25/FTS tokenizer language. LanceDB's native FTS applies a SINGLE Snowball
+# stemmer per index, so this is a per-install choice (not per-document). The
+# English default is the historical behavior and is byte-compatible with indexes
+# built before this config was made explicit, so existing installs need no
+# rebuild. Multilingual reality (measured on LanceDB 0.30.1):
+#   - The `simple` base tokenizer splits on Unicode word boundaries, so Cyrillic
+#     (UA/RU) already tokenizes correctly; lower_case + ascii_folding give case-
+#     and accent-insensitive matching WITHOUT harming Cyrillic (ascii_folding
+#     leaves non-Latin scripts intact). So UA/RU EXACT terms already match today.
+#   - What English-stemming does NOT do is match Cyrillic INFLECTED forms
+#     (документ vs документами). A Cyrillic-dominant deployer can set
+#     TQMEMORY_FTS_LANGUAGE=Russian to stem RU (and many shared UA suffixes),
+#     at the documented cost of dropping English stemming (one stemmer per index).
+#   - Ukrainian has no Snowball stemmer (LanceDB rejects it), so Russian is the
+#     closest selectable option. CJK is not segmented by native FTS; the dense
+#     vector lane covers CJK/morphological semantics.
+# Changing this value only takes effect after the FTS index is rebuilt
+# (RetrievalIndex.rebuild_fts, or a reset + reindex) — like switching the model.
+DEFAULT_FTS_LANGUAGE = "English"
+# Snowball languages this LanceDB build accepts WITH remove_stop_words=True
+# (empirically probed). An unrecognized TQMEMORY_FTS_LANGUAGE falls back to the
+# default with a warning rather than letting create_fts_index raise — an
+# uncaught raise there would silently disable the whole BM25 lane.
+_FTS_STEMMER_LANGUAGES = frozenset(
+    {
+        "Danish",
+        "Dutch",
+        "English",
+        "Finnish",
+        "French",
+        "German",
+        "Hungarian",
+        "Italian",
+        "Norwegian",
+        "Portuguese",
+        "Russian",
+        "Spanish",
+        "Swedish",
+    }
+)
+
 
 class TextEmbedder(Protocol):
     def encode(self, texts: Sequence[str]) -> Any:
@@ -419,6 +460,21 @@ class RetrievalIndex:
             database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
         self._write_scope_manifest(scope, project_id=project_id)
 
+    def rebuild_fts(self, scope: str, *, project_id: str | None = None) -> bool:
+        """Rebuild the BM25/FTS index with the current tokenizer config.
+
+        The lazy ``_ensure_fts_index`` path only CREATES a missing index; it
+        never replaces an existing one. So after changing TQMEMORY_FTS_LANGUAGE
+        this is how the new stemmer actually reaches an already-built table.
+        Returns False when the scope table does not exist yet (nothing to
+        rebuild); a genuine LanceDB failure propagates so the caller sees it.
+        """
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None:
+            return False
+        _rebuild_fts_index(table)
+        return True
+
     def _open_scope_table(self, scope: str, project_id: str | None = None) -> Any | None:
         if scope == PROJECT_SCOPE:
             db_path = self.project_db_path(project_id)
@@ -500,6 +556,49 @@ def _safe_fts_search(
         return []
 
 
+def _resolve_fts_language() -> str:
+    """Snowball stemmer language for the BM25 lane, from TQMEMORY_FTS_LANGUAGE.
+
+    Defaults to English (unchanged behavior). An empty or unrecognized value
+    falls back to the default with a stderr warning — see _FTS_STEMMER_LANGUAGES
+    for why we never pass an unvalidated value straight to create_fts_index.
+    """
+    raw = os.environ.get("TQMEMORY_FTS_LANGUAGE", DEFAULT_FTS_LANGUAGE).strip()
+    if not raw:
+        return DEFAULT_FTS_LANGUAGE
+    normalized = raw.capitalize()
+    if normalized not in _FTS_STEMMER_LANGUAGES:
+        print(
+            f"[tqmemory] TQMEMORY_FTS_LANGUAGE={raw!r} is not a supported FTS "
+            f"stemmer language; falling back to {DEFAULT_FTS_LANGUAGE}. "
+            f"Supported: {', '.join(sorted(_FTS_STEMMER_LANGUAGES))}.",
+            file=sys.stderr,
+        )
+        return DEFAULT_FTS_LANGUAGE
+    return normalized
+
+
+def _fts_index_kwargs() -> dict[str, Any]:
+    """Explicit BM25/FTS tokenizer config for create_fts_index.
+
+    Pinned EXPLICITLY rather than relying on LanceDB's implicit defaults so a
+    future LanceDB upgrade cannot silently change retrieval tokenization, and so
+    the multilingual reasoning lives in one visible place (see DEFAULT_FTS_LANGUAGE).
+    The values match LanceDB 0.30.1's defaults for the English case, i.e. existing
+    indexes stay byte-compatible and need no rebuild.
+    """
+    return {
+        "use_tantivy": False,
+        "base_tokenizer": "simple",
+        "language": _resolve_fts_language(),
+        "lower_case": True,
+        "stem": True,
+        "remove_stop_words": True,
+        "ascii_folding": True,
+        "with_position": False,
+    }
+
+
 def _ensure_fts_index(table: Any) -> None:
     """Create the BM25 index on `content_search` if missing. Idempotent.
 
@@ -507,9 +606,20 @@ def _ensure_fts_index(table: Any) -> None:
     is exactly the no-op path we want.
     """
     try:
-        table.create_fts_index("content_search", replace=False)
+        table.create_fts_index("content_search", replace=False, **_fts_index_kwargs())
     except Exception:  # noqa: BLE001 — already exists or not supported
         pass
+
+
+def _rebuild_fts_index(table: Any) -> None:
+    """Force-rebuild the BM25 index with the current tokenizer config.
+
+    Unlike _ensure_fts_index this passes ``replace=True``, so it is the path to
+    apply a changed TQMEMORY_FTS_LANGUAGE onto an already-indexed table. It does
+    NOT swallow errors: callers (migrations, RetrievalIndex.rebuild_fts) want a
+    genuine failure to surface rather than leave a stale index in place.
+    """
+    table.create_fts_index("content_search", replace=True, **_fts_index_kwargs())
 
 
 def _rrf_merge(
@@ -701,6 +811,7 @@ def _table_schema(dimensions: int | None = None) -> "pa.Schema":
 
 __all__ = [
     "DEFAULT_EMBEDDING_MODEL_NAME",
+    "DEFAULT_FTS_LANGUAGE",
     "EMBEDDING_MODEL_NAME",
     "GLOBAL_RETRIEVAL_LAYOUT",
     "ITEM_ID_FIELD",
