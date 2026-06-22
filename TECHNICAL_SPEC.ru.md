@@ -198,6 +198,7 @@ Subsystem-marker `<storage_root>/secrets-manifest.json` отслеживает S
 Вне скоупа (vault НЕ защищает; для более широкой threat-модели — дедикированный secret-manager):
 - Скомпрометированный root-пользователь на локальной машине.
 - Live-атакующий, уже захвативший запущенный daemon-процесс.
+- Same-user IPC-канал демона. `multiprocessing`-сокет демона — `0600`, защищён 32-байтным authkey в `0600`-lockfile, а `TQMEMORY_SECRETS_PASSPHRASE` форвардится в primary на каждом RPC через этот pickle-канал. Same-user атакующий, способный прочитать authkey из lockfile, может внедрить pickle-payload (RCE) в primary и наблюдать passphrase. Принято в рамках same-user модели: предполагает атакующего, уже работающего под тем же пользователем, — более сильная позиция, поглощаемая строкой о захвате daemon выше.
 - Hardware-атаки (cold-boot, evil-maid, hardware key extraction).
 - Что-либо требующее multi-tenant изоляции или compliance-сертификаций.
 

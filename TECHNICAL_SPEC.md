@@ -198,6 +198,7 @@ In scope (the secrets vault must protect against these):
 Out of scope (the secrets vault does NOT defend against these; users with stronger threat models should use a dedicated secret manager):
 - Compromise of the root user on the local machine.
 - A live attacker that has already taken over the running daemon process.
+- The same-user daemon IPC channel. The daemon's `multiprocessing` socket is `0600`, guarded by a 32-byte authkey in the `0600` lockfile, and `TQMEMORY_SECRETS_PASSPHRASE` is forwarded to the primary on every RPC over that pickle channel. A same-user attacker who can read the lockfile authkey can inject a pickle payload (RCE) into the primary and observe the passphrase. Accepted within the same-user model: it presupposes an attacker already running as the same user — a stronger position that is subsumed by the daemon-takeover row above.
 - Hardware-level attacks (cold-boot, evil-maid, hardware key extraction).
 - Anything requiring multi-tenant isolation or compliance certifications.
 
