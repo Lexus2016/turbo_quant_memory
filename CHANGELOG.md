@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-22
+
 ### Added
 - **`TQMEMORY_FTS_LANGUAGE` env var (default `English`).** Selects the Snowball
   stemmer for the BM25 full-text lane. A Cyrillic-dominant deployment can set
@@ -25,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than inherited from LanceDB's implicit defaults, so a future LanceDB
   upgrade cannot silently change retrieval tokenization. Behavior is
   byte-identical for existing English indexes — **no rebuild required**.
+
+### Fixed
+- **Retrieval drift repair no longer re-embeds the whole corpus (M4).**
+  `_repair_project/global_retrieval_if_needed` compared row counts and, on any
+  drift, ran a full `O(corpus)` re-embed synchronously under the dispatch lock.
+  It now reconciles by id — diffing the index's `item_id` set against the
+  store's notes∪blocks, deleting stale rows and re-embedding only the missing
+  ids. Cheaper, and strictly more correct: it also catches a
+  count-matches-but-membership-differs drift the count-only check was blind to.
+  Drift is rare (all mutation paths sync incrementally), so this is a
+  worst-case latency/cost fix. No schema change — `migrate --apply` not required.
+
+### Security
+- **Documented the same-user daemon IPC trust boundary (M7).** The secrets-vault
+  threat model now states explicitly that `TQMEMORY_SECRETS_PASSPHRASE` is
+  forwarded to the primary on every RPC over the `multiprocessing` pickle
+  channel, and that a same-user attacker able to read the `0600` lockfile authkey
+  could inject a pickle payload (RCE) and observe the passphrase — an accepted
+  same-user compromise. Documentation only; no behavior change.
 
 ## [0.16.0] - 2026-06-10
 
