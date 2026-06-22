@@ -8,10 +8,13 @@ import turbo_memory_mcp.server as server_module
 from turbo_memory_mcp.server import (
     _rebuild_scope_index_after_error,
     _rebuild_scope_index_for_format_change,
-    _repair_global_retrieval_if_needed,
-    _repair_project_retrieval_if_needed,
 )
 from turbo_memory_mcp.store import GLOBAL_SCOPE, PROJECT_SCOPE
+
+# NOTE: drift-repair reconciliation (_repair_project/global_retrieval_if_needed)
+# is covered by test_index_drift_repair.py. This file covers the two paths that
+# legitimately still do a full re-embed: a format-version rebuild and the
+# post-error rebuild fallback.
 
 
 class _FakeIndex:
@@ -28,46 +31,6 @@ class _FakeIndex:
 
     def sync_global(self) -> None:
         self.global_synced += 1
-
-
-class _FakeStore:
-    def __init__(self, blocks: int, project_notes: int, global_notes: int) -> None:
-        self._blocks = blocks
-        self._project_notes = project_notes
-        self._global_notes = global_notes
-
-    def list_markdown_blocks(self, *_a: Any, **_k: Any) -> list[Any]:
-        return [None] * self._blocks
-
-    def list_notes(self, scope: str, *_a: Any, **_k: Any) -> list[Any]:
-        n = self._project_notes if scope == PROJECT_SCOPE else self._global_notes
-        return [None] * n
-
-
-def test_repair_project_logs_and_resyncs_on_drift(capsys: pytest.CaptureFixture[str]) -> None:
-    store = _FakeStore(blocks=2, project_notes=3, global_notes=0)  # expected 5
-    index = _FakeIndex(count=4)  # drift: have 4, expected 5
-    _repair_project_retrieval_if_needed(store, index)
-    assert index.project_synced == 1
-    err = capsys.readouterr().err
-    assert "project retrieval drift" in err
-    assert "have 4" in err and "expected 5" in err
-
-
-def test_repair_project_is_silent_when_counts_match(capsys: pytest.CaptureFixture[str]) -> None:
-    store = _FakeStore(blocks=2, project_notes=3, global_notes=0)  # expected 5
-    index = _FakeIndex(count=5)  # matches -> no work, no noise
-    _repair_project_retrieval_if_needed(store, index)
-    assert index.project_synced == 0
-    assert capsys.readouterr().err == ""
-
-
-def test_repair_global_logs_and_resyncs_on_drift(capsys: pytest.CaptureFixture[str]) -> None:
-    store = _FakeStore(blocks=0, project_notes=0, global_notes=7)  # expected 7
-    index = _FakeIndex(count=2)
-    _repair_global_retrieval_if_needed(store, index)
-    assert index.global_synced == 1
-    assert "global retrieval drift" in capsys.readouterr().err
 
 
 def test_format_change_rebuild_logs_and_syncs_scope(

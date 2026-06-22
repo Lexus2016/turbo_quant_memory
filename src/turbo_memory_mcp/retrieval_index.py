@@ -368,6 +368,19 @@ class RetrievalIndex:
             return []
         return [dict(row) for row in table.to_arrow().to_pylist()]
 
+    def existing_item_ids(self, scope: str, *, project_id: str | None = None) -> set[str]:
+        """Set of ``item_id`` currently materialized in the scope table.
+
+        Used by drift repair to reconcile the index against the store by id
+        (delete stale rows, re-embed only the missing ones) instead of a full
+        O(corpus) re-embed. Reads only the id column; never embeds.
+        """
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return set()
+        column = table.to_arrow().column(ITEM_ID_FIELD).to_pylist()
+        return {str(item_id) for item_id in column if item_id is not None}
+
     def count_rows(self, scope: str, project_id: str | None = None) -> int:
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:

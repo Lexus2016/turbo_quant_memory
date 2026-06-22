@@ -1876,27 +1876,57 @@ def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> No
 
 
 def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
-    expected_rows = len(store.list_markdown_blocks()) + len(store.list_notes(PROJECT_SCOPE))
-    actual_rows = index.count_rows(PROJECT_SCOPE)
-    if actual_rows != expected_rows:
-        print(
-            f"[tqmemory] project retrieval drift (have {actual_rows}, expected "
-            f"{expected_rows}); full re-sync",
-            file=sys.stderr,
-        )
-        index.sync_project()
+    """Reconcile the project index against the store BY ID, not by re-embedding.
+
+    The old contract here was ``count != expected -> sync_project()``, i.e. a
+    full O(corpus) re-embed under the dispatch lock on any drift (audit M4).
+    Instead, diff the id sets: delete stale rows and re-embed ONLY the missing
+    ones. Cheaper, and strictly more correct — it also catches the case where
+    the count happens to match but the membership differs.
+    """
+    expected_note_ids = {str(note["note_id"]) for note in store.list_notes(PROJECT_SCOPE)}
+    expected_block_ids = {str(block["block_id"]) for block in store.list_markdown_blocks()}
+    expected_ids = expected_note_ids | expected_block_ids
+    existing_ids = index.existing_item_ids(PROJECT_SCOPE)
+    if existing_ids == expected_ids:
+        return
+
+    stale_ids = existing_ids - expected_ids
+    missing_notes = expected_note_ids - existing_ids
+    missing_blocks = expected_block_ids - existing_ids
+    print(
+        f"[tqmemory] project retrieval drift (have {len(existing_ids)}, expected "
+        f"{len(expected_ids)}); reconciling by id "
+        f"+{len(missing_notes) + len(missing_blocks)}/-{len(stale_ids)}",
+        file=sys.stderr,
+    )
+    if stale_ids:
+        index.delete_items(PROJECT_SCOPE, sorted(stale_ids))
+    if missing_notes:
+        index.sync_project_notes(sorted(missing_notes))
+    if missing_blocks:
+        index.sync_project_blocks(sorted(missing_blocks))
 
 
 def _repair_global_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
-    expected_rows = len(store.list_notes(GLOBAL_SCOPE))
-    actual_rows = index.count_rows(GLOBAL_SCOPE)
-    if actual_rows != expected_rows:
-        print(
-            f"[tqmemory] global retrieval drift (have {actual_rows}, expected "
-            f"{expected_rows}); full re-sync",
-            file=sys.stderr,
-        )
-        index.sync_global()
+    """Reconcile the global index against the store by id (see project variant)."""
+    expected_ids = {str(note["note_id"]) for note in store.list_notes(GLOBAL_SCOPE)}
+    existing_ids = index.existing_item_ids(GLOBAL_SCOPE)
+    if existing_ids == expected_ids:
+        return
+
+    stale_ids = existing_ids - expected_ids
+    missing_ids = expected_ids - existing_ids
+    print(
+        f"[tqmemory] global retrieval drift (have {len(existing_ids)}, expected "
+        f"{len(expected_ids)}); reconciling by id "
+        f"+{len(missing_ids)}/-{len(stale_ids)}",
+        file=sys.stderr,
+    )
+    if stale_ids:
+        index.delete_items(GLOBAL_SCOPE, sorted(stale_ids))
+    if missing_ids:
+        index.sync_global_notes(sorted(missing_ids))
 
 
 def _project_retrieval_requires_rebuild(store: MemoryStore) -> bool:
