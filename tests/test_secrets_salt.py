@@ -158,3 +158,35 @@ def test_keyring_vault_has_no_salt(tmp_path, in_memory_keyring, monkeypatch) -> 
     meta = json.loads(s.meta_path.read_text())
     assert meta["key_mode"] == "keyring_bootstrapped"
     assert "salt" not in meta
+
+
+def test_new_env_vault_persists_salt_before_writing_vault(
+    tmp_path, in_memory_keyring, monkeypatch
+) -> None:
+    """Crash-safety (peer-review Q3): for a NEW env vault the random salt must
+    be persisted in meta.json BEFORE the vault ciphertext. A crash between the
+    two atomic writes then leaves a not-yet-created vault (recoverable on the
+    next set) instead of a vault whose random salt was lost — which would be
+    permanently undecryptable (the deterministic fallback derives a wrong key).
+    """
+    monkeypatch.setenv(ENV_PASSPHRASE, "order-pass")
+    s = _make_store(tmp_path)
+
+    observed = {}
+    real_save = SecretsStore._save
+
+    def spy_save(self, key, data):
+        meta = (
+            json.loads(self.meta_path.read_text())
+            if self.meta_path.exists()
+            else {}
+        )
+        observed["salt_present_at_vault_write"] = bool(meta.get("salt"))
+        return real_save(self, key, data)
+
+    monkeypatch.setattr(SecretsStore, "_save", spy_save)
+    s.set("k", "v")  # creates a new env vault
+
+    assert observed["salt_present_at_vault_write"] is True
+    # And the vault is fully usable from a fresh instance afterwards.
+    assert SecretsStore(tmp_path, PROJECT).get("k") == "v"

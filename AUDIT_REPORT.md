@@ -44,8 +44,16 @@
   детермінованому ключі й не перешифровуються — жоден існуючий секрет не
   втрачає доступ. Keyring-vault не зачеплені. Без міграції. Тести:
   `tests/test_secrets_salt.py`.
+- **M1** усунено: міжпроцесний `fcntl.flock` на стабільному `.vault.lock`
+  навколо всього read-modify-write у `set`/`delete`/`provision` — daemon
+  (`set_secret`) і standalone `secret-set` CLI більше не губитимуть оновлення.
+  Read-шляхи без локу (atomic rename → цілісне читання). Peer-review (agy +
+  hermes) виявив суміжну crash-window (M5 salt): новий vault тепер пише
+  `meta.json` із salt ПЕРЕД ciphertext, тож перерваний перший запис лишає
+  vault, що відновлюється, а не недоступний. Тести:
+  `tests/test_secrets_locking.py`, `test_secrets_salt.py`.
 
-**Відкрито:** M1 (звужено), M6 (перекласифіковано).
+**Відкрито:** M6 (перекласифіковано).
 
 ### Корекції за результатами верифікації коду (2026-06-22)
 

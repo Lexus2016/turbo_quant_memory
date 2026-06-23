@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cross-process lock around secrets-vault writes (M1).** The daemon
+  (`set_secret`) and the standalone `secret-set` CLI mutate the same
+  `vault.tqv` from different processes; an interleaved read-modify-write could
+  lose an update (last writer wins, the other secret vanishes). Writes
+  (`set` / `delete` / `provision`) now hold an exclusive `fcntl.flock` on a
+  stable `.vault.lock` for the whole RMW (POSIX; reads stay lock-free —
+  an atomic rename means a reader sees a whole file). Crash-safety bonus
+  (peer-review): a new env vault now persists its random salt in `meta.json`
+  BEFORE the vault ciphertext, so an interrupted first write leaves a
+  recoverable not-yet-created vault instead of one whose salt was lost. No
+  schema change.
+
 ### Security
 - **Random per-vault Argon2id salt for new env vaults (M5).** A new
   passphrase-derived (`TQMEMORY_SECRETS_PASSPHRASE`) vault now generates a

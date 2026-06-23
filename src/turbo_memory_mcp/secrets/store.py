@@ -32,11 +32,13 @@ Public surface:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import secrets as _stdlib_secrets
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,6 +53,7 @@ from .keyresolver import (
 
 VAULT_FILENAME = "vault.tqv"
 META_FILENAME = "meta.json"
+LOCK_FILENAME = ".vault.lock"
 META_VERSION = 1
 VAULT_VERSION = 1
 
@@ -132,6 +135,29 @@ class SecretsStore:
         )
         self.vault_path = self.secrets_dir / VAULT_FILENAME
         self.meta_path = self.secrets_dir / META_FILENAME
+        self.lock_path = self.secrets_dir / LOCK_FILENAME
+
+    @contextmanager
+    def _vault_lock(self):
+        """Cross-process exclusive lock around a vault read-modify-write (M1).
+
+        The daemon (``set_secret`` RPC) and a standalone ``secret-set`` CLI
+        mutate the same ``vault.tqv`` from different processes; without this an
+        interleaved read -> modify -> write loses one update. ``flock`` on a
+        STABLE lock file (never on ``vault.tqv``, which is replaced via rename,
+        so its lock would not survive the swap) serializes the writers.
+
+        POSIX-only; the daemon targets Unix. The lock is advisory and only
+        guards writers that take it — all in-process write paths do.
+        """
+        self.secrets_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
     # ----- provisioning -----
 
@@ -146,48 +172,53 @@ class SecretsStore:
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.secrets_dir, 0o700)
 
-        vault_existed = self.vault_path.exists()
-        # A brand-new vault gets a fresh random salt (consumed only if the key
-        # turns out env-derived); an existing vault keeps its recorded salt
-        # (None for a legacy vault -> deterministic key, unchanged).
-        salt = (
-            self._salt_from_meta()
-            if vault_existed
-            else _stdlib_secrets.token_bytes(32)
-        )
-        try:
-            # Provisioning a fresh vault is a write path: allow bootstrap so
-            # macOS users get zero-setup secrets on first use.
-            key, mode = resolve_master_key(
-                self.project_id, allow_bootstrap=True, salt=salt
+        with self._vault_lock():
+            vault_existed = self.vault_path.exists()
+            # A brand-new vault gets a fresh random salt (consumed only if the
+            # key turns out env-derived); an existing vault keeps its recorded
+            # salt (None for a legacy vault -> deterministic key, unchanged).
+            salt = (
+                self._salt_from_meta()
+                if vault_existed
+                else _stdlib_secrets.token_bytes(32)
             )
-        except MasterKeyUnavailable:
-            self._write_stub_meta_if_missing()
-            return
+            try:
+                # Provisioning a fresh vault is a write path: allow bootstrap so
+                # macOS users get zero-setup secrets on first use.
+                key, mode = resolve_master_key(
+                    self.project_id, allow_bootstrap=True, salt=salt
+                )
+            except MasterKeyUnavailable:
+                self._write_stub_meta_if_missing()
+                return
 
-        created = not self.vault_path.exists()
-        if created:
-            empty_blob = encrypt(
-                json.dumps(
-                    {"version": VAULT_VERSION, "entries": {}}
-                ).encode("utf-8"),
-                key,
+            created = not self.vault_path.exists()
+            # Only stamp the fingerprint for a vault we actually created here.
+            # provision() never decrypts, so on a pre-existing vault a freshly
+            # resolved key cannot be trusted to match its ciphertext — preserve
+            # the recorded fingerprint instead of clobbering it (DEFECT B).
+            # Persist the random salt only for a NEW env vault (keyring keys
+            # ignore salt); _write_meta preserves it for an existing vault.
+            new_salt = (
+                salt if (created and mode == KeyResolutionMode.ENV) else None
             )
-            _atomic_write_bytes(self.vault_path, empty_blob)
-
-        # Only stamp the fingerprint for a vault we actually created here.
-        # provision() never decrypts, so on a pre-existing vault a freshly
-        # resolved key cannot be trusted to match its ciphertext — preserve the
-        # recorded fingerprint instead of clobbering it (DEFECT B safety).
-        # Likewise persist the random salt only for a NEW env vault (keyring
-        # keys ignore salt); _write_meta preserves it for an existing vault.
-        new_salt = salt if (created and mode == KeyResolutionMode.ENV) else None
-        self._write_meta(
-            mode=mode.value,
-            initialized=True,
-            key=key if created else None,
-            salt=new_salt,
-        )
+            if created:
+                # Meta (salt + fingerprint) BEFORE the vault ciphertext
+                # (peer-review Q3 crash-safety; see set()).
+                self._write_meta(
+                    mode=mode.value, initialized=True, key=key, salt=new_salt
+                )
+                empty_blob = encrypt(
+                    json.dumps(
+                        {"version": VAULT_VERSION, "entries": {}}
+                    ).encode("utf-8"),
+                    key,
+                )
+                _atomic_write_bytes(self.vault_path, empty_blob)
+            else:
+                self._write_meta(
+                    mode=mode.value, initialized=True, key=None, salt=None
+                )
 
     def _write_stub_meta_if_missing(self) -> None:
         if self.meta_path.exists():
@@ -337,50 +368,68 @@ class SecretsStore:
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.secrets_dir, 0o700)
 
-        vault_existed = self.vault_path.exists()
-        salt = (
-            self._salt_from_meta()
-            if vault_existed
-            else _stdlib_secrets.token_bytes(32)
-        )
-        key, mode = resolve_master_key(
-            self.project_id, allow_bootstrap=True, salt=salt
-        )
-        data = self._load(key, mode) if vault_existed else {
-            "version": VAULT_VERSION,
-            "entries": {},
-        }
-        now = _utc_now_iso()
-        entry = data["entries"].get(name)
-        if entry:
-            entry["value"] = value
-            entry["updated_at"] = now
-        else:
-            data["entries"][name] = {
-                "value": value,
-                "created_at": now,
-                "updated_at": now,
+        with self._vault_lock():
+            vault_existed = self.vault_path.exists()
+            salt = (
+                self._salt_from_meta()
+                if vault_existed
+                else _stdlib_secrets.token_bytes(32)
+            )
+            key, mode = resolve_master_key(
+                self.project_id, allow_bootstrap=True, salt=salt
+            )
+            data = self._load(key, mode) if vault_existed else {
+                "version": VAULT_VERSION,
+                "entries": {},
             }
-        self._save(key, data)
-        # Persist the random salt only when this call created a new env vault;
-        # keyring keys ignore salt, and an existing vault keeps its recorded one.
-        new_salt = salt if (not vault_existed and mode == KeyResolutionMode.ENV) else None
-        self._write_meta(
-            mode=mode.value, initialized=True, key=key, salt=new_salt
-        )
+            now = _utc_now_iso()
+            entry = data["entries"].get(name)
+            if entry:
+                entry["value"] = value
+                entry["updated_at"] = now
+            else:
+                data["entries"][name] = {
+                    "value": value,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            # Persist the random salt only when this call created a new env
+            # vault; keyring keys ignore salt, and an existing vault keeps its
+            # recorded one.
+            new_salt = (
+                salt
+                if (not vault_existed and mode == KeyResolutionMode.ENV)
+                else None
+            )
+            if not vault_existed:
+                # New vault: write meta (salt + fingerprint) BEFORE the vault
+                # ciphertext (peer-review Q3 crash-safety). A crash between the
+                # two atomic writes then leaves a not-yet-created vault, which
+                # the next set() recreates cleanly — rather than a vault whose
+                # random salt was lost and is therefore undecryptable.
+                self._write_meta(
+                    mode=mode.value, initialized=True, key=key, salt=new_salt
+                )
+                self._save(key, data)
+            else:
+                self._save(key, data)
+                self._write_meta(
+                    mode=mode.value, initialized=True, key=key, salt=new_salt
+                )
 
     def delete(self, name: str) -> bool:
         _validate_name(name)
         if not self.vault_path.exists():
             return False
-        # A delete operates on an existing vault — never mint a new key.
-        key, mode = resolve_master_key(
-            self.project_id, allow_bootstrap=False, salt=self._salt_from_meta()
-        )
-        data = self._load(key, mode)
-        if name not in data["entries"]:
-            return False
-        del data["entries"][name]
-        self._save(key, data)
-        self._write_meta(mode=mode.value, initialized=True, key=key)
-        return True
+        with self._vault_lock():
+            # A delete operates on an existing vault — never mint a new key.
+            key, mode = resolve_master_key(
+                self.project_id, allow_bootstrap=False, salt=self._salt_from_meta()
+            )
+            data = self._load(key, mode)
+            if name not in data["entries"]:
+                return False
+            del data["entries"][name]
+            self._save(key, data)
+            self._write_meta(mode=mode.value, initialized=True, key=key)
+            return True
