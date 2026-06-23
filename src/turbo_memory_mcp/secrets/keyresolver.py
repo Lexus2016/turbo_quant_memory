@@ -113,7 +113,7 @@ def _maybe_warn_env_looks_like_raw_key(env_value: str) -> None:
 
 
 def resolve_master_key(
-    project_id: str, *, allow_bootstrap: bool = False
+    project_id: str, *, allow_bootstrap: bool = False, salt: bytes | None = None
 ) -> tuple[bytes, KeyResolutionMode]:
     """Resolve the per-project master key.
 
@@ -123,6 +123,11 @@ def resolve_master_key(
             vault), a missing keyring entry may be minted. When False (read
             paths: get / list / delete), a missing key raises rather than
             minting — preventing a fresh key from orphaning an existing vault.
+        salt: explicit Argon2id salt for the ENV-passphrase path. ``None``
+            (default) uses the legacy deterministic per-project salt — so a
+            pre-M5 vault (meta.json without a "salt") keeps its key. A new env
+            vault passes a random salt that the store persists in meta.json.
+            Irrelevant to the keyring paths (their key is random, not derived).
     """
     if not project_id:
         raise ValueError("project_id must be non-empty")
@@ -131,7 +136,7 @@ def resolve_master_key(
     env_value = os.environ.get(ENV_PASSPHRASE)
     if env_value:
         _maybe_warn_env_looks_like_raw_key(env_value)
-        key = derive_key_from_passphrase(env_value, project_id)
+        key = derive_key_from_passphrase(env_value, project_id, salt=salt)
         return key, KeyResolutionMode.ENV
 
     account = _account_for_project(project_id)

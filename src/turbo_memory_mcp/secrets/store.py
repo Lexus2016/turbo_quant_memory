@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets as _stdlib_secrets
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -145,10 +146,21 @@ class SecretsStore:
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.secrets_dir, 0o700)
 
+        vault_existed = self.vault_path.exists()
+        # A brand-new vault gets a fresh random salt (consumed only if the key
+        # turns out env-derived); an existing vault keeps its recorded salt
+        # (None for a legacy vault -> deterministic key, unchanged).
+        salt = (
+            self._salt_from_meta()
+            if vault_existed
+            else _stdlib_secrets.token_bytes(32)
+        )
         try:
             # Provisioning a fresh vault is a write path: allow bootstrap so
             # macOS users get zero-setup secrets on first use.
-            key, mode = resolve_master_key(self.project_id, allow_bootstrap=True)
+            key, mode = resolve_master_key(
+                self.project_id, allow_bootstrap=True, salt=salt
+            )
         except MasterKeyUnavailable:
             self._write_stub_meta_if_missing()
             return
@@ -167,8 +179,14 @@ class SecretsStore:
         # provision() never decrypts, so on a pre-existing vault a freshly
         # resolved key cannot be trusted to match its ciphertext — preserve the
         # recorded fingerprint instead of clobbering it (DEFECT B safety).
+        # Likewise persist the random salt only for a NEW env vault (keyring
+        # keys ignore salt); _write_meta preserves it for an existing vault.
+        new_salt = salt if (created and mode == KeyResolutionMode.ENV) else None
         self._write_meta(
-            mode=mode.value, initialized=True, key=key if created else None
+            mode=mode.value,
+            initialized=True,
+            key=key if created else None,
+            salt=new_salt,
         )
 
     def _write_stub_meta_if_missing(self) -> None:
@@ -188,7 +206,12 @@ class SecretsStore:
         )
 
     def _write_meta(
-        self, *, mode: str, initialized: bool, key: bytes | None = None
+        self,
+        *,
+        mode: str,
+        initialized: bool,
+        key: bytes | None = None,
+        salt: bytes | None = None,
     ) -> None:
         existing = self._read_meta_or_empty()
         payload = {
@@ -209,6 +232,11 @@ class SecretsStore:
         )
         if fingerprint:
             payload["key_fingerprint"] = fingerprint
+        # M5: persist a new env vault's random salt; otherwise preserve the
+        # recorded one (a legacy vault simply has none -> deterministic key).
+        salt_hex = salt.hex() if salt is not None else existing.get("salt")
+        if salt_hex:
+            payload["salt"] = salt_hex
         _atomic_write_text(
             self.meta_path,
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -221,6 +249,19 @@ class SecretsStore:
             return json.loads(self.meta_path.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             return {}
+
+    def _salt_from_meta(self) -> bytes | None:
+        """Persisted random Argon2id salt for this vault, or ``None`` for a
+        legacy vault (meta without a "salt") so the deterministic key path is
+        used. Keyring-backed vaults also have no salt — harmless, since the
+        keyring key is not derived from a passphrase."""
+        salt_hex = self._read_meta_or_empty().get("salt")
+        if not salt_hex:
+            return None
+        try:
+            return bytes.fromhex(salt_hex)
+        except (ValueError, TypeError):
+            return None
 
     # ----- vault I/O -----
 
@@ -273,14 +314,18 @@ class SecretsStore:
         _validate_name(name)
         if not self.vault_path.exists():
             return None
-        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        key, mode = resolve_master_key(
+            self.project_id, allow_bootstrap=False, salt=self._salt_from_meta()
+        )
         entry = self._load(key, mode)["entries"].get(name)
         return entry["value"] if entry else None
 
     def list_names(self) -> list[str]:
         if not self.vault_path.exists():
             return []
-        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        key, mode = resolve_master_key(
+            self.project_id, allow_bootstrap=False, salt=self._salt_from_meta()
+        )
         return sorted(self._load(key, mode)["entries"].keys())
 
     # ----- write paths (may bootstrap a fresh key on first use) -----
@@ -292,8 +337,16 @@ class SecretsStore:
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.secrets_dir, 0o700)
 
-        key, mode = resolve_master_key(self.project_id, allow_bootstrap=True)
-        data = self._load(key, mode) if self.vault_path.exists() else {
+        vault_existed = self.vault_path.exists()
+        salt = (
+            self._salt_from_meta()
+            if vault_existed
+            else _stdlib_secrets.token_bytes(32)
+        )
+        key, mode = resolve_master_key(
+            self.project_id, allow_bootstrap=True, salt=salt
+        )
+        data = self._load(key, mode) if vault_existed else {
             "version": VAULT_VERSION,
             "entries": {},
         }
@@ -309,14 +362,21 @@ class SecretsStore:
                 "updated_at": now,
             }
         self._save(key, data)
-        self._write_meta(mode=mode.value, initialized=True, key=key)
+        # Persist the random salt only when this call created a new env vault;
+        # keyring keys ignore salt, and an existing vault keeps its recorded one.
+        new_salt = salt if (not vault_existed and mode == KeyResolutionMode.ENV) else None
+        self._write_meta(
+            mode=mode.value, initialized=True, key=key, salt=new_salt
+        )
 
     def delete(self, name: str) -> bool:
         _validate_name(name)
         if not self.vault_path.exists():
             return False
         # A delete operates on an existing vault — never mint a new key.
-        key, mode = resolve_master_key(self.project_id, allow_bootstrap=False)
+        key, mode = resolve_master_key(
+            self.project_id, allow_bootstrap=False, salt=self._salt_from_meta()
+        )
         data = self._load(key, mode)
         if name not in data["entries"]:
             return False

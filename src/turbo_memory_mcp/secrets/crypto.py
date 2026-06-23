@@ -13,11 +13,13 @@ Public surface:
         ``cryptography.exceptions.InvalidTag`` on MAC failure (wrong key
         or tampered ciphertext / nonce).
 
-    derive_key_from_passphrase(passphrase, project_id) -> bytes
-        32-byte key via Argon2id. Salt is deterministic per project
-        (``sha256("tqv-salt-v1:" + project_id)``) so the same passphrase
-        produces a different key for each project — preserves project
-        isolation even if a project_id leaks.
+    derive_key_from_passphrase(passphrase, project_id, *, salt=None) -> bytes
+        32-byte key via Argon2id. With ``salt=None`` (legacy default) the salt
+        is deterministic per project (``sha256("tqv-salt-v1:" + project_id)``),
+        which preserves project isolation and keeps pre-M5 vaults decryptable.
+        New vaults pass an explicit random salt (persisted in ``meta.json``) so
+        a stolen vault of a public-remote project cannot be pre-attacked with a
+        precomputed dictionary keyed on the predictable salt.
 
     key_fingerprint(key) -> str
         One-way, non-reversible 16-hex-char fingerprint of a master key.
@@ -62,12 +64,18 @@ def decrypt(blob: bytes, key: bytes) -> bytes:
     return AESGCM(key).decrypt(nonce, ciphertext_with_tag, None)
 
 
-def derive_key_from_passphrase(passphrase: str, project_id: str) -> bytes:
+def derive_key_from_passphrase(
+    passphrase: str, project_id: str, *, salt: bytes | None = None
+) -> bytes:
     if not passphrase:
         raise ValueError("passphrase must be non-empty")
     if not project_id:
         raise ValueError("project_id must be non-empty")
-    salt = hashlib.sha256(_SALT_PREFIX + project_id.encode("utf-8")).digest()
+    if salt is None:
+        # Legacy default: deterministic per-project salt. Preserved byte-for-byte
+        # so vaults created before M5 (meta.json without a "salt" field) keep
+        # deriving the same key. New vaults pass an explicit random salt.
+        salt = hashlib.sha256(_SALT_PREFIX + project_id.encode("utf-8")).digest()
     return hash_secret_raw(
         secret=passphrase.encode("utf-8"),
         salt=salt,

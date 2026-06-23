@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Random per-vault Argon2id salt for new env vaults (M5).** A new
+  passphrase-derived (`TQMEMORY_SECRETS_PASSPHRASE`) vault now generates a
+  random 32-byte salt stored in `meta.json`, instead of deriving it
+  deterministically from `project_id` (predictable for a public-remote
+  project). Fully backward compatible: a vault whose `meta.json` has no `salt`
+  keeps deriving the legacy deterministic key, so existing secrets never lose
+  access; an existing vault is never re-keyed. Keyring-backed vaults are
+  unaffected (their key is random, not passphrase-derived). No migration —
+  `migrate --apply` not required; safe to roll back.
+
 ## [0.17.0] - 2026-06-22
 
 ### Added

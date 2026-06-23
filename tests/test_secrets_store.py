@@ -306,7 +306,9 @@ def test_set_writes_key_fingerprint_to_meta(
     s = _make_store(tmp_path)
     s.set("k", "v")
     meta = json.loads(s.meta_path.read_text())
-    key, _ = resolve_master_key(PROJECT)
+    # M5: a new env vault records a random salt; reproduce its key with it.
+    salt = bytes.fromhex(meta["salt"]) if meta.get("salt") else None
+    key, _ = resolve_master_key(PROJECT, salt=salt)
     assert meta["key_fingerprint"] == key_fingerprint(key)
 
 
@@ -362,8 +364,11 @@ def test_reprovision_with_different_key_preserves_original_fingerprint(
     monkeypatch.setenv(ENV_PASSPHRASE, "passphrase-one")
     s = _make_store(tmp_path)
     s.provision()
-    key_one, _ = resolve_master_key(PROJECT)
-    fp_one = json.loads(s.meta_path.read_text())["key_fingerprint"]
+    meta_one = json.loads(s.meta_path.read_text())
+    # M5: reproduce the vault's key using the persisted random salt.
+    salt = bytes.fromhex(meta_one["salt"]) if meta_one.get("salt") else None
+    key_one, _ = resolve_master_key(PROJECT, salt=salt)
+    fp_one = meta_one["key_fingerprint"]
     assert fp_one == key_fingerprint(key_one)
 
     # Re-provision under a DIFFERENT passphrase while the vault already exists.
