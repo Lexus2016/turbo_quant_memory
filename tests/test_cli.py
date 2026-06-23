@@ -114,6 +114,7 @@ def test_prune_orphans_apply_moves_to_staging(
     out = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "Moved" in out  # CLI reports the reversible move to the user
     assert not orphan.exists()  # moved out of projects/
     assert live.is_dir()  # live project untouched
     staged = list((home / "staging").glob("orphan-prune-*/deadbucket000000"))
