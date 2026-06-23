@@ -1,0 +1,9 @@
+# tqmemory indexing exclusions (one glob per line, # for comments).
+#
+# Promo / landing READMEs: installation-marketing prose that surfaces on
+# unrelated retrieval queries (measured — appeared as top hit for a nonsense
+# query during the 2026-06-23 memory audit). They add noise without dev value;
+# the real install command is in server_info, and the files live on GitHub.
+README.md
+README.ru.md
+README.uk.md
