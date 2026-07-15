@@ -2,7 +2,7 @@
 
 A single rolling backup of the storage root is taken into
 `<storage_root>/.snapshots/<utc_iso>/`. The N most recent snapshots are
-kept (default 1, override via TQMEMORY_SNAPSHOTS_KEEP). The .snapshots/
+kept (default 2, override via TQMEMORY_SNAPSHOTS_KEEP). The .snapshots/
 directory and the runtime .daemon.lock are excluded from the copy.
 
 Restore is a full recursive copy back. The caller is responsible for
@@ -17,7 +17,10 @@ from pathlib import Path
 
 _SNAPSHOT_DIR = ".snapshots"
 _KEEP_ENV = "TQMEMORY_SNAPSHOTS_KEEP"
-_DEFAULT_KEEP = 1
+# Keep >=2 so re-running a failed `migrate --apply` (which snapshots the now
+# partially-migrated state) cannot immediately prune the clean pre-migration
+# snapshot — the one you actually need to restore from.
+_DEFAULT_KEEP = 2
 _EXCLUDE_NAMES = {_SNAPSHOT_DIR, ".daemon.lock"}
 
 
@@ -74,16 +77,27 @@ def create_snapshot(storage_root: Path) -> Path:
     while target.exists():
         target = snap_root / f"{stamp}-{suffix}"
         suffix += 1
-    target.mkdir(parents=True)
 
-    for child in storage_root.iterdir():
-        if child.name in _EXCLUDE_NAMES:
-            continue
-        dest = target / child.name
-        if child.is_dir():
-            shutil.copytree(child, dest, symlinks=False)
-        else:
-            shutil.copy2(child, dest)
+    # Build into a dot-prefixed staging dir, then publish with an atomic rename.
+    # list_snapshots excludes dotted entries, so a copy that dies partway leaves
+    # nothing selectable for --restore-from: a half-written snapshot can never be
+    # mistaken for a complete one.
+    staging = snap_root / f".building_{target.name}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        for child in storage_root.iterdir():
+            if child.name in _EXCLUDE_NAMES:
+                continue
+            dest = staging / child.name
+            if child.is_dir():
+                shutil.copytree(child, dest, symlinks=False)
+            else:
+                shutil.copy2(child, dest)
+        os.replace(staging, target)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
     _prune_old(storage_root)
     return target

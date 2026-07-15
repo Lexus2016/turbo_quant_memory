@@ -372,6 +372,72 @@ def test_keep_count_prunes_old_snapshots(
     assert survivors_set == expected
 
 
+def test_detect_status_reports_error_on_corrupt_manifest(store: MemoryStore) -> None:
+    manifest_path = store.project_markdown_manifest_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{ not valid json", encoding="utf-8")
+
+    statuses = detect_status(store)  # must not raise
+
+    markdown = statuses[Subsystem.MARKDOWN]
+    assert markdown.error is not None
+    assert markdown.pending == []
+    assert markdown.needs_upgrade is False
+
+
+def test_apply_pending_skips_subsystem_with_corrupt_manifest(store: MemoryStore) -> None:
+    store.project_markdown_manifest_path().write_text("}{ broken", encoding="utf-8")
+    # Must not raise; a subsystem whose version can't be read is simply skipped.
+    outcomes = apply_pending(store, subsystems=[Subsystem.MARKDOWN], snapshot=False)
+    assert outcomes == []
+
+
+def test_pending_warning_hints_restore_on_corrupt_manifest(store: MemoryStore) -> None:
+    store.project_markdown_manifest_path().write_text("{bad", encoding="utf-8")
+    warning = format_pending_warning(store)
+    assert warning is not None
+    assert "chain error" in warning
+    assert "--restore-from" in warning
+    assert "--list-snapshots" in warning
+
+
+def test_default_keep_retains_two_snapshots(
+    store: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TQMEMORY_SNAPSHOTS_KEEP", raising=False)
+    store.write_project_manifest()
+
+    snaps = [create_snapshot(store.storage_root) for _ in range(3)]
+
+    surviving = {p.name for p in list_snapshots(store.storage_root)}
+    # Default keep is now 2 so a re-run of a failed --apply can't prune the only
+    # clean pre-migration snapshot.
+    assert surviving == {snaps[-1].name, snaps[-2].name}
+
+
+def test_failed_snapshot_publishes_nothing(
+    store: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import turbo_memory_mcp.migrations.snapshot as snapmod
+
+    store.write_project_manifest()
+    before = list_snapshots(store.storage_root)
+
+    def _boom(src, dst, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("simulated disk-full mid-copy")
+
+    monkeypatch.setattr(snapmod.shutil, "copytree", _boom)
+
+    with pytest.raises(OSError):
+        create_snapshot(store.storage_root)
+
+    # No half-written snapshot became selectable, and the dot-staging is cleaned.
+    assert list_snapshots(store.storage_root) == before
+    snap_root = store.storage_root / ".snapshots"
+    lingering = [p for p in snap_root.iterdir() if p.name.startswith(".building_")]
+    assert lingering == []
+
+
 def test_apply_pending_handles_multiple_subsystems_in_one_call(
     store: MemoryStore,
 ) -> None:

@@ -32,6 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   isolation invariant is now enforced rather than assumed.
 
 ### Fixed
+- **`migrate --status` / `--apply` no longer crash on a corrupt manifest.**
+  `_status_for` read each subsystem's version outside any guard, so one
+  truncated/unreadable manifest raised an uncaught traceback out of the exact
+  command you run to recover. The read is now wrapped: the subsystem is reported
+  with an `error` and an empty pending chain, so `apply` safely skips it instead
+  of crashing, and the startup warning now points at
+  `migrate --list-snapshots` / `--restore-from` for recovery.
+- **Pre-migration snapshots are safer.** The default retention is now 2 (was 1)
+  so re-running a failed `--apply` — which snapshots the half-migrated state —
+  can no longer immediately prune the clean pre-migration snapshot you need to
+  restore from (explicit `TQMEMORY_SNAPSHOTS_KEEP` is still honored). And a
+  snapshot is now built into a dot-prefixed staging dir and published with a
+  single atomic `os.replace`, so a copy that dies partway leaves nothing that
+  `--list-snapshots` / `--restore-from` could mistake for a complete backup.
 - **One corrupt markdown-cache file no longer takes down all retrieval.** Notes
   were already quarantined (skip-with-warning), but `list_markdown_blocks` /
   `list_markdown_file_manifests` / `list_markdown_roots` used a bare `_read_json`,

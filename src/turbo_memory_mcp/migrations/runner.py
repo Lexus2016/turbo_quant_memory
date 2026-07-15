@@ -71,8 +71,10 @@ def format_pending_warning(store: MemoryStore) -> str | None:
     """
     statuses = detect_status(store)
     pending_lines: list[str] = []
+    has_error = False
     for status in statuses.values():
         if status.error:
+            has_error = True
             pending_lines.append(
                 f"  {status.subsystem.value}: chain error - {status.error}"
             )
@@ -87,12 +89,23 @@ def format_pending_warning(store: MemoryStore) -> str | None:
             )
     if not pending_lines:
         return None
-    return (
+    message = (
         "[tqmemory] pending migrations detected. Run "
         "'turbo-memory-mcp migrate --status' for details, then "
         "'turbo-memory-mcp migrate --apply' to upgrade.\n"
         + "\n".join(pending_lines)
     )
+    if has_error:
+        # An errored subsystem (corrupt/half-migrated manifest, or a broken
+        # upgrade chain) is exactly where the user needs to know a clean
+        # pre-migration snapshot can be restored.
+        message += (
+            "\n[tqmemory] if a subsystem above shows an error and it followed a "
+            "failed --apply, restore the clean pre-migration state: list backups "
+            "with 'turbo-memory-mcp migrate --list-snapshots', then "
+            "'turbo-memory-mcp migrate --restore-from <snapshot>'."
+        )
+    return message
 
 
 def apply_pending(
@@ -180,7 +193,20 @@ def _run_one(store: MemoryStore, mig: Migration) -> MigrationOutcome:
 
 
 def _status_for(store: MemoryStore, subsystem: Subsystem) -> SubsystemStatus:
-    current = _read_current_version(store, subsystem)
+    try:
+        current = _read_current_version(store, subsystem)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        # A corrupt/unreadable manifest must not crash `migrate --status/--apply`
+        # (the very command you reach for when storage is damaged). Report it as
+        # an errored subsystem with an empty chain so apply skips it safely
+        # instead of raising an uncaught traceback out of main().
+        return SubsystemStatus(
+            subsystem=subsystem,
+            current_version=0,
+            latest_version=latest_version(subsystem),
+            pending=[],
+            error=f"unreadable manifest: {type(exc).__name__}: {exc}",
+        )
     latest = latest_version(subsystem)
     error: str | None = None
     chain: list[Migration] = []
