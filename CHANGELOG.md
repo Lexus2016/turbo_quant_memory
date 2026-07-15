@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-15
+
 ### Added
 - **Knowledge-graph discoverability (issues #1, #2, #5).** `remember_note` now
   auto-links any `source_refs` that are entity URIs (`note://`, `file://`,
