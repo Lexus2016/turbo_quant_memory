@@ -19,7 +19,7 @@ from turbo_memory_mcp.ingestion import build_file_key
 from turbo_memory_mcp.knowledge_lint import _normalize_title
 from turbo_memory_mcp.markdown_parser import build_block_id
 from turbo_memory_mcp.server import lint_knowledge_base_impl
-from turbo_memory_mcp.store import MemoryStore, PROJECT_SCOPE
+from turbo_memory_mcp.store import MemoryStore
 from turbo_memory_mcp.telemetry import record_semantic_search_usage
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sys
@@ -884,9 +885,55 @@ def _warn_about_pending_migrations() -> None:
         pass
 
 
+_BENIGN_DISCONNECT_ERRNOS: frozenset[int] = frozenset(
+    {errno.EPIPE, errno.ECONNRESET, errno.ESHUTDOWN, errno.ENOTCONN}
+)
+
+
+def _is_benign_stdio_disconnect(exc: BaseException) -> bool:
+    """True when ``exc`` is the client closing the stdio pipe, not a real error.
+
+    Matches the dedicated ``OSError`` subclasses (which may carry no ``errno``,
+    e.g. when constructed in tests) and a bare ``OSError`` whose ``errno`` names
+    a peer-gone condition on platforms that do not map it to
+    ``BrokenPipeError`` / ``ConnectionResetError`` (macOS/Windows can surface
+    ``ESHUTDOWN`` / ``ENOTCONN``). Scoped to the transport boundary, where the
+    only ``OSError`` that escapes ``.run(transport="stdio")`` is a disconnect —
+    tool-handler errors are caught by the MCP framework and never propagate here.
+    """
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _BENIGN_DISCONNECT_ERRNOS
+
+
+def _reraise_unless_stdio_disconnect(exc: BaseException) -> None:
+    """Swallow a client closing the stdio pipe; re-raise anything else.
+
+    When the MCP client (our parent process) closes stdout/stdin — on restart,
+    session reload, or graceful shutdown — the anyio stdio transport surfaces a
+    disconnect error, usually wrapped in a ``BaseExceptionGroup`` by the
+    transport's TaskGroup. That is a normal shutdown signal, not a crash: the
+    server should exit cleanly instead of dumping an ``ExceptionGroup``
+    traceback and leaving the parent to see "endpoint unreachable".
+
+    Only the benign disconnect leaves are stripped. If the group also carries a
+    genuine error (or a cancellation / ``KeyboardInterrupt`` / ``SystemExit``),
+    that survivor is re-raised so real failures are never masked; a lone benign
+    error returns cleanly. ``BaseExceptionGroup.split`` recurses, so nested
+    groups are handled too.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        _matched, remaining = exc.split(_is_benign_stdio_disconnect)
+        if remaining is not None:
+            raise remaining
+        return
+    if _is_benign_stdio_disconnect(exc):
+        return
+    raise exc
+
+
 def run_stdio_server() -> None:
     """Entry point used by the CLI. Handles daemon bootstrap transparently."""
-
     global _cached_bootstrap
     bootstrap = acquire_daemon_role()
     _cached_bootstrap = bootstrap
@@ -937,6 +984,8 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
         _warn_about_pending_migrations()
         ready.set()
         build_server(dispatcher).run(transport="stdio")
+    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+        _reraise_unless_stdio_disconnect(exc)
     finally:
         listener.stop()
         release_daemon_lock(endpoint)
@@ -948,13 +997,18 @@ def _run_proxy(bootstrap: BootstrapResult) -> None:
     runtime = ProxyRuntime(client)
     try:
         build_server(runtime).run(transport="stdio")
+    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+        _reraise_unless_stdio_disconnect(exc)
     finally:
         runtime.shutdown()
 
 
 def _run_standalone() -> None:
     dispatcher = make_local_dispatcher()
-    build_server(dispatcher).run(transport="stdio")
+    try:
+        build_server(dispatcher).run(transport="stdio")
+    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+        _reraise_unless_stdio_disconnect(exc)
 
 
 # ---------------------------------------------------------------------------
