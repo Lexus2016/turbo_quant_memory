@@ -169,12 +169,26 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         provenance: str = "agent",
         tier: str | None = None,
     ) -> dict[str, object]:
-        """Store a typed project note.
+        """Store a typed project note (lesson / decision / pattern / handoff / ...).
 
-        The tier is normally derived from `kind` (handoff -> episodic, every
-        other kind -> durable). Pass `tier` explicitly to override — e.g.
-        tier="durable" to keep a `handoff` in the default-searchable set, or
-        tier="episodic" to keep a noisy lesson out of regular search.
+        tags: 2-3 lowercase tags are strongly recommended — tags are the only way
+          to FILTER notes; an untagged note is reachable by semantic_search alone.
+        source_refs: the files / notes / issues this note is about. Pass them as
+          entity URIs (note://<id>, file://<relative/path>, issue://KEY,
+          https://...) and they are auto-linked into the knowledge graph as
+          `references` relations, so get_related_entities can later surface them.
+        provenance: who originated the note. Use "human-explicit" when the USER
+          asked to remember something ("remember this", "save that"); "agent" for
+          your own observations (the default); "external-tool" for API/tool data;
+          "system" for automatic processes.
+        tier: normally derived from `kind` (handoff -> episodic, every other kind
+          -> durable). Override e.g. tier="durable" to keep a `handoff` in the
+          default-searchable set, or tier="episodic" to keep a noisy lesson out of
+          regular search.
+
+        After storing, connect the note with link_entities(source_uri="note://<id>",
+        ...) when it relates to a file, issue, or prior note — the response echoes
+        the note's uri and hints this when the note still has no relations.
         """
         return dispatcher(
             "remember_note",
@@ -301,7 +315,11 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         relation_type: str | None = None,
         scope: str = "project",
     ) -> dict[str, object]:
-        """Remove a Knowledge Graph link between two entities."""
+        """Remove a Knowledge Graph link between two entities.
+
+        source_uri / target_uri use the same URI forms as link_entities:
+        note://<note_id>, file://<relative/path>, issue://KEY, https://...
+        """
         return dispatcher(
             "unlink_entities",
             {
@@ -318,7 +336,12 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         relation_type: str | None = None,
         scope: str = "hybrid",
     ) -> dict[str, object]:
-        """Query relations involving a specific entity URI."""
+        """Query relations involving a specific entity URI.
+
+        uri: the entity to look up, as note://<note_id>, file://<relative/path>,
+        issue://KEY, task://KEY, or https://... — the same URI forms link_entities
+        accepts. Returns nothing for an entity that has no links yet.
+        """
         return dispatcher(
             "get_related_entities",
             {
@@ -1018,6 +1041,41 @@ def self_test_impl(
     )
 
 
+# Entity schemes that are hierarchical (authority-based) and therefore MUST use
+# the '<scheme>://<rest>' form. This is exactly where agents typo 'note:abc' for
+# 'note://abc'. Other schemes (mailto:, urn:, tel:, ...) are accepted in the
+# bare '<scheme>:<rest>' form per RFC 3986.
+_HIERARCHICAL_ENTITY_SCHEMES = frozenset({"note", "file", "issue", "task", "http", "https"})
+
+
+def _is_entity_uri(value: str) -> bool:
+    """True if `value` is a well-formed entity URI. Caller must pre-strip."""
+    scheme, sep, rest = value.partition(":")
+    if not (
+        sep
+        and rest
+        and scheme
+        and scheme[0].isalpha()
+        and all(ch.isalnum() or ch in "+.-" for ch in scheme)
+    ):
+        return False
+    if scheme.lower() in _HIERARCHICAL_ENTITY_SCHEMES:
+        # These require the '//' authority separator; 'note:abc' is a typo.
+        return rest.startswith("//") and len(rest) > 2
+    return True
+
+
+def _validate_entity_uri(uri: str, *, field: str) -> str:
+    text = uri.strip()
+    if not _is_entity_uri(text):
+        raise ValueError(
+            f"Invalid {field} {uri!r}: entity URIs must be '<scheme>://<rest>' for "
+            "note/file/issue/task/http(s) (e.g. note://<note_id>, file://<relative/path>, "
+            "issue://BUG-404) — did you forget the '//'?"
+        )
+    return text
+
+
 def link_entities_impl(
     source_uri: str,
     target_uri: str,
@@ -1030,17 +1088,15 @@ def link_entities_impl(
     resolved_scope = _normalize_scope(scope)
     if resolved_scope not in (PROJECT_SCOPE, GLOBAL_SCOPE):
         raise ValueError(f"Unsupported scope: {scope}")
-    if not source_uri.strip():
-        raise ValueError("link_entities requires a non-empty source_uri.")
-    if not target_uri.strip():
-        raise ValueError("link_entities requires a non-empty target_uri.")
     if not relation_type.strip():
         raise ValueError("link_entities requires a non-empty relation_type.")
-        
+    source_clean = _validate_entity_uri(source_uri, field="source_uri")
+    target_clean = _validate_entity_uri(target_uri, field="target_uri")
+
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     relation = store.add_relation(
-        source=source_uri.strip(),
-        target=target_uri.strip(),
+        source=source_clean,
+        target=target_clean,
         relation_type=relation_type.strip(),
         scope=resolved_scope,
     )
@@ -1220,6 +1276,50 @@ def remember_note_impl(
     similar_notes = _build_similarity_hints(store, note)
     if similar_notes:
         payload["similar_notes"] = similar_notes
+
+    note_uri = f"note://{note['note_id']}"
+    # Auto-link any source_refs that are already entity URIs, so the knowledge
+    # graph fills in from the intent the caller already expressed. Best-effort:
+    # a linking failure never fails the note write (the note is already stored).
+    linked_refs: list[dict[str, str]] = []
+    seen_targets: set[str] = set()
+    refs = [source_refs] if isinstance(source_refs, str) else (source_refs or [])
+    for ref in refs:
+        candidate = str(ref).strip()
+        if not candidate or candidate == note_uri or candidate in seen_targets:
+            continue  # skip blanks, self-loops, and duplicate refs
+        if not _is_entity_uri(candidate):
+            continue
+        seen_targets.add(candidate)
+        try:
+            linked_refs.append(
+                store.add_relation(
+                    source=note_uri,
+                    target=candidate,
+                    relation_type="references",
+                    scope=resolved_scope,
+                )
+            )
+        except Exception:  # noqa: BLE001 — linking is best-effort
+            pass
+    if linked_refs:
+        payload["linked_refs"] = linked_refs
+
+    hints: list[str] = []
+    if not tags:
+        hints.append(
+            "No tags — add 2-3 lowercase tags (tags=[...]) so this note is filterable, "
+            "not only reachable by semantic_search."
+        )
+    if not linked_refs:
+        hints.append(
+            f'Connect this note in the knowledge graph: link_entities(source_uri="{note_uri}", '
+            'target_uri="file://…|note://…|issue://…", '
+            'relation_type="implements|fixes|references|supersedes"). '
+            "Or pass source_refs as URIs to auto-link."
+        )
+    if hints:
+        payload["hints"] = hints
     return payload
 
 

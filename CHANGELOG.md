@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Knowledge-graph discoverability (issues #1, #2, #5).** `remember_note` now
+  auto-links any `source_refs` that are entity URIs (`note://`, `file://`,
+  `issue://`, `https://`, …) as `references` relations, and its response carries
+  a `hints` list that nudges `link_entities` and 2-3 tags when a note has none.
+  Its description now documents `tags`, `source_refs`, `provenance` (including
+  when to use `human-explicit`), and `tier`.
+- **Stale episodic reporting (issue #3).** `lint_knowledge_base` reports handoff
+  / episodic notes older than `TQMEMORY_EPISODIC_STALE_DAYS` (default 14; `0`
+  disables) so accumulated session notes can be pruned with `deprecate_note`.
+
+### Fixed
+- **`lint_knowledge_base` no longer fails on an MCP-only store (issue #4).** A
+  store with notes but no indexed Markdown roots previously returned a failure;
+  it now lints cleanly (`status: "ok"`, `markdown_configured: false`) and still
+  runs the note-level checks.
+- **`link_entities` validates entity URIs (issue #6).** The common `note:abc`
+  (missing `//`) typo used to be stored as a broken relation; it now raises a
+  clear error. `note`/`file`/`issue`/`task`/`http(s)` require the `scheme://`
+  form; other RFC schemes (`mailto:`, `urn:`, …) are accepted. The
+  `get_related_entities` / `unlink_entities` descriptions now document the URI
+  forms too.
+
 ## [0.19.1] - 2026-07-15
 
 ### Fixed

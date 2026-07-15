@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
 from .secrets.paths import is_inside_secrets_storage
-from .store import MemoryStore, utc_now
+from .store import MemoryStore, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
 
 _MAX_ISSUES_LIMIT = 1000
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -24,6 +26,49 @@ _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "javasc
 _ROOT_ENTRY_NAMES = {"index.md", "readme.md", "home.md", "start.md"}
 
 
+def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:
+    """Episodic (handoff/session) notes older than TQMEMORY_EPISODIC_STALE_DAYS.
+
+    Handoff notes accumulate quickly and are ephemeral, so left unchecked they
+    dominate the corpus. This surfaces the stale ones oldest-first (most stale
+    first) so the agent can ``deprecate_note`` them. Default threshold 14 days;
+    set the env var to 0 to disable. Read-only — never deprecates anything itself.
+    """
+    try:
+        threshold_days = int(float(os.environ.get("TQMEMORY_EPISODIC_STALE_DAYS", "14")))
+    except (ValueError, TypeError):
+        threshold_days = 14
+    if threshold_days <= 0:
+        return []
+    now = datetime.now(timezone.utc)
+    stale: list[dict[str, object]] = []
+    for note in store.list_notes(PROJECT_SCOPE):
+        tier = str(note.get("tier") or "")
+        kind = str(note.get("note_kind") or "")
+        # tier is authoritative when present; fall back to the kind for older
+        # notes that never persisted a tier field.
+        if not (tier == NOTE_TIER_EPISODIC or (not tier and kind == "handoff")):
+            continue
+        raw = str(note.get("updated_at") or note.get("created_at") or "")
+        try:
+            ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_days = (now - ts).days
+        if age_days >= threshold_days:
+            stale.append(
+                {
+                    "note_id": str(note.get("note_id", "")),
+                    "age_days": age_days,
+                    "title": str(note.get("title", "")),
+                }
+            )
+    stale.sort(key=lambda entry: -int(entry["age_days"]))
+    return stale
+
+
 def lint_knowledge_base(
     store: MemoryStore,
     paths: Sequence[str] | None = None,
@@ -36,11 +81,9 @@ def lint_knowledge_base(
     normalized_limit = max(1, min(int(max_issues), _MAX_ISSUES_LIMIT))
     base_dir = Path(cwd or store.project.project_root).expanduser().resolve()
     roots = _resolve_roots(store, paths, base_dir=base_dir)
-    if not roots:
-        raise ValueError(
-            "lint_knowledge_base requires at least one root path or registered Markdown root. "
-            "Run index_paths(...) first or pass paths=[...]."
-        )
+    # No markdown roots is NOT a failure: TQMemory is commonly used purely as an
+    # MCP note store with no indexed files. Markdown checks are skipped in that
+    # case; the note-level checks below still run and the status stays "ok".
 
     issues: list[dict[str, object]] = []
     broken_link_count = 0
@@ -141,7 +184,27 @@ def lint_knowledge_base(
                 },
             )
 
-    total_issue_count = broken_link_count + orphan_candidate_count + duplicate_title_count
+    stale_episodic = _scan_stale_episodic_notes(store)
+    for entry in stale_episodic:
+        _append_issue(
+            issues,
+            normalized_limit,
+            {
+                "kind": "stale_episodic_note",
+                "severity": "low",
+                "note_id": entry["note_id"],
+                "age_days": entry["age_days"],
+                "title": entry["title"],
+                "message": (
+                    f"Episodic note is {entry['age_days']} days old; consider deprecate_note "
+                    "to keep the knowledge base lean."
+                ),
+            },
+        )
+    stale_episodic_count = len(stale_episodic)
+    total_issue_count = (
+        broken_link_count + orphan_candidate_count + duplicate_title_count + stale_episodic_count
+    )
     return {
         "status": "ok",
         "checked_at": utc_now(),
@@ -150,11 +213,13 @@ def lint_knowledge_base(
         "roots": root_summaries,
         "summary": {
             "root_count": len(root_summaries),
+            "markdown_configured": bool(root_summaries),
             "file_count": total_file_count,
             "issue_count": total_issue_count,
             "broken_link_count": broken_link_count,
             "orphan_candidate_count": orphan_candidate_count,
             "duplicate_title_count": duplicate_title_count,
+            "stale_episodic_note_count": stale_episodic_count,
         },
         "issues": issues,
     }
