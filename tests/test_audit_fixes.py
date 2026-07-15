@@ -7,11 +7,13 @@ lint on non-UTF-8 input.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from turbo_memory_mcp.identity import ProjectIdentity
+import turbo_memory_mcp.identity as idmod
+from turbo_memory_mcp.identity import ProjectIdentity, resolve_project_identity
 from turbo_memory_mcp.markdown_parser import build_block_id
 from turbo_memory_mcp.server import lint_knowledge_base_impl
 from turbo_memory_mcp.store import MemoryStore, PROJECT_SCOPE
@@ -163,3 +165,76 @@ def test_lint_survives_non_utf8_file(tmp_path: Path) -> None:
     payload = lint_knowledge_base_impl(paths=[str(docs)], max_issues=50, cwd=project_root, environ=env)
 
     assert payload["status"] == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# Performance: project identity is cached (no git re-fork) but stays isolated
+# --------------------------------------------------------------------------- #
+
+def _init_repo(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    return path
+
+
+def test_identity_cache_avoids_second_git_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    idmod._clear_identity_cache()
+    repo = _init_repo(tmp_path / "repo")
+
+    calls = {"n": 0}
+    real = idmod._run_git_command
+
+    def _counting(cwd, *args):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return real(cwd, *args)
+
+    monkeypatch.setattr(idmod, "_run_git_command", _counting)
+
+    first = resolve_project_identity(cwd=repo, environ={})
+    forks_after_first = calls["n"]
+    second = resolve_project_identity(cwd=repo, environ={})
+
+    assert forks_after_first >= 1  # the uncached call really forked git
+    assert calls["n"] == forks_after_first  # the cached call forked git zero more times
+    assert second == first
+
+
+def test_identity_cache_is_isolated_per_repo(tmp_path: Path) -> None:
+    idmod._clear_identity_cache()
+    a = resolve_project_identity(cwd=tmp_path / "repo-a", environ={})
+    b = resolve_project_identity(cwd=tmp_path / "repo-b", environ={})
+    # Distinct repos never share a cached identity — the issue-#1 isolation
+    # property must survive at the identity layer too.
+    assert a.project_id != b.project_id
+    assert a.project_root != b.project_root
+
+
+def test_identity_cache_keys_on_env_override(tmp_path: Path) -> None:
+    idmod._clear_identity_cache()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    alpha = resolve_project_identity(cwd=repo, environ={"TQMEMORY_PROJECT_ID": "alpha"})
+    beta = resolve_project_identity(cwd=repo, environ={"TQMEMORY_PROJECT_ID": "beta"})
+    # Same cwd but different forwarded identity env must NOT collide in the cache.
+    assert alpha.project_id == "alpha"
+    assert beta.project_id == "beta"
+
+
+def test_identity_cache_invalidates_when_git_remote_changes(tmp_path: Path) -> None:
+    idmod._clear_identity_cache()
+    repo = _init_repo(tmp_path / "repo")
+    env: dict[str, str] = {}
+
+    before = resolve_project_identity(cwd=repo, environ=env)
+    assert before.identity_kind == "repo_path"
+
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/example/x.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    after = resolve_project_identity(cwd=repo, environ=env)
+    # The git-config mtime fingerprint must invalidate the cache immediately.
+    assert after.identity_kind == "git_remote"
+

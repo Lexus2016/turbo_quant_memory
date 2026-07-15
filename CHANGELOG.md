@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **Project identity is cached instead of re-forking git on every tool call.**
+  `resolve_project_identity` forked git twice (`rev-parse --show-toplevel` +
+  `remote get-url origin`) on every tool invocation, under the daemon's
+  single-writer dispatch lock — ~30 ms of head-of-line blocking for all clients
+  per call. It is now memoized per `(cwd, TQMEMORY_PROJECT_* env, git-config
+  fingerprint)` with a 30 s TTL backstop; the cached path is ~780× faster
+  (~0.04 ms vs ~30 ms). The cache key includes the full identity inputs, not just
+  cwd, so a shared daemon serving proxies from different repos never crosses
+  namespaces (preserves the issue-#1 fix). A cheap `.git/config` mtime
+  fingerprint invalidates the entry the instant a repo gains or loses a remote —
+  no stale identity — verified by the existing add-remote reconcile test.
+
 ### Security
 - **Path-traversal guard on client-supplied ids.** `note_id` (via
   hydrate/deprecate/promote), `project_id` (via `TQMEMORY_PROJECT_ID`), and the

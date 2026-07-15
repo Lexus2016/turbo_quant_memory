@@ -6,6 +6,8 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -45,13 +47,104 @@ class ProjectIdentity:
         return payload
 
 
+# Identity resolution runs on every tool call and, without an override, forks
+# git twice (rev-parse + remote get-url) under the daemon's single-writer lock,
+# blocking all clients. Cache the result keyed on (cwd, TQMEMORY_PROJECT_* env,
+# git-config fingerprint). Keying on the FULL identity inputs — not just cwd — is
+# what preserves the issue-#1 fix: a shared daemon serving proxies from different
+# repos never crosses namespaces. The git-config mtime fingerprint invalidates
+# the entry (cheaply, no fork) the instant a repo gains/loses a remote; the TTL
+# is only a backstop for a filesystem with coarse mtime resolution.
+_IDENTITY_CACHE_TTL_SECONDS = 30.0
+_IDENTITY_CACHE_MAXSIZE = 512
+_IDENTITY_CACHE: dict[tuple, tuple["ProjectIdentity", float]] = {}
+_IDENTITY_CACHE_LOCK = threading.Lock()
+
+
+def _clear_identity_cache() -> None:
+    """Drop all cached identities (test hygiene / explicit invalidation)."""
+    with _IDENTITY_CACHE_LOCK:
+        _IDENTITY_CACHE.clear()
+
+
+def _git_config_fingerprint(start: Path) -> int | None:
+    """Cheap fingerprint of the nearest repo's git config: its ``mtime_ns``, or None.
+
+    Walks up from ``start`` for a ``.git`` entry without a subprocess. When the
+    config changes (``git remote add`` rewrites ``.git/config``) the mtime
+    advances so the identity cache misses immediately instead of masking the
+    change for the whole TTL.
+    """
+    try:
+        current = start.expanduser().resolve()
+    except OSError:
+        return None
+    for _ in range(64):
+        git_entry = current / ".git"
+        try:
+            if git_entry.is_dir():
+                try:
+                    return (git_entry / "config").stat().st_mtime_ns
+                except OSError:
+                    return git_entry.stat().st_mtime_ns
+            if git_entry.is_file():
+                return git_entry.stat().st_mtime_ns
+        except OSError:
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _identity_cache_key(cwd: Path | str | None, env: Mapping[str, str]) -> tuple:
+    explicit_root = _clean_value(env.get(ENV_PROJECT_ROOT))
+    if explicit_root:
+        start: Path = Path(explicit_root).expanduser()
+    elif cwd is not None:
+        start = Path(cwd)
+    else:
+        start = Path.cwd()
+    return (
+        None if cwd is None else str(cwd),
+        explicit_root,
+        _clean_value(env.get(ENV_PROJECT_ID)),
+        _clean_value(env.get(ENV_PROJECT_NAME)),
+        _git_config_fingerprint(start),
+    )
+
+
 def resolve_project_identity(
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> ProjectIdentity:
-    """Resolve the current project identity using overrides, git, then path fallback."""
+    """Resolve the current project identity using overrides, git, then path fallback.
+
+    Cached per (cwd, identity env, git-config fingerprint) so the two git forks
+    below do not run on every tool call; see the cache notes for the isolation
+    guarantee that preserves the issue-#1 namespace fix.
+    """
 
     env = os.environ if environ is None else environ
+    key = _identity_cache_key(cwd, env)
+    now = time.monotonic()
+    with _IDENTITY_CACHE_LOCK:
+        cached = _IDENTITY_CACHE.get(key)
+        if cached is not None and now - cached[1] < _IDENTITY_CACHE_TTL_SECONDS:
+            return cached[0]
+    identity = _resolve_project_identity_uncached(cwd, env)
+    with _IDENTITY_CACHE_LOCK:
+        if len(_IDENTITY_CACHE) >= _IDENTITY_CACHE_MAXSIZE:
+            _IDENTITY_CACHE.clear()
+        _IDENTITY_CACHE[key] = (identity, now)
+    return identity
+
+
+def _resolve_project_identity_uncached(
+    cwd: Path | str | None,
+    env: Mapping[str, str],
+) -> ProjectIdentity:
     project_root = resolve_project_root(cwd=cwd, environ=env)
     project_name = _clean_value(env.get(ENV_PROJECT_NAME)) or project_root.name
     explicit_project_id = _clean_value(env.get(ENV_PROJECT_ID))
