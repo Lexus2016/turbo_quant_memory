@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-07-15
+
+### Fixed
+- **Clean exit when the MCP client closes the stdio pipe (issue #2, reported by
+  Alisa / Hermes Agent, Nous Research).** When the parent process closed
+  stdout/stdin — client restart, session reload, graceful shutdown — the anyio
+  stdio transport raised `BrokenPipeError`, usually wrapped in a
+  `BaseExceptionGroup`, and it propagated out of the three daemon entry points
+  (`_run_primary`, `_run_proxy`, `_run_standalone`), crashing the server with an
+  unhandled `ExceptionGroup` traceback and leaving the parent to see "endpoint
+  unreachable". The entry points now recognize a client disconnect — by
+  `BrokenPipeError` / `ConnectionResetError` subclass and by benign `OSError`
+  errno (`EPIPE`, `ECONNRESET`, `ESHUTDOWN`, `ENOTCONN`) for platforms that
+  surface a bare `OSError` — and exit cleanly, while any genuine error travelling
+  in the same `BaseExceptionGroup` is split out (`BaseExceptionGroup.split`,
+  recursive) and re-raised so real failures are never masked. tqmemory is now
+  resilient regardless of the matching gap in upstream `mcp/server/stdio.py`
+  (whose `stdout_writer` catches only `anyio.ClosedResourceError`).
+
 ## [0.20.0] - 2026-07-15
 
 ### Added
