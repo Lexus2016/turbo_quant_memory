@@ -1,4 +1,4 @@
-"""Regression tests for the v0.18.0 audit fixes.
+"""Regression tests for the v0.19.0 audit fixes.
 
 Covers: client-id path-traversal guard, markdown derived-cache quarantine,
 block-id dot-directory collision, telemetry milestone dedup, and resilient
