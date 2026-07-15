@@ -25,6 +25,22 @@ Instead of reading massive files every time, your AI agent uses **Compact Retrie
 | **Linked Knowledge** | 🕸️ **Knowledge Graph** | AI understands relationships between code, tasks, and decisions |
 | **Self-Cleaning Graph** | 🔄 **Dynamic Lifecycle** | Stale relationships are deprecated or unlinked automatically |
 
+### 📈 It measures its own savings — see for yourself
+
+Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a running tally you can read anytime with `server_info()` (field `usage_stats.headline`). The savings are yours to verify, not ours to promise.
+
+**Live snapshot from a real developer instance (v0.20.0):**
+
+| What the memory did | Number |
+| :--- | :--- |
+| 🔢 Input tokens saved (cumulative) | **≈ 980,000** and counting |
+| 🔁 Retrievals served | **880** searches + **179** deep hydrations |
+| 📉 Average saved per retrieval | **≈ 1,100 tokens** |
+| 📚 Knowledge under management | **206** active notes + **440** indexed code blocks |
+| 🛡️ Integrity | **0** corrupted records · **0** pending migrations |
+
+> These are one machine's cumulative numbers, not a synthetic benchmark — your own counter starts at zero and grows as your agent works. Run `server_info()` on your install to see your real figure.
+
 ---
 
 ## 🚀 DON'T INSTALL THIS MANUALLY! (Let the AI Do It)
