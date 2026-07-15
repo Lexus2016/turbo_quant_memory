@@ -426,6 +426,97 @@ def test_proxy_dispatcher_forwards_cwd_and_environ(
         listener.stop()
 
 
+def _capture_local_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, dict[str, Any]]:
+    """Install a capturing ``health`` handler on the local dispatcher.
+
+    Returns ``(server_module, captured)`` where ``captured`` records the
+    ``cwd`` and ``environ`` that :func:`make_local_dispatcher` resolves and
+    hands to the tool handler -- i.e. exactly what the primary uses to resolve
+    a proxy call's project identity.
+    """
+
+    import turbo_memory_mcp.server as server
+
+    captured: dict[str, Any] = {}
+
+    def _capture(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        captured["cwd"] = cwd
+        captured["environ"] = None if environ is None else dict(environ)
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _capture)
+    return server, captured
+
+
+def test_local_dispatcher_empty_proxy_environ_does_not_inherit_primary_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #1: a proxy forwarding an empty ``_environ`` must resolve
+    identity from its own ``_cwd``, never from the primary's project root."""
+
+    server, captured = _capture_local_environ(monkeypatch)
+
+    # Primary process env: repo-A identity plus a shared secrets passphrase.
+    monkeypatch.setenv("TQMEMORY_PROJECT_ROOT", "/repo/a")
+    monkeypatch.delenv("TQMEMORY_PROJECT_ID", raising=False)
+    monkeypatch.delenv("TQMEMORY_PROJECT_NAME", raising=False)
+    monkeypatch.setenv("TQMEMORY_SECRETS_PASSPHRASE", "shared-secret")
+
+    dispatch = server.make_local_dispatcher()
+    # Proxy in repo B forwards its cwd but no identity overrides.
+    dispatch("health", {"_cwd": "/repo/b", "_environ": {}})
+
+    assert captured["cwd"] == "/repo/b"
+    assert captured["environ"] is not None
+    # Primary's project namespace must NOT leak into the proxy call.
+    assert "TQMEMORY_PROJECT_ROOT" not in captured["environ"]
+    # Non-identity primary env (secrets passphrase, DEFECT E) is retained.
+    assert captured["environ"]["TQMEMORY_SECRETS_PASSPHRASE"] == "shared-secret"
+
+
+def test_local_dispatcher_partial_proxy_environ_does_not_leak_primary_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #1: forwarding one identity key must not drag the
+    primary's other identity keys along with it."""
+
+    server, captured = _capture_local_environ(monkeypatch)
+
+    monkeypatch.setenv("TQMEMORY_PROJECT_ROOT", "/repo/a")
+    monkeypatch.setenv("TQMEMORY_PROJECT_ID", "primary-id")
+    monkeypatch.setenv("TQMEMORY_PROJECT_NAME", "Primary")
+
+    dispatch = server.make_local_dispatcher()
+    dispatch("health", {"_cwd": "/repo/b", "_environ": {"TQMEMORY_PROJECT_NAME": "Proxy"}})
+
+    env = captured["environ"]
+    assert env is not None
+    assert env["TQMEMORY_PROJECT_NAME"] == "Proxy"
+    assert "TQMEMORY_PROJECT_ROOT" not in env
+    assert "TQMEMORY_PROJECT_ID" not in env
+
+
+def test_local_dispatcher_direct_primary_call_keeps_default_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct primary stdio call carries no ``_environ`` field and must keep
+    using the primary's own default environment unchanged."""
+
+    server, captured = _capture_local_environ(monkeypatch)
+
+    default_environ = {"TQMEMORY_PROJECT_ROOT": "/repo/primary"}
+    dispatch = server.make_local_dispatcher(
+        default_cwd="/repo/primary",
+        default_environ=default_environ,
+    )
+    dispatch("health", {})  # no _cwd, no _environ
+
+    assert captured["cwd"] == "/repo/primary"
+    assert captured["environ"] == default_environ
+
+
 def test_call_does_not_retry_to_prevent_duplicates(storage_env: dict[str, str]) -> None:
     """Regression: RPC failures mid-call must NOT be silently retried, because
     that would duplicate non-idempotent tools like remember_note."""

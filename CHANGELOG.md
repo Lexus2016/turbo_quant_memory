@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Daemon proxy no longer inherits the primary's project namespace (issue
+  #1).** When a shared primary daemon was started with an explicit
+  `TQMEMORY_PROJECT_ROOT`, a second stdio client attaching as a proxy from a
+  different repository could resolve the primary's project instead of its own,
+  so `server_info.current_project`, project-scoped retrieval, and
+  project-scoped writes pointed at the wrong namespace. `make_local_dispatcher`
+  now distinguishes an absent `_environ` field (a direct primary call, behaviour
+  unchanged) from a present-but-empty/partial proxy `_environ`, and strips the
+  primary's project-identity keys (`TQMEMORY_PROJECT_ROOT` / `_PROJECT_ID` /
+  `_PROJECT_NAME`) before applying the proxy's forwarded values. A proxy that
+  forwards no identity now resolves its project from its own forwarded `_cwd`.
+  Storage home and the secrets passphrase are intentionally left untouched.
+  No schema change; no migration required.
+
 ## [0.18.0] - 2026-06-23
 
 ### Fixed

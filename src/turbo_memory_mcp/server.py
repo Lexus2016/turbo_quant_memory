@@ -109,6 +109,19 @@ _FORWARDED_ENV_KEYS: tuple[str, ...] = (
     "TQMEMORY_SECRETS_PASSPHRASE",
 )
 
+# Project-identity keys a proxy call must resolve from its OWN forwarded
+# environment (or, when it forwards none, from its forwarded ``_cwd``). They are
+# stripped from the shared primary environment before applying a proxy override
+# so a proxy started in repository B cannot inherit the primary's repository-A
+# namespace. Storage home and the secrets passphrase are deliberately NOT listed
+# here: those are process-level and stay the primary's unless the proxy forwards
+# its own value.
+_PROJECT_IDENTITY_ENV_KEYS: tuple[str, ...] = (
+    ENV_PROJECT_ROOT,
+    ENV_PROJECT_ID,
+    ENV_PROJECT_NAME,
+)
+
 
 def build_server(dispatcher: Dispatcher) -> MCPServer:
     mcp = MCPServer(
@@ -621,8 +634,16 @@ def make_local_dispatcher(
         cwd_override = merged_kwargs.pop("_cwd", None)
         environ_override = merged_kwargs.pop("_environ", None)
         resolved_cwd = cwd_override if cwd_override is not None else default_cwd
-        if environ_override:
-            resolved_environ = {**os.environ, **{str(k): str(v) for k, v in environ_override.items()}}
+        if environ_override is not None:
+            # Proxy call: resolve project identity from the proxy's forwarded
+            # values only. Drop the primary's identity keys first so an empty or
+            # partial ``_environ`` cannot leak the primary's namespace (issue #1).
+            resolved_environ = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in _PROJECT_IDENTITY_ENV_KEYS
+            }
+            resolved_environ.update({str(k): str(v) for k, v in environ_override.items()})
         else:
             resolved_environ = default_environ
         with lock:
