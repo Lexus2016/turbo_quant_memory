@@ -12,24 +12,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resolve_project_identity` forked git twice (`rev-parse --show-toplevel` +
   `remote get-url origin`) on every tool invocation, under the daemon's
   single-writer dispatch lock — ~30 ms of head-of-line blocking for all clients
-  per call. It is now memoized per `(cwd, TQMEMORY_PROJECT_* env, git-config
-  fingerprint)` with a 30 s TTL backstop; the cached path is ~780× faster
-  (~0.04 ms vs ~30 ms). The cache key includes the full identity inputs, not just
-  cwd, so a shared daemon serving proxies from different repos never crosses
-  namespaces (preserves the issue-#1 fix). A cheap `.git/config` mtime
+  per call. It is now memoized per `(resolved cwd, TQMEMORY_PROJECT_* env,
+  git-config fingerprint)` with a 30 s TTL backstop; the cached path is ~780×
+  faster (~0.04 ms vs ~30 ms). The cache key includes the full identity inputs,
+  not just cwd, so a shared daemon serving proxies from different repos never
+  crosses namespaces (preserves the issue-#1 fix); it keys on the *resolved*
+  absolute path so a process that changes its working directory between
+  `cwd=None` calls can't collide on a stale entry. A cheap `.git/config` mtime
   fingerprint invalidates the entry the instant a repo gains or loses a remote —
-  no stale identity — verified by the existing add-remote reconcile test.
+  including submodules and worktrees, where the `.git` file's `gitdir:` pointer
+  is followed to the real config — so identity is never stale.
 
 ### Security
 - **Path-traversal guard on client-supplied ids.** `note_id` (via
   hydrate/deprecate/promote), `project_id` (via `TQMEMORY_PROJECT_ID`), and the
-  markdown `block_id`/`root_id` are interpolated into filesystem paths such as
-  `projects/<project_id>/notes/<note_id>.json`. A value containing a path
+  markdown `block_id`/`root_id`/`file_key` are interpolated into filesystem paths
+  such as `projects/<project_id>/notes/<note_id>.json`. A value containing a path
   separator or a `..`/`.` segment could read or clobber another project's files,
   breaking project isolation. `MemoryStore` now validates every such id through
   `_ensure_safe_id` and fails closed with a clear `ValueError`; internally minted
-  ids (uuid/sha hex, `mdblk-…`) are unaffected. Same-user threat model, but the
-  isolation invariant is now enforced rather than assumed.
+  ids (uuid/sha hex, `mdblk-…`) are unaffected. Crucially, a client-set
+  `TQMEMORY_PROJECT_ID` is validated at the resolution *source*
+  (`resolve_project_identity`), so the bucket name can never point the notes
+  store **or the encrypted secrets vault** (`SecretsStore`) outside the storage
+  root. Same-user threat model, but the isolation invariant is now enforced
+  rather than assumed.
 
 ### Fixed
 - **`migrate --status` / `--apply` no longer crash on a corrupt manifest.**
@@ -58,9 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persisted the stats *before* that bump, so the marker never reached disk and the
   same "N tokens saved / N retrievals" milestone re-fired on every subsequent
   search. The milestone is now computed before the write.
-- **`build_block_id` collision for dot-leading paths.** `str.lstrip("./")` strips a
-  character set, not a prefix, so `.github/x.md` and `github/x.md` produced the
-  same block id (silent overwrite). Uses `removeprefix("./")` now.
+- **`build_block_id` / `build_file_key` collision for dot-leading paths.**
+  `str.lstrip("./")` strips a character set, not a prefix, so `.github/x.md` and
+  `github/x.md` produced the same block id / file key (silent overwrite). Both
+  use `removeprefix("./")` now.
 - **`lint_knowledge_base` crashed on a non-UTF-8 file.** One file with invalid
   UTF-8 aborted the entire lint; reads now use `errors="replace"`.
 - **Removed dead redundant `try/except` in `RetrievalIndex.reset_scope`** (both

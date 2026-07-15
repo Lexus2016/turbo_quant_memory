@@ -294,7 +294,7 @@ def build_root_id(root_path: str | Path) -> str:
 
 
 def build_file_key(root_id: str, source_path: str) -> str:
-    normalized_source_path = Path(source_path).as_posix().lstrip("./")
+    normalized_source_path = Path(source_path).as_posix().removeprefix("./")
     readable = _slugify(Path(normalized_source_path).with_suffix("").as_posix().replace("/", "-"))
     return f"{readable}-{sha256_text(f'{root_id}|{normalized_source_path}')[:10]}"
 

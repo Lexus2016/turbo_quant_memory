@@ -7,6 +7,7 @@ lint on non-UTF-8 input.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import pytest
 
 import turbo_memory_mcp.identity as idmod
 from turbo_memory_mcp.identity import ProjectIdentity, resolve_project_identity
+from turbo_memory_mcp.ingestion import build_file_key
 from turbo_memory_mcp.markdown_parser import build_block_id
 from turbo_memory_mcp.server import lint_knowledge_base_impl
 from turbo_memory_mcp.store import MemoryStore, PROJECT_SCOPE
@@ -116,6 +118,14 @@ def test_list_markdown_roots_skips_corrupt_file(tmp_path: Path) -> None:
 def test_build_block_id_does_not_collide_dot_directory() -> None:
     dot_dir = build_block_id("root", ".github/workflows/x.md", ["H"], 0)
     plain = build_block_id("root", "github/workflows/x.md", ["H"], 0)
+    assert dot_dir != plain
+
+
+def test_build_file_key_does_not_collide_dot_directory() -> None:
+    # Same lstrip("./")-vs-removeprefix bug class as build_block_id: a dot-leading
+    # directory must not collapse onto its non-dot sibling.
+    dot_dir = build_file_key("mdroot-abc", ".github/workflows/x.md")
+    plain = build_file_key("mdroot-abc", "github/workflows/x.md")
     assert dot_dir != plain
 
 
@@ -237,4 +247,76 @@ def test_identity_cache_invalidates_when_git_remote_changes(tmp_path: Path) -> N
     after = resolve_project_identity(cwd=repo, environ=env)
     # The git-config mtime fingerprint must invalidate the cache immediately.
     assert after.identity_kind == "git_remote"
+
+
+@pytest.mark.parametrize("bad_id", ["../../../../tmp", "..", "a/b", "x/../y", "back\\slash"])
+def test_traversal_project_id_override_rejected(tmp_path: Path, bad_id: str) -> None:
+    idmod._clear_identity_cache()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # A client-set TQMEMORY_PROJECT_ID must be rejected at the source so it can
+    # never reach a note path OR the secrets vault path (Finding 1, HIGH).
+    with pytest.raises(ValueError):
+        resolve_project_identity(cwd=repo, environ={"TQMEMORY_PROJECT_ID": bad_id})
+
+
+def test_build_runtime_context_rejects_traversal_project_id(tmp_path: Path) -> None:
+    from turbo_memory_mcp.server import build_runtime_context
+
+    idmod._clear_identity_cache()
+    env = {"TQMEMORY_HOME": str(tmp_path / "home"), "TQMEMORY_PROJECT_ID": "../../escape"}
+    # build_runtime_context is the chokepoint every secrets tool goes through,
+    # so raising here means SecretsStore never gets a traversal project_id.
+    with pytest.raises(ValueError):
+        build_runtime_context(cwd=tmp_path / "repo", environ=env)
+
+
+def test_identity_cache_cwd_none_follows_process_chdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    idmod._clear_identity_cache()
+    dir_a = tmp_path / "dira"
+    dir_a.mkdir()
+    dir_b = tmp_path / "dirb"
+    dir_b.mkdir()
+
+    monkeypatch.chdir(dir_a)
+    id_a = resolve_project_identity(cwd=None, environ={})
+    monkeypatch.chdir(dir_b)
+    id_b = resolve_project_identity(cwd=None, environ={})
+
+    # cwd=None must resolve to the process's *current* directory, not a stale
+    # cached (None, ...) key from a previous chdir (Finding 2).
+    assert id_a.project_root != id_b.project_root
+    assert id_b.project_root == dir_b.resolve()
+
+
+def test_git_file_pointer_fingerprint_follows_gitdir(tmp_path: Path) -> None:
+    # A submodule/worktree .git FILE points at the real gitdir; its config, not
+    # the static .git file, must drive the fingerprint (Finding 3).
+    gitdir = tmp_path / "realgit"
+    gitdir.mkdir()
+    cfg = gitdir / "config"
+    cfg.write_text("[core]\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+    fp = idmod._git_config_fingerprint(work.resolve())
+    assert fp == cfg.stat().st_mtime_ns
+
+    new_mtime = cfg.stat().st_mtime_ns + 1_000_000_000
+    os.utime(cfg, ns=(new_mtime, new_mtime))
+    assert idmod._git_config_fingerprint(work.resolve()) == new_mtime
+
+
+def test_project_markdown_file_path_rejects_traversal(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    with pytest.raises(ValueError):
+        store.project_markdown_file_path("../escape")
+    with pytest.raises(ValueError):
+        store.project_markdown_file_path("a/b")
+    # A legitimate slugified file key still resolves.
+    assert store.project_markdown_file_path("doc-a1b2c3").name == "doc-a1b2c3.json"
+
 

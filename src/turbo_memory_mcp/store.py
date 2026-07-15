@@ -14,7 +14,7 @@ from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from . import __version__
-from .identity import ProjectIdentity
+from .identity import ProjectIdentity, _ensure_safe_id
 
 ENV_STORAGE_HOME = "TQMEMORY_HOME"
 DEFAULT_STORAGE_DIRNAME = ".turbo-quant-memory"
@@ -109,7 +109,7 @@ class MemoryStore:
         return self.project_markdown_dir(project_id) / "files"
 
     def project_markdown_file_path(self, file_key: str, project_id: str | None = None) -> Path:
-        return self.project_markdown_files_dir(project_id) / f"{file_key}.json"
+        return self.project_markdown_files_dir(project_id) / f"{_ensure_safe_id(file_key, field='file_key')}.json"
 
     def project_markdown_blocks_dir(self, project_id: str | None = None) -> Path:
         return self.project_markdown_dir(project_id) / "blocks"
@@ -1005,22 +1005,6 @@ def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
 
 def generate_note_id() -> str:
     return uuid4().hex[:16]
-
-
-def _ensure_safe_id(value: str, *, field: str) -> str:
-    """Reject an id that could escape its parent directory when used in a path.
-
-    Client-supplied ids (``note_id`` via hydrate/deprecate/promote, ``project_id``
-    via ``TQMEMORY_PROJECT_ID``) are interpolated into filesystem paths such as
-    ``projects/<project_id>/notes/<note_id>.json``. A value containing a path
-    separator or a ``..`` segment could read or clobber another project's files,
-    breaking project isolation. Ids minted internally (uuid/sha hex, ``mdblk-…``)
-    always pass; a traversal attempt fails closed with a clear error.
-    """
-    text = str(value)
-    if not text or text in (".", "..") or "/" in text or "\\" in text or "\x00" in text:
-        raise ValueError(f"Unsafe {field} for filesystem path: {value!r}")
-    return text
 
 
 

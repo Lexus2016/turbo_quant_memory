@@ -23,6 +23,22 @@ _GIT_COMMAND_TIMEOUT_SECONDS = 3.0
 _SCP_REMOTE_RE = re.compile(r"^(?:(?P<user>[^@]+)@)?(?P<host>[^:/]+):(?P<path>.+)$")
 
 
+def _ensure_safe_id(value: str, *, field: str) -> str:
+    """Reject an id that could escape its parent directory when used in a path.
+
+    Client-supplied ids (``TQMEMORY_PROJECT_ID``, ``note_id`` via hydrate/
+    deprecate/promote) are interpolated into filesystem paths such as
+    ``projects/<project_id>/...`` — for notes AND for the secrets vault. A value
+    with a path separator or a ``..``/``.`` segment could read or clobber another
+    project's files (or write a vault outside the storage root), so it fails
+    closed. Ids minted internally (uuid/sha hex, ``mdblk-…``) always pass.
+    """
+    text = str(value)
+    if not text or text in (".", "..") or "/" in text or "\\" in text or "\x00" in text:
+        raise ValueError(f"Unsafe {field} for filesystem path: {value!r}")
+    return text
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectIdentity:
     """Stable identity metadata for the current repository."""
@@ -67,18 +83,17 @@ def _clear_identity_cache() -> None:
         _IDENTITY_CACHE.clear()
 
 
-def _git_config_fingerprint(start: Path) -> int | None:
+def _git_config_fingerprint(resolved_start: Path) -> int | None:
     """Cheap fingerprint of the nearest repo's git config: its ``mtime_ns``, or None.
 
-    Walks up from ``start`` for a ``.git`` entry without a subprocess. When the
-    config changes (``git remote add`` rewrites ``.git/config``) the mtime
-    advances so the identity cache misses immediately instead of masking the
-    change for the whole TTL.
+    Walks up from ``resolved_start`` for a ``.git`` entry without a subprocess.
+    When the config changes (``git remote add`` rewrites ``.git/config``) the mtime
+    advances so the identity cache misses immediately. For a submodule/worktree
+    ``.git`` FILE the real config lives in the pointed-to gitdir, so we follow the
+    ``gitdir:`` pointer — the ``.git`` file's own mtime never changes on a remote
+    edit.
     """
-    try:
-        current = start.expanduser().resolve()
-    except OSError:
-        return None
+    current = resolved_start
     for _ in range(64):
         git_entry = current / ".git"
         try:
@@ -88,7 +103,7 @@ def _git_config_fingerprint(start: Path) -> int | None:
                 except OSError:
                     return git_entry.stat().st_mtime_ns
             if git_entry.is_file():
-                return git_entry.stat().st_mtime_ns
+                return _gitdir_pointer_fingerprint(git_entry, current)
         except OSError:
             return None
         parent = current.parent
@@ -96,6 +111,38 @@ def _git_config_fingerprint(start: Path) -> int | None:
             return None
         current = parent
     return None
+
+
+def _gitdir_pointer_fingerprint(git_file: Path, repo_dir: Path) -> int | None:
+    """Fingerprint the config a ``.git`` FILE points at (submodule / worktree)."""
+    try:
+        text = git_file.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    target: Path | None = None
+    if text.startswith("gitdir:"):
+        pointer = text[len("gitdir:"):].strip()
+        if pointer:
+            candidate = Path(pointer)
+            target = candidate if candidate.is_absolute() else (repo_dir / candidate)
+    if target is not None:
+        try:
+            cfg = target / "config"
+            if cfg.exists():
+                return cfg.stat().st_mtime_ns
+            # A worktree shares the primary repo's config via ``commondir``.
+            commondir = target / "commondir"
+            if commondir.exists():
+                common = target / commondir.read_text(encoding="utf-8", errors="replace").strip()
+                common_cfg = common / "config"
+                if common_cfg.exists():
+                    return common_cfg.stat().st_mtime_ns
+        except OSError:
+            pass
+    try:
+        return git_file.stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 def _identity_cache_key(cwd: Path | str | None, env: Mapping[str, str]) -> tuple:
@@ -106,12 +153,19 @@ def _identity_cache_key(cwd: Path | str | None, env: Mapping[str, str]) -> tuple
         start = Path(cwd)
     else:
         start = Path.cwd()
+    try:
+        resolved_start = start.expanduser().resolve()
+    except OSError:
+        resolved_start = start
     return (
-        None if cwd is None else str(cwd),
+        # Resolved absolute path, NOT the raw cwd/None: a process that changes its
+        # working directory between two cwd=None calls (both in non-git dirs, so
+        # fingerprint stays None) must not collide on a single (None, …) key.
+        str(resolved_start),
         explicit_root,
         _clean_value(env.get(ENV_PROJECT_ID)),
         _clean_value(env.get(ENV_PROJECT_NAME)),
-        _git_config_fingerprint(start),
+        _git_config_fingerprint(resolved_start),
     )
 
 
@@ -150,6 +204,11 @@ def _resolve_project_identity_uncached(
     explicit_project_id = _clean_value(env.get(ENV_PROJECT_ID))
 
     if explicit_project_id:
+        # A client-set TQMEMORY_PROJECT_ID becomes the storage bucket name for
+        # notes AND the secrets vault; reject a traversal value here, at the
+        # source, so no downstream consumer (MemoryStore, SecretsStore, CLI) can
+        # be pointed outside the storage root.
+        _ensure_safe_id(explicit_project_id, field="TQMEMORY_PROJECT_ID")
         return ProjectIdentity(
             project_id=explicit_project_id,
             project_name=project_name,
