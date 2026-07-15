@@ -15,7 +15,11 @@ _MAX_ISSUES_LIMIT = 1000
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 _TITLE_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
-_TITLE_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+# Keep Unicode letters/digits (any script), collapse everything else — including
+# underscore — to a single "-". The old ASCII-only class ([^a-z0-9]+) mapped every
+# Cyrillic (UK/RU) title to "" -> "untitled", producing false duplicate-title
+# reports and colliding non-ASCII filenames in the wikilink lookup.
+_TITLE_NORMALIZE_RE = re.compile(r"[\W_]+", re.UNICODE)
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "javascript:")
 _ROOT_ENTRY_NAMES = {"index.md", "readme.md", "home.md", "start.md"}
 

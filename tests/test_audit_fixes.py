@@ -16,6 +16,7 @@ import pytest
 import turbo_memory_mcp.identity as idmod
 from turbo_memory_mcp.identity import ProjectIdentity, resolve_project_identity
 from turbo_memory_mcp.ingestion import build_file_key
+from turbo_memory_mcp.knowledge_lint import _normalize_title
 from turbo_memory_mcp.markdown_parser import build_block_id
 from turbo_memory_mcp.server import lint_knowledge_base_impl
 from turbo_memory_mcp.store import MemoryStore, PROJECT_SCOPE
@@ -119,6 +120,19 @@ def test_build_block_id_does_not_collide_dot_directory() -> None:
     dot_dir = build_block_id("root", ".github/workflows/x.md", ["H"], 0)
     plain = build_block_id("root", "github/workflows/x.md", ["H"], 0)
     assert dot_dir != plain
+
+
+def test_normalize_title_preserves_cyrillic_titles() -> None:
+    # The old ASCII-only normalizer collapsed every Cyrillic title to "untitled",
+    # producing false duplicate-title lint reports across UK/RU translated docs.
+    uk = _normalize_title("Інтеграції Клієнтів")
+    ru = _normalize_title("Интеграции Клиентов")
+    assert uk not in ("", "untitled")
+    assert ru not in ("", "untitled")
+    assert uk != ru  # distinct titles -> distinct keys, not a false duplicate
+    # ASCII behaviour is unchanged: spaces and underscores still collapse to "-".
+    assert _normalize_title("Client Integrations") == "client-integrations"
+    assert _normalize_title("My_Doc") == "my-doc"
 
 
 def test_build_file_key_does_not_collide_dot_directory() -> None:

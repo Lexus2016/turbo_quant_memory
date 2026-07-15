@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Knowledge-base lint no longer mangles non-ASCII (Cyrillic) titles.**
+  `_normalize_title` used an ASCII-only class (`[^a-z0-9]+`), so every UK/RU
+  title collapsed to `"untitled"` — producing false `duplicate_title` reports
+  across translated docs and colliding non-ASCII filenames in the wikilink
+  lookup. It now keeps Unicode letters/digits (`[\W_]+`), so distinct Cyrillic
+  titles get distinct keys (verified: 3 false duplicate-title groups → 0 on the
+  repo's tri-lingual docs).
+
 ## [0.19.0] - 2026-07-15
 
 ### Performance
