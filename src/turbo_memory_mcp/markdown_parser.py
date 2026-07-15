@@ -70,7 +70,7 @@ def build_block_id(
 ) -> str:
     """Derive a location-based block id independent from content bytes."""
 
-    normalized_path = Path(relative_source_path).as_posix().lstrip("./")
+    normalized_path = Path(relative_source_path).as_posix().removeprefix("./")
     heading_key = " > ".join(part.strip() for part in heading_path) or PREAMBLE_HEADING
     location_key = f"{root_id}|{normalized_path}|{heading_key}|{int(chunk_index)}"
     return f"mdblk-{sha256_text(location_key)[:20]}"

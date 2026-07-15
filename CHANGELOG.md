@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Path-traversal guard on client-supplied ids.** `note_id` (via
+  hydrate/deprecate/promote), `project_id` (via `TQMEMORY_PROJECT_ID`), and the
+  markdown `block_id`/`root_id` are interpolated into filesystem paths such as
+  `projects/<project_id>/notes/<note_id>.json`. A value containing a path
+  separator or a `..`/`.` segment could read or clobber another project's files,
+  breaking project isolation. `MemoryStore` now validates every such id through
+  `_ensure_safe_id` and fails closed with a clear `ValueError`; internally minted
+  ids (uuid/sha hex, `mdblk-…`) are unaffected. Same-user threat model, but the
+  isolation invariant is now enforced rather than assumed.
+
 ### Fixed
+- **One corrupt markdown-cache file no longer takes down all retrieval.** Notes
+  were already quarantined (skip-with-warning), but `list_markdown_blocks` /
+  `list_markdown_file_manifests` / `list_markdown_roots` used a bare `_read_json`,
+  so a single unreadable/partial block/manifest/root JSON raised out of
+  `semantic_search`, `hydrate`, and `server_info` — taking down search for the
+  whole project. These reads now skip a corrupt file with a `[tqmemory]` stderr
+  warning, mirroring the note quarantine.
+- **Telemetry milestone was re-announced on every search.** `_maybe_emit_milestone`
+  bumps the `last_announced_*` markers, but `record_semantic_search_usage`
+  persisted the stats *before* that bump, so the marker never reached disk and the
+  same "N tokens saved / N retrievals" milestone re-fired on every subsequent
+  search. The milestone is now computed before the write.
+- **`build_block_id` collision for dot-leading paths.** `str.lstrip("./")` strips a
+  character set, not a prefix, so `.github/x.md` and `github/x.md` produced the
+  same block id (silent overwrite). Uses `removeprefix("./")` now.
+- **`lint_knowledge_base` crashed on a non-UTF-8 file.** One file with invalid
+  UTF-8 aborted the entire lint; reads now use `errors="replace"`.
+- **Removed dead redundant `try/except` in `RetrievalIndex.reset_scope`** (both
+  branches were identical).
 - **Daemon proxy no longer inherits the primary's project namespace (issue
   #1).** When a shared primary daemon was started with an explicit
   `TQMEMORY_PROJECT_ROOT`, a second stdio client attaching as a proxy from a

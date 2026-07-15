@@ -65,7 +65,7 @@ def lint_knowledge_base(
 
         for file_path in files:
             source_path = file_path.relative_to(root_path).as_posix()
-            source_text = file_path.read_text(encoding="utf-8")
+            source_text = file_path.read_text(encoding="utf-8", errors="replace")
             title = _extract_title(source_text, fallback=file_path.stem)
             title_key = _normalize_title(title)
             title_index.setdefault(title_key, []).append(source_path)

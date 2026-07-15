@@ -77,10 +77,14 @@ def record_semantic_search_usage(
         counter["estimated_input_tokens_saved"] += estimated_tokens_saved
 
     stats["updated_at"] = utc_now()
-    store.write_usage_stats(stats)
-
     cost_basis = _resolve_cost_basis(environ)
-    return _maybe_emit_milestone(total_counter, cost_basis)
+    # Emit the milestone BEFORE persisting: _maybe_emit_milestone bumps the
+    # last_announced_* markers on total_counter (an alias into stats["totals"]),
+    # and those bumps must be in the payload we write or the same milestone
+    # re-fires on every subsequent search.
+    milestone = _maybe_emit_milestone(total_counter, cost_basis)
+    store.write_usage_stats(stats)
+    return milestone
 
 
 def record_hydration_usage(

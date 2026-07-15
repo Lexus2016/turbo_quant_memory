@@ -81,7 +81,7 @@ class MemoryStore:
         self.storage_root = storage_root or resolve_storage_root(environ)
 
     def project_dir(self, project_id: str | None = None) -> Path:
-        resolved_project_id = project_id or self.project.project_id
+        resolved_project_id = _ensure_safe_id(project_id or self.project.project_id, field="project_id")
         return self.storage_root / "projects" / resolved_project_id
 
     def project_notes_dir(self, project_id: str | None = None) -> Path:
@@ -91,7 +91,7 @@ class MemoryStore:
         return self.project_dir(project_id) / "manifest.json"
 
     def project_note_path(self, note_id: str, project_id: str | None = None) -> Path:
-        return self.project_notes_dir(project_id) / f"{note_id}.json"
+        return self.project_notes_dir(project_id) / f"{_ensure_safe_id(note_id, field='note_id')}.json"
 
     def project_markdown_dir(self, project_id: str | None = None) -> Path:
         return self.project_dir(project_id) / "markdown"
@@ -103,7 +103,7 @@ class MemoryStore:
         return self.project_markdown_dir(project_id) / "roots"
 
     def project_markdown_root_path(self, root_id: str, project_id: str | None = None) -> Path:
-        return self.project_markdown_roots_dir(project_id) / f"{root_id}.json"
+        return self.project_markdown_roots_dir(project_id) / f"{_ensure_safe_id(root_id, field='root_id')}.json"
 
     def project_markdown_files_dir(self, project_id: str | None = None) -> Path:
         return self.project_markdown_dir(project_id) / "files"
@@ -115,7 +115,7 @@ class MemoryStore:
         return self.project_markdown_dir(project_id) / "blocks"
 
     def project_markdown_block_path(self, block_id: str, project_id: str | None = None) -> Path:
-        return self.project_markdown_blocks_dir(project_id) / f"{block_id}.json"
+        return self.project_markdown_blocks_dir(project_id) / f"{_ensure_safe_id(block_id, field='block_id')}.json"
 
     def project_retrieval_dir(self, project_id: str | None = None) -> Path:
         return self.project_dir(project_id) / "retrieval"
@@ -133,7 +133,7 @@ class MemoryStore:
         return self.global_dir() / "manifest.json"
 
     def global_note_path(self, note_id: str) -> Path:
-        return self.global_notes_dir() / f"{note_id}.json"
+        return self.global_notes_dir() / f"{_ensure_safe_id(note_id, field='note_id')}.json"
 
     def global_retrieval_dir(self) -> Path:
         return self.global_dir() / "retrieval"
@@ -419,6 +419,24 @@ class MemoryStore:
                 quarantined.append({"path": str(path), "reason": reason})
         return quarantined
 
+    def _load_json_records_skipping_corrupt(self, directory: Path, *, label: str) -> list[dict[str, Any]]:
+        """Read every ``*.json`` in a derived-cache dir, skipping unreadable files.
+
+        Mirrors ``list_notes`` quarantine for the markdown caches: one corrupt
+        block / file-manifest / root JSON must not raise out of semantic_search /
+        hydrate / server_info and take down all retrieval for the whole project.
+        """
+        records: list[dict[str, Any]] = []
+        for path in sorted(directory.glob("*.json")):
+            try:
+                records.append(_read_json(path))
+            except (OSError, ValueError, TypeError) as exc:
+                print(
+                    f"[tqmemory] skipping unreadable {label} {path}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+        return records
+
     def note_source_path(self, note: Mapping[str, Any]) -> Path:
         note_id = str(note["note_id"])
         scope = str(note["scope"])
@@ -526,7 +544,7 @@ class MemoryStore:
         root_dir = self.project_markdown_roots_dir(project_id)
         if not root_dir.exists():
             return []
-        return [_read_json(path) for path in sorted(root_dir.glob("*.json"))]
+        return self._load_json_records_skipping_corrupt(root_dir, label="markdown root")
 
     def write_markdown_file_manifest(self, manifest_record: Mapping[str, Any]) -> dict[str, Any]:
         record = {
@@ -555,7 +573,7 @@ class MemoryStore:
         manifest_dir = self.project_markdown_files_dir(project_id)
         if not manifest_dir.exists():
             return []
-        manifests = [_read_json(path) for path in sorted(manifest_dir.glob("*.json"))]
+        manifests = self._load_json_records_skipping_corrupt(manifest_dir, label="markdown file manifest")
         if root_id is None:
             return manifests
         return [manifest for manifest in manifests if manifest["root_id"] == root_id]
@@ -610,7 +628,7 @@ class MemoryStore:
         block_dir = self.project_markdown_blocks_dir(project_id)
         if not block_dir.exists():
             return []
-        blocks = [_read_json(path) for path in sorted(block_dir.glob("*.json"))]
+        blocks = self._load_json_records_skipping_corrupt(block_dir, label="markdown block")
         if root_id is not None:
             blocks = [block for block in blocks if block["root_id"] == root_id]
         if source_path is not None:
@@ -987,6 +1005,23 @@ def resolve_storage_root(environ: Mapping[str, str] | None = None) -> Path:
 
 def generate_note_id() -> str:
     return uuid4().hex[:16]
+
+
+def _ensure_safe_id(value: str, *, field: str) -> str:
+    """Reject an id that could escape its parent directory when used in a path.
+
+    Client-supplied ids (``note_id`` via hydrate/deprecate/promote, ``project_id``
+    via ``TQMEMORY_PROJECT_ID``) are interpolated into filesystem paths such as
+    ``projects/<project_id>/notes/<note_id>.json``. A value containing a path
+    separator or a ``..`` segment could read or clobber another project's files,
+    breaking project isolation. Ids minted internally (uuid/sha hex, ``mdblk-…``)
+    always pass; a traversal attempt fails closed with a clear error.
+    """
+    text = str(value)
+    if not text or text in (".", "..") or "/" in text or "\\" in text or "\x00" in text:
+        raise ValueError(f"Unsafe {field} for filesystem path: {value!r}")
+    return text
+
 
 
 def normalize_note_kind(value: str | None) -> str:

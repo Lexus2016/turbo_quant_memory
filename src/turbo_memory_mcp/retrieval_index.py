@@ -467,10 +467,7 @@ class RetrievalIndex:
         import lancedb
 
         database = lancedb.connect(str(db_path))
-        try:
-            database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
-        except Exception:
-            database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
+        database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
         self._write_scope_manifest(scope, project_id=project_id)
 
     def rebuild_fts(self, scope: str, *, project_id: str | None = None) -> bool:
