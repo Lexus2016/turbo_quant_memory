@@ -234,6 +234,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 5,
         tier_filter: list[str] | None = None,
+        source_filter: str | None = None,
     ) -> dict[str, object]:
         """Compact memory retrieval (dense vector + BM25, fused via RRF).
 
@@ -243,10 +244,23 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         ``tier_filter=["episodic"]`` (or list every tier to opt everything in).
         For a query-free "where did I leave off" bootstrap at session start,
         prefer the `recent_context` tool instead.
+
+        source_filter narrows results by source type: ``"notes"`` returns only
+        memory notes (decisions/lessons/patterns/handoffs), ``"markdown"`` only
+        indexed doc blocks. In doc-heavy projects the reference blocks often
+        crowd notes out of the top ranks on question-shaped queries — when you
+        are asking "what did we decide/learn about X", pass
+        ``source_filter="notes"``.
         """
         return dispatcher(
             "semantic_search",
-            {"query": query, "scope": scope, "limit": limit, "tier_filter": tier_filter},
+            {
+                "query": query,
+                "scope": scope,
+                "limit": limit,
+                "tier_filter": tier_filter,
+                "source_filter": source_filter,
+            },
         )
 
     @mcp.tool()
@@ -509,11 +523,13 @@ def _tool_deprecate_note(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -
 
 
 def _tool_semantic_search(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    source_filter = kwargs.get("source_filter")
     return semantic_search_impl(
         str(kwargs["query"]),
         scope=str(kwargs.get("scope", DEFAULT_QUERY_MODE)),
         limit=int(kwargs.get("limit", 5)),
         tier_filter=kwargs.get("tier_filter"),
+        source_filter=None if source_filter is None else str(source_filter),
         cwd=cwd,
         environ=environ,
     )
@@ -1449,6 +1465,7 @@ def semantic_search_impl(
     scope: str = DEFAULT_QUERY_MODE,
     limit: int = 5,
     tier_filter: Sequence[str] | None = None,
+    source_filter: str | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
@@ -1459,7 +1476,8 @@ def semantic_search_impl(
     if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
         _refresh_global_retrieval_if_needed(store)
     payload = semantic_search(
-        store, query, scope=scope, limit=limit, tier_filter=tier_filter
+        store, query, scope=scope, limit=limit, tier_filter=tier_filter,
+        source_filter=source_filter,
     )
     milestone = record_semantic_search_usage(
         store,

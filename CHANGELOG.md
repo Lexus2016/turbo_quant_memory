@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`source_filter` on `semantic_search`.** Pass `"notes"` to search only
+  memory notes (decisions/lessons/patterns/handoffs) or `"markdown"` for
+  indexed doc blocks only. Measured on this repository: in doc-heavy corpora
+  the reference blocks crowd notes out of the top-5 on question-shaped
+  queries ("what did we decide about X"); the filter gives agents a direct
+  way out. Default behavior (mixed) is unchanged.
+- **Embedding near-duplicate detection in `lint_knowledge_base`.** New
+  `near_duplicate_notes` issue kind (severity medium): flags active note
+  pairs whose stored vectors exceed cosine 0.90 — typically the same note
+  saved in two languages, which then crowds itself out of top-k retrieval.
+  Reads vectors already materialized in the retrieval index (no model load),
+  capped at 2000 notes per scan, degrades to no-findings on any failure.
+  Complements the write-time `similar_notes` hint, which is now pinned by a
+  real-model test to fire on cross-lingual twins (EN note + UK translation)
+  at save time.
+
 ## [0.21.0] - 2026-07-17
 
 ### Changed

@@ -330,3 +330,59 @@ def test_semantic_search_bm25_only_hit_ranks_first_with_high_confidence(tmp_path
     assert payload["items"][0]["block_id"] == "block-kubernetes"
     assert payload["items"][0]["confidence_state"] == "high"
     assert payload["items"][0]["score"] >= 0.82
+
+
+def test_semantic_search_source_filter_narrows_by_source_kind(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    _seed_markdown_block(
+        tmp_path,
+        env,
+        block_id="block-auth-doc",
+        text="Auth refresh rotation keeps session cache stable for project login flows.",
+        source_path="docs/auth.md",
+    )
+    remember_note_impl(
+        "Auth Flow Note",
+        "Project auth refresh rotation note for session cache.",
+        kind="lesson",
+        tags=["auth", "session"],
+        environ=env,
+    )
+
+    only_notes = semantic_search_impl(
+        "auth refresh rotation session cache",
+        scope="project",
+        limit=5,
+        source_filter="notes",
+        environ=env,
+    )
+    assert only_notes["result_count"] >= 1
+    assert all(item["source_kind"] == "memory_note" for item in only_notes["items"])
+
+    only_markdown = semantic_search_impl(
+        "auth refresh rotation session cache",
+        scope="project",
+        limit=5,
+        source_filter="markdown",
+        environ=env,
+    )
+    assert only_markdown["result_count"] >= 1
+    assert all(item["source_kind"] == "markdown" for item in only_markdown["items"])
+
+    # "all" (and None) keep the mixed behavior.
+    mixed = semantic_search_impl(
+        "auth refresh rotation session cache",
+        scope="project",
+        limit=5,
+        source_filter="all",
+        environ=env,
+    )
+    kinds = {item["source_kind"] for item in mixed["items"]}
+    assert kinds == {"memory_note", "markdown"}
+
+
+def test_semantic_search_rejects_unknown_source_filter(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    remember_note_impl("Note", "Project auth note.", kind="lesson", environ=env)
+    with pytest.raises(ValueError, match="source_filter"):
+        semantic_search_impl("auth", scope="project", source_filter="bogus", environ=env)

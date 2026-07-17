@@ -274,6 +274,7 @@ class RetrievalIndex:
         limit: int,
         project_id: str | None = None,
         tier_filter: Sequence[str] | None = None,
+        source_kinds: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid retrieval: dense vector search + BM25 (FTS), merged via RRF.
 
@@ -281,6 +282,11 @@ class RetrievalIndex:
         recall. Each backend returns its top candidates independently;
         Reciprocal Rank Fusion combines them so an item that ranks well in
         either lane bubbles to the top.
+
+        source_kinds narrows results to specific source types (e.g. only
+        memory notes, or only markdown blocks) — in doc-heavy corpora the
+        reference blocks otherwise crowd decision/lesson notes out of the
+        top ranks on question-shaped queries.
 
         Backwards compatibility: if the on-disk LanceDB table has no FTS
         index yet (legacy installs that have not run the Phase 3
@@ -291,10 +297,14 @@ class RetrievalIndex:
         if table is None or self.count_rows(scope, project_id=project_id) == 0:
             return []
 
-        where_clause: str | None = None
+        where_conditions: list[str] = []
         if tier_filter and _table_has_tier_column(table):
             tiers_quoted = ", ".join(_quote_sql_string(str(t)) for t in tier_filter)
-            where_clause = f"tier IN ({tiers_quoted})"
+            where_conditions.append(f"tier IN ({tiers_quoted})")
+        if source_kinds:
+            kinds_quoted = ", ".join(_quote_sql_string(str(k)) for k in source_kinds)
+            where_conditions.append(f"source_kind IN ({kinds_quoted})")
+        where_clause: str | None = " AND ".join(where_conditions) or None
 
         # Take a few extra candidates per lane so RRF has signal to merge.
         fetch_limit = max(limit * 3, limit)

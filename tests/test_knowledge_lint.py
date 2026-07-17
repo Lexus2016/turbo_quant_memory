@@ -99,3 +99,42 @@ def test_lint_resolves_obsidian_wikilinks_by_file_stem_lookup(tmp_path: Path) ->
 
     assert payload["status"] == "ok"
     assert payload["summary"]["broken_link_count"] == 0
+
+
+def test_lint_reports_near_duplicate_notes(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp.server import remember_note_impl, semantic_search_impl
+
+    class TwinEmbedder:
+        """Notes sharing the keyword 'rotation' get identical vectors."""
+
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            vectors = []
+            for text in texts:
+                lowered = text.lower()
+                vector = [0.0] * 8
+                vector[0] = 1.0 if "rotation" in lowered else 0.0
+                vector[1] = 1.0 if "kubernetes" in lowered else 0.0
+                vectors.append(vector)
+            return vectors
+
+    project_root, env = _test_env(tmp_path)
+    with patch(
+        "turbo_memory_mcp.retrieval_index.build_default_embedder",
+        return_value=TwinEmbedder(),
+    ):
+        remember_note_impl("Token rotation (EN)", "Rotate tokens on login.", kind="lesson", environ=env)
+        remember_note_impl("Ротація токенів (UK)", "Ротуємо rotation токени.", kind="lesson", environ=env)
+        remember_note_impl("Kubernetes deploy", "Deploy to kubernetes.", kind="lesson", environ=env)
+        # Force the retrieval index sync so lint sees materialized vectors.
+        semantic_search_impl("rotation", scope="project", environ=env)
+
+        payload = lint_knowledge_base_impl(max_issues=50, cwd=project_root, environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["summary"]["near_duplicate_note_count"] == 1
+    dup_issues = [i for i in payload["issues"] if i["kind"] == "near_duplicate_notes"]
+    assert len(dup_issues) == 1
+    assert dup_issues[0]["similarity"] >= 0.99
+    assert sorted(dup_issues[0]["titles"]) == ["Token rotation (EN)", "Ротація токенів (UK)"]

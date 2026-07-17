@@ -11,7 +11,7 @@ from typing import Mapping, Sequence
 
 from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
 from .secrets.paths import is_inside_secrets_storage
-from .store import MemoryStore, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
+from .store import MemoryStore, NOTE_SOURCE_KIND, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
 
 _MAX_ISSUES_LIMIT = 1000
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -24,6 +24,66 @@ _TITLE_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 _TITLE_NORMALIZE_RE = re.compile(r"[\W_]+", re.UNICODE)
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "javascript:")
 _ROOT_ENTRY_NAMES = {"index.md", "readme.md", "home.md", "start.md"}
+# Cosine threshold above which two notes are reported as near-duplicates.
+# Measured on this repository's real bilingual EN/UK twin notes: twins score
+# 0.905-0.969, while distinct-but-related notes stay below 0.90.
+_NEAR_DUPLICATE_COSINE = 0.90
+# Pairwise scan is O(n^2) on stored vectors (no re-embedding); cap the scan so a
+# huge store cannot stall lint. Above the cap the check is skipped, not partial.
+_NEAR_DUPLICATE_SCAN_CAP = 2000
+
+
+def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
+    """Note pairs whose stored embedding vectors are nearly identical.
+
+    This is the embedding-level companion to the string ``duplicate_title``
+    check: it catches semantic twins the string check cannot — most commonly a
+    note saved twice in two languages (EN + UK), which then crowd each other
+    out of top-k retrieval. Reads vectors already materialized in the retrieval
+    index, so it never loads or runs the embedding model. Best-effort: any
+    failure degrades to "no findings" rather than failing lint.
+    """
+    try:
+        from .retrieval_index import RetrievalIndex
+
+        rows = RetrievalIndex(store).list_rows(PROJECT_SCOPE)
+    except Exception:  # noqa: BLE001 — advisory check; lint must survive a broken index
+        return []
+
+    notes = [
+        row
+        for row in rows
+        if row.get("source_kind") == NOTE_SOURCE_KIND and row.get("vector") is not None
+    ]
+    if len(notes) < 2 or len(notes) > _NEAR_DUPLICATE_SCAN_CAP:
+        return []
+
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover — numpy ships with fastembed (core dep)
+        return []
+
+    matrix = np.asarray([row["vector"] for row in notes], dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    normalized = matrix / norms
+    similarity = normalized @ normalized.T
+
+    findings: list[dict[str, object]] = []
+    upper_i, upper_j = np.triu_indices(len(notes), k=1)
+    for i, j in zip(upper_i.tolist(), upper_j.tolist()):
+        cosine = float(similarity[i, j])
+        if cosine < _NEAR_DUPLICATE_COSINE:
+            continue
+        findings.append(
+            {
+                "note_ids": sorted([str(notes[i]["item_id"]), str(notes[j]["item_id"])]),
+                "titles": [str(notes[i].get("title", "")), str(notes[j].get("title", ""))],
+                "similarity": round(cosine, 3),
+            }
+        )
+    findings.sort(key=lambda f: f["similarity"], reverse=True)
+    return findings
 
 
 def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:
@@ -202,8 +262,33 @@ def lint_knowledge_base(
             },
         )
     stale_episodic_count = len(stale_episodic)
+
+    near_duplicates = _scan_near_duplicate_notes(store)
+    for entry in near_duplicates:
+        _append_issue(
+            issues,
+            normalized_limit,
+            {
+                "kind": "near_duplicate_notes",
+                "severity": "medium",
+                "note_ids": entry["note_ids"],
+                "titles": entry["titles"],
+                "similarity": entry["similarity"],
+                "message": (
+                    f"Two active notes are near-identical (cosine {entry['similarity']}) — "
+                    "typically the same note saved in two languages. They crowd each other "
+                    "out of top-k retrieval: keep one (prefer English per the save-in-English "
+                    "rule) and deprecate_note the other with replacement_note_id."
+                ),
+            },
+        )
+    near_duplicate_count = len(near_duplicates)
     total_issue_count = (
-        broken_link_count + orphan_candidate_count + duplicate_title_count + stale_episodic_count
+        broken_link_count
+        + orphan_candidate_count
+        + duplicate_title_count
+        + stale_episodic_count
+        + near_duplicate_count
     )
     return {
         "status": "ok",
@@ -220,6 +305,7 @@ def lint_knowledge_base(
             "orphan_candidate_count": orphan_candidate_count,
             "duplicate_title_count": duplicate_title_count,
             "stale_episodic_note_count": stale_episodic_count,
+            "near_duplicate_note_count": near_duplicate_count,
         },
         "issues": issues,
     }

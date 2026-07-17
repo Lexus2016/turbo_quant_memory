@@ -93,3 +93,42 @@ def test_backend_parity_real_models() -> None:
             f"Backend drift on {phrase!r}: cosine {similarity:.4f} < 0.99 — "
             "fastembed's ONNX conversion no longer matches the PyTorch reference"
         )
+
+
+def test_write_time_hint_catches_cross_lingual_twin(tmp_path) -> None:
+    """The maintenance mechanism that prevents bilingual twin notes: saving a
+    UK translation of an existing EN note must surface the original in
+    similar_notes at write time (real ONNX model, real cosine scores). The
+    legacy twins in this repository predate this hint path — this test pins
+    that NEW twins cannot slip in silently."""
+    from turbo_memory_mcp.server import remember_note_impl
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    env = {
+        "TQMEMORY_HOME": str(tmp_path / "memory-home"),
+        "TQMEMORY_PROJECT_ROOT": str(project_root),
+        "TQMEMORY_PROJECT_ID": "project-xling",
+        "TQMEMORY_PROJECT_NAME": "XLing",
+    }
+
+    first = remember_note_impl(
+        "Release v9.9 published on GitHub",
+        "Published release v9.9 on GitHub: changelog updated, wheel built, tag pushed.",
+        kind="handoff",
+        environ=env,
+    )
+    en_note_id = first["item"]["item_id"]
+
+    second = remember_note_impl(
+        "Опубліковано реліз v9.9 на GitHub",
+        "Опублікували реліз v9.9 на GitHub: оновлено changelog, зібрано колесо, запушено тег.",
+        kind="handoff",
+        environ=env,
+    )
+
+    hints = second.get("similar_notes", [])
+    assert hints, "cross-lingual twin produced no write-time similarity hint"
+    assert hints[0]["item_id"] == en_note_id
+    assert hints[0]["score"] >= 0.78
+    assert hints[0]["suggestion"] in {"supersede_candidate", "review_for_conflict"}

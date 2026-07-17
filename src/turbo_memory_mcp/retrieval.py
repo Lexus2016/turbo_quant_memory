@@ -40,6 +40,7 @@ def semantic_search(
     scope: str,
     limit: int,
     tier_filter: Sequence[str] | None = None,
+    source_filter: str | None = None,
 ) -> dict[str, object]:
     query_text = query.strip()
     if not query_text:
@@ -48,6 +49,24 @@ def semantic_search(
     resolved_scope = scope.strip().lower()
     if resolved_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE, "hybrid"}:
         raise ValueError(f"Unsupported query scope: {scope}")
+
+    # Optional source-type narrowing: "notes" (memory notes only) or "markdown"
+    # (indexed doc blocks only). In doc-heavy corpora the reference blocks
+    # otherwise crowd decision/lesson notes out of the top ranks on
+    # question-shaped queries — measured on this very repository.
+    source_kinds: tuple[str, ...] | None = None
+    if source_filter is not None:
+        resolved_source = source_filter.strip().lower()
+        if resolved_source == "notes":
+            source_kinds = (NOTE_SOURCE_KIND,)
+        elif resolved_source == "markdown":
+            source_kinds = (MARKDOWN_SOURCE_KIND,)
+        elif resolved_source in {"", "all"}:
+            source_kinds = None
+        else:
+            raise ValueError(
+                f"Unsupported source_filter: {source_filter!r} (use 'notes', 'markdown' or 'all')"
+            )
 
     # Default tier_filter excludes `episodic` so session handoffs do not
     # drown durable knowledge in regular searches. Callers can pass
@@ -68,22 +87,26 @@ def semantic_search(
 
     if resolved_scope == PROJECT_SCOPE:
         ranked = _query_scope(
-            index, store, PROJECT_SCOPE, query_text, normalized_limit, tier_filter=resolved_tiers
+            index, store, PROJECT_SCOPE, query_text, normalized_limit,
+            tier_filter=resolved_tiers, source_kinds=source_kinds,
         )
     elif resolved_scope == GLOBAL_SCOPE:
         ranked = _query_scope(
-            index, store, GLOBAL_SCOPE, query_text, normalized_limit, tier_filter=resolved_tiers
+            index, store, GLOBAL_SCOPE, query_text, normalized_limit,
+            tier_filter=resolved_tiers, source_kinds=source_kinds,
         )
     else:
         ranked = _rank_candidates(
             [
                 *_query_scope(
                     index, store, PROJECT_SCOPE, query_text,
-                    max(5, normalized_limit * 2), hybrid=True, tier_filter=resolved_tiers,
+                    max(5, normalized_limit * 2), hybrid=True,
+                    tier_filter=resolved_tiers, source_kinds=source_kinds,
                 ),
                 *_query_scope(
                     index, store, GLOBAL_SCOPE, query_text,
-                    max(5, normalized_limit * 2), hybrid=True, tier_filter=resolved_tiers,
+                    max(5, normalized_limit * 2), hybrid=True,
+                    tier_filter=resolved_tiers, source_kinds=source_kinds,
                 ),
             ]
         )
@@ -127,11 +150,16 @@ def _query_scope(
     *,
     hybrid: bool = False,
     tier_filter: Sequence[str] | None = None,
+    source_kinds: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     _ensure_scope_synced(index, store, scope)
-    rows = index.search(query, scope, limit=max(limit, 5), tier_filter=tier_filter)
+    rows = index.search(
+        query, scope, limit=max(limit, 5), tier_filter=tier_filter, source_kinds=source_kinds
+    )
     if not rows:
         rows = _lexical_fallback_rows(index, scope, query, limit=max(limit, 5), tier_filter=tier_filter)
+        if source_kinds:
+            rows = [row for row in rows if row.get("source_kind") in set(source_kinds)]
     candidates: list[dict[str, Any]] = []
     for row in rows:
         base_score = _distance_to_score(float(row.get("_distance", 1.0)))
