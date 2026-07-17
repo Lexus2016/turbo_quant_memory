@@ -46,7 +46,7 @@ dependencies = [
 # PyTorch, cutting RAM enough to be comfortable on a ~2GB machine. Enable with
 # `pip install turbo-memory-mcp[onnx]` + TQMEMORY_EMBEDDING_BACKEND=fastembed.
 onnx = [
-  "fastembed>=0.4.0",
+  "fastembed>=0.4.0,<1.0",
 ]
 
 [project.urls]
