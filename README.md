@@ -126,7 +126,7 @@ Memory notes are separated into logical tiers:
 Default searches return only `durable` + `reference` so session noise never drowns out critical architectural decisions!
 
 ### 4. Lightweight ONNX embedder (default)
-The embedder runs the multilingual model through **ONNX Runtime (fastembed) by default** — no PyTorch in the client install (multi-GB of torch wheels gone), a much smaller resident size (~0.22 GB vs ~1 GB+), and it fits comfortably on a ~2 GB RAM machine. Retrieval quality is identical to the legacy PyTorch backend and the embeddings are vector-compatible, so upgrading needs **no reindex**.
+The embedder runs the multilingual model through **ONNX Runtime (fastembed) by default** — no PyTorch in the client install (hundreds of MB saved on macOS, up to multi-GB with CUDA wheels on Linux), a smaller resident footprint (the model itself is ~0.22 GB in ONNX vs ~1 GB+ under PyTorch), and it fits comfortably on a ~2 GB RAM machine. Retrieval quality is identical to the legacy PyTorch backend and the embeddings are vector-compatible, so upgrading needs **no reindex**.
 
 The legacy PyTorch backend remains available for rollback or A/B checks:
 

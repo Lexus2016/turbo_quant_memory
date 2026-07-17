@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ONNX (fastembed) is now the default embedding backend — PyTorch is gone
   from the client install.** `fastembed` moved from the `[onnx]` extra into
   core dependencies and `TQMEMORY_EMBEDDING_BACKEND` now defaults to
-  `fastembed`; `sentence-transformers` (and the multi-GB torch wheels it pulls
-  in) is no longer installed for clients. Retrieval quality is identical
+  `fastembed`; `sentence-transformers` (and the heavy torch wheels it pulls
+  in — hundreds of MB on macOS, multi-GB with CUDA on Linux) is no longer
+  installed for clients. Retrieval quality is identical
   (measured MRR parity) and the embeddings are vector-compatible, so upgrading
   requires **no reindex**. The legacy PyTorch backend remains available for
   rollback via `pip install turbo-memory-mcp[torch]` +
