@@ -125,15 +125,15 @@ Memory notes are separated into logical tiers:
 
 Default searches return only `durable` + `reference` so session noise never drowns out critical architectural decisions!
 
-### 4. Lightweight ONNX backend (low-RAM, opt-in)
-By default the embedder runs on PyTorch. On a small machine (e.g. ~2 GB RAM) you can run the **same multilingual model** through ONNX Runtime instead — dropping the heavy PyTorch footprint for a much smaller resident size, with **no quality change and no reindex** (the embeddings stay compatible).
+### 4. Lightweight ONNX embedder (default)
+The embedder runs the multilingual model through **ONNX Runtime (fastembed) by default** — no PyTorch in the client install (multi-GB of torch wheels gone), a much smaller resident size (~0.22 GB vs ~1 GB+), and it fits comfortably on a ~2 GB RAM machine. Retrieval quality is identical to the legacy PyTorch backend and the embeddings are vector-compatible, so upgrading needs **no reindex**.
+
+The legacy PyTorch backend remains available for rollback or A/B checks:
 
 ```bash
-pip install 'turbo-memory-mcp[onnx]'
-export TQMEMORY_EMBEDDING_BACKEND=fastembed   # default: sentence-transformers
+pip install 'turbo-memory-mcp[torch]'
+export TQMEMORY_EMBEDDING_BACKEND=sentence-transformers   # default: fastembed
 ```
-
-The default install is unchanged — this is purely opt-in.
 
 ### 5. User-Flagged Memory (provenance)
 Every note records **who created it**: `human-explicit` when you explicitly ask the agent to remember something ("remember this", "save this to my knowledge base"), or `agent` when the agent saves a lesson/decision on its own. Human-flagged notes are trusted more — they **rank above agent-written notes of equal relevance** (a deterministic tie-breaker plus a small score bonus). The field is optional and backward compatible: existing notes simply read as `agent`, so no migration is needed.

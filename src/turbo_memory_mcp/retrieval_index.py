@@ -1,9 +1,9 @@
 """Embedded retrieval-index primitives for Phase 4.
 
-Heavy runtime dependencies (sentence_transformers -> PyTorch, lancedb, pyarrow)
+Heavy runtime dependencies (fastembed -> ONNX Runtime, lancedb, pyarrow)
 are imported lazily inside the functions that actually need them. This keeps
 daemon-proxy processes lightweight: if a proxy never builds or queries a
-vector table, it never pays the ~470 MB import cost of these libraries.
+vector table, it never pays the import cost of these libraries.
 """
 
 from __future__ import annotations
@@ -102,23 +102,24 @@ class TextEmbedder(Protocol):
 
 def build_default_embedder() -> "TextEmbedder":
     """Return the active embedder, selected by the TQMEMORY_EMBEDDING_BACKEND env:
-    'sentence-transformers' (default, PyTorch) or 'fastembed' (ONNX runtime).
+    'fastembed' (default, ONNX Runtime) or 'sentence-transformers' (PyTorch).
 
-    The fastembed backend runs the SAME model far lighter — it drops the PyTorch
-    runtime (~1GB+ resident) for ONNX Runtime, which is what makes the server
-    comfortable on a ~2GB-RAM machine. It is OPT-IN so the default install is
-    unchanged: enable with `pip install turbo-memory-mcp[onnx]` and
-    TQMEMORY_EMBEDDING_BACKEND=fastembed. Both backends produce vector-compatible
-    embeddings for the default multilingual model, so switching needs no reindex.
+    fastembed runs the SAME multilingual model as the legacy PyTorch backend but
+    far lighter — ONNX Runtime instead of the PyTorch runtime (~1GB+ resident),
+    which is what makes the server comfortable on a ~2GB-RAM machine and keeps
+    the client install free of multi-GB torch wheels. The PyTorch backend needs
+    the [torch] extra (dev installs get it via the dev dependency group for the
+    parity test). Both backends produce vector-compatible embeddings for the
+    default model, so switching needs no reindex.
     """
-    backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "sentence-transformers").strip().lower()
-    if backend == "fastembed":
-        return _load_fastembed_embedder()
-    return _load_default_embedder()
+    backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "fastembed").strip().lower()
+    if backend == "sentence-transformers":
+        return _load_torch_embedder()
+    return _load_fastembed_embedder()
 
 
 @lru_cache(maxsize=1)
-def _load_default_embedder() -> "SentenceTransformer":
+def _load_torch_embedder() -> "SentenceTransformer":
     from sentence_transformers import SentenceTransformer
 
     return SentenceTransformer(EMBEDDING_MODEL_NAME)

@@ -10,19 +10,22 @@ import turbo_memory_mcp.retrieval_index as ri
 
 
 def test_backend_dispatch_follows_env(monkeypatch) -> None:
-    sentinel_default = object()
+    sentinel_torch = object()
     sentinel_fastembed = object()
-    monkeypatch.setattr(ri, "_load_default_embedder", lambda: sentinel_default)
+    monkeypatch.setattr(ri, "_load_torch_embedder", lambda: sentinel_torch)
     monkeypatch.setattr(ri, "_load_fastembed_embedder", lambda: sentinel_fastembed)
 
     monkeypatch.delenv("TQMEMORY_EMBEDDING_BACKEND", raising=False)
-    assert ri.build_default_embedder() is sentinel_default  # default = sentence-transformers
+    assert ri.build_default_embedder() is sentinel_fastembed  # default = fastembed/ONNX
+
+    monkeypatch.setenv("TQMEMORY_EMBEDDING_BACKEND", "sentence-transformers")
+    assert ri.build_default_embedder() is sentinel_torch
+
+    monkeypatch.setenv("TQMEMORY_EMBEDDING_BACKEND", "Sentence-Transformers")  # case-insensitive
+    assert ri.build_default_embedder() is sentinel_torch
 
     monkeypatch.setenv("TQMEMORY_EMBEDDING_BACKEND", "fastembed")
     assert ri.build_default_embedder() is sentinel_fastembed
-
-    monkeypatch.setenv("TQMEMORY_EMBEDDING_BACKEND", "Sentence-Transformers")  # case-insensitive
-    assert ri.build_default_embedder() is sentinel_default
 
 
 def test_fastembed_adapter_shape(monkeypatch) -> None:
@@ -60,9 +63,10 @@ def test_backend_parity_real_models() -> None:
     failure mode (mpnet via fastembed used CLS instead of mean pooling and
     silently tanked retrieval). A correct conversion of our model stays at
     cosine ~0.999+ against the PyTorch reference; a pooling/model mismatch
-    drops it far below 0.99. Runs only when the [onnx] extra is installed.
+    drops it far below 0.99. The PyTorch reference is dev-only (dependency
+    group), so this skips in a bare client install.
     """
-    pytest.importorskip("fastembed")
+    pytest.importorskip("sentence_transformers")
 
     phrases = [
         "The daemon acquires the lockfile before serving requests.",
@@ -70,7 +74,7 @@ def test_backend_parity_real_models() -> None:
         "La configuración del servidor se guarda en un archivo JSON.",
         "缓存索引在重启后仍然有效。",
     ]
-    reference = ri._load_default_embedder().encode(phrases)
+    reference = ri._load_torch_embedder().encode(phrases)
     candidate = ri._load_fastembed_embedder().encode(phrases)
 
     for phrase, ref_vec, cand_vec in zip(phrases, reference, candidate, strict=True):

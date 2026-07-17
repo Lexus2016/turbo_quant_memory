@@ -34,19 +34,21 @@ classifiers = [
 dependencies = [
   "argon2-cffi>=23.1.0,<24.0",
   "cryptography>=43.0.0,<47.0",
+  "fastembed>=0.4.0,<1.0",
   "keyring>=25.0.0,<26.0",
   "lancedb>=0.30.1,<0.31",
   "markdown-it-py>=4.0.0,<5.0",
   "mcp>=1.12.4,<2.0",
-  "sentence-transformers>=5.3.0,<6.0",
 ]
 
 [project.optional-dependencies]
-# Opt-in ONNX embedding backend: runs the same model via ONNX Runtime instead of
-# PyTorch, cutting RAM enough to be comfortable on a ~2GB machine. Enable with
-# `pip install turbo-memory-mcp[onnx]` + TQMEMORY_EMBEDDING_BACKEND=fastembed.
-onnx = [
-  "fastembed>=0.4.0,<1.0",
+# ONNX (fastembed) is the default embedder since it moved into core deps.
+# The legacy PyTorch backend stays available as an opt-in extra for rollback:
+# `pip install turbo-memory-mcp[torch]` + TQMEMORY_EMBEDDING_BACKEND=sentence-transformers.
+# Kept an empty `onnx` alias so pre-flip install instructions don't break.
+onnx = []
+torch = [
+  "sentence-transformers>=5.3.0,<6.0",
 ]
 
 [project.urls]
@@ -62,6 +64,9 @@ turbo-memory-mcp = "turbo_memory_mcp.cli:main"
 [dependency-groups]
 dev = [
   "pytest>=8.3.0,<9.0",
+  # PyTorch reference embedder — dev-only, used by the backend parity test to
+  # verify fastembed's ONNX conversion still matches. Clients never install it.
+  "sentence-transformers>=5.3.0,<6.0",
 ]
 
 [tool.pytest.ini_options]

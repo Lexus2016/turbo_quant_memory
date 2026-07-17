@@ -1,6 +1,6 @@
 """Singleton daemon transport for turbo-memory-mcp.
 
-Ensures only one process on the machine holds the sentence-transformers model
+Ensures only one process on the machine holds the embedding model
 and LanceDB handles. Additional MCP-client launches become thin stdio<->socket
 proxies that forward tool calls to the primary process.
 
