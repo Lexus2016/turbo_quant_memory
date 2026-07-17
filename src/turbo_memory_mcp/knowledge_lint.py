@@ -35,6 +35,10 @@ _NEAR_DUPLICATE_COSINE = 0.90
 # Probe embedding is O(n) model calls + O(n^2) vector math; cap the scan so a
 # huge store cannot stall lint. Above the cap the check is skipped, not partial.
 _NEAR_DUPLICATE_SCAN_CAP = 2000
+# Notes whose probe text is shorter than this (after stripping separators) are
+# excluded from the scan: several truly-empty legacy notes would otherwise all
+# embed the same degenerate probe and report each other as duplicates.
+_NEAR_DUPLICATE_MIN_PROBE_CHARS = 12
 
 
 def _near_dup_probe_text(note: Mapping[str, object]) -> str:
@@ -51,46 +55,52 @@ def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
     the space where twins separate cleanly from related-but-distinct notes
     (see the threshold comment). Complements the write-time ``similar_notes``
     hint: the hint prevents new twins at save time, this catches the legacy
-    ones already stored. Best-effort: any failure degrades to "no findings"
-    rather than failing lint.
+    ones already stored. Best-effort: any failure — store read, model load,
+    malformed vectors, ragged shapes — degrades to "no findings" rather than
+    failing lint.
     """
     try:
         notes = store.list_notes(PROJECT_SCOPE)
-    except Exception:  # noqa: BLE001 — advisory check; lint must survive a broken store
-        return []
-    if len(notes) < 2 or len(notes) > _NEAR_DUPLICATE_SCAN_CAP:
-        return []
+        probed = [(note, _near_dup_probe_text(note)) for note in notes]
+        probed = [
+            (note, probe)
+            for note, probe in probed
+            if len(probe.strip(" .")) >= _NEAR_DUPLICATE_MIN_PROBE_CHARS
+        ]
+        if len(probed) < 2 or len(probed) > _NEAR_DUPLICATE_SCAN_CAP:
+            return []
 
-    try:
         import numpy as np
 
         from .retrieval_index import build_default_embedder
 
-        vectors = build_default_embedder().encode([_near_dup_probe_text(n) for n in notes])
-    except Exception:  # noqa: BLE001 — advisory check; skip rather than fail lint
+        vectors = build_default_embedder().encode([probe for _, probe in probed])
+        matrix = np.asarray([list(map(float, v)) for v in vectors], dtype=np.float32)
+        if matrix.ndim != 2 or matrix.shape[0] != len(probed) or not np.isfinite(matrix).all():
+            return []
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        normalized = matrix / norms
+        similarity = normalized @ normalized.T
+
+        findings: list[dict[str, object]] = []
+        upper_i, upper_j = np.triu_indices(len(probed), k=1)
+        for i, j in zip(upper_i.tolist(), upper_j.tolist()):
+            cosine = float(similarity[i, j])
+            if cosine < _NEAR_DUPLICATE_COSINE:
+                continue
+            first, second = probed[i][0], probed[j][0]
+            findings.append(
+                {
+                    "note_ids": sorted([str(first["note_id"]), str(second["note_id"])]),
+                    "titles": [str(first.get("title", "")), str(second.get("title", ""))],
+                    "similarity": round(cosine, 3),
+                }
+            )
+        findings.sort(key=lambda f: f["similarity"], reverse=True)
+        return findings
+    except Exception:  # noqa: BLE001 — advisory check; lint must never fail on it
         return []
-
-    matrix = np.asarray([list(map(float, v)) for v in vectors], dtype=np.float32)
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    normalized = matrix / norms
-    similarity = normalized @ normalized.T
-
-    findings: list[dict[str, object]] = []
-    upper_i, upper_j = np.triu_indices(len(notes), k=1)
-    for i, j in zip(upper_i.tolist(), upper_j.tolist()):
-        cosine = float(similarity[i, j])
-        if cosine < _NEAR_DUPLICATE_COSINE:
-            continue
-        findings.append(
-            {
-                "note_ids": sorted([str(notes[i]["note_id"]), str(notes[j]["note_id"])]),
-                "titles": [str(notes[i].get("title", "")), str(notes[j].get("title", ""))],
-                "similarity": round(cosine, 3),
-            }
-        )
-    findings.sort(key=lambda f: f["similarity"], reverse=True)
-    return findings
 
 
 def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:

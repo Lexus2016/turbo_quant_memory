@@ -386,3 +386,53 @@ def test_semantic_search_rejects_unknown_source_filter(tmp_path: Path) -> None:
     remember_note_impl("Note", "Project auth note.", kind="lesson", environ=env)
     with pytest.raises(ValueError, match="source_filter"):
         semantic_search_impl("auth", scope="project", source_filter="bogus", environ=env)
+
+
+def test_source_filter_holds_on_every_path_including_fallback(tmp_path: Path) -> None:
+    # Only markdown exists; asking for notes must return empty on BOTH the
+    # index path and the lexical fallback path — the contract holds everywhere.
+    env = _test_env(tmp_path)
+    _seed_markdown_block(
+        tmp_path,
+        env,
+        block_id="block-only-doc",
+        text="Auth refresh rotation keeps session cache stable.",
+        source_path="docs/auth.md",
+    )
+    payload = semantic_search_impl(
+        "auth refresh rotation", scope="project", source_filter="notes", environ=env
+    )
+    assert payload["result_count"] == 0
+
+    # Unknown-keyword query (vector lane silent) with markdown filter still
+    # respects the filter through the fallback.
+    fallback = semantic_search_impl(
+        "zzz unknown-term qqq", scope="project", source_filter="notes", environ=env
+    )
+    assert all(item["source_kind"] == "memory_note" for item in fallback["items"])
+
+
+def test_source_filter_combines_with_tier_filter_and_hybrid_scope(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    _seed_markdown_block(
+        tmp_path,
+        env,
+        block_id="block-auth-hybrid",
+        text="Auth refresh rotation session cache doc.",
+        source_path="docs/auth.md",
+    )
+    remember_note_impl(
+        "Auth session handoff",
+        "Auth refresh rotation session cache handoff.",
+        kind="handoff",
+        environ=env,
+    )
+    payload = semantic_search_impl(
+        "auth refresh rotation session cache",
+        scope="hybrid",
+        source_filter="notes",
+        tier_filter=["episodic"],
+        environ=env,
+    )
+    assert payload["result_count"] >= 1
+    assert all(item["source_kind"] == "memory_note" for item in payload["items"])

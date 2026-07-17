@@ -158,8 +158,11 @@ def _query_scope(
     )
     if not rows:
         rows = _lexical_fallback_rows(index, scope, query, limit=max(limit, 5), tier_filter=tier_filter)
-        if source_kinds:
-            rows = [row for row in rows if row.get("source_kind") in set(source_kinds)]
+    if source_kinds:
+        # Defensive post-filter: the index-level where-clause is skipped on legacy
+        # tables without a source_kind column, and the lexical fallback never
+        # applies it — the API contract must hold on every path.
+        rows = [row for row in rows if row.get("source_kind") in set(source_kinds)]
     candidates: list[dict[str, Any]] = []
     for row in rows:
         base_score = _distance_to_score(float(row.get("_distance", 1.0)))

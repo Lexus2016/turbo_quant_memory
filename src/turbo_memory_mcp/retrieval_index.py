@@ -301,7 +301,7 @@ class RetrievalIndex:
         if tier_filter and _table_has_tier_column(table):
             tiers_quoted = ", ".join(_quote_sql_string(str(t)) for t in tier_filter)
             where_conditions.append(f"tier IN ({tiers_quoted})")
-        if source_kinds:
+        if source_kinds and _table_has_column(table, "source_kind"):
             kinds_quoted = ", ".join(_quote_sql_string(str(k)) for k in source_kinds)
             where_conditions.append(f"source_kind IN ({kinds_quoted})")
         where_clause: str | None = " AND ".join(where_conditions) or None
@@ -722,6 +722,10 @@ def _table_has_tier_column(table: Any) -> bool:
     proxied LanceDB versions), so we wrap the read itself, not just
     the `.names` access.
     """
+    return _table_has_column(table, "tier")
+
+
+def _table_has_column(table: Any, column: str) -> bool:
     try:
         schema_attr = getattr(table, "schema", None)
     except Exception:  # noqa: BLE001 — defensive: property may raise
@@ -732,7 +736,7 @@ def _table_has_tier_column(table: Any) -> bool:
         field_names = list(schema_attr.names)
     except Exception:  # noqa: BLE001 — defensive: unknown LanceDB versions
         return False
-    return "tier" in field_names
+    return column in field_names
 
 
 def mirror_markdown_block(

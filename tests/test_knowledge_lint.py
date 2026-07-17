@@ -138,3 +138,67 @@ def test_lint_reports_near_duplicate_notes(tmp_path: Path) -> None:
     assert len(dup_issues) == 1
     assert dup_issues[0]["similarity"] >= 0.99
     assert sorted(dup_issues[0]["titles"]) == ["Token rotation (EN)", "Ротація токенів (UK)"]
+
+
+def test_near_duplicate_scan_survives_broken_embedder_and_skips_empty_probes(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp.knowledge_lint import _scan_near_duplicate_notes
+    from turbo_memory_mcp.server import build_runtime_context, remember_note_impl
+
+    class BrokenEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[float("nan")] * 4 for _ in texts]
+
+    project_root, env = _test_env(tmp_path)
+    with patch(
+        "turbo_memory_mcp.retrieval_index.build_default_embedder",
+        return_value=BrokenEmbedder(),
+    ):
+        remember_note_impl("Alpha rotation", "Rotate tokens on login.", kind="lesson", environ=env)
+        remember_note_impl("Beta rotation", "Rotate tokens on logout.", kind="lesson", environ=env)
+        _, store = build_runtime_context(cwd=project_root, environ=env)
+        # NaN vectors must degrade to no findings, never raise.
+        assert _scan_near_duplicate_notes(store) == []
+
+    class ConstantEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+    with patch(
+        "turbo_memory_mcp.retrieval_index.build_default_embedder",
+        return_value=ConstantEmbedder(),
+    ):
+        remember_note_impl("x", ".", kind="lesson", environ=env)
+        remember_note_impl("y", ".", kind="lesson", environ=env)
+        _, store = build_runtime_context(cwd=project_root, environ=env)
+        findings = _scan_near_duplicate_notes(store)
+        # Empty-probe notes are excluded, so the degenerate identical probes
+        # of "x"/"y" never report each other; the two real notes DO match
+        # under this constant embedder — that is the expected signal here.
+        flagged = {t for f in findings for t in f["titles"]}
+        assert "x" not in flagged and "y" not in flagged
+
+
+def test_near_duplicate_scan_cap_skips_entirely(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import turbo_memory_mcp.knowledge_lint as kl
+    from turbo_memory_mcp.server import build_runtime_context, remember_note_impl
+
+    class ConstantEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+    project_root, env = _test_env(tmp_path)
+    with patch(
+        "turbo_memory_mcp.retrieval_index.build_default_embedder",
+        return_value=ConstantEmbedder(),
+    ):
+        for i in range(3):
+            remember_note_impl(f"Note number {i}", f"Body of note number {i}.", kind="lesson", environ=env)
+        _, store = build_runtime_context(cwd=project_root, environ=env)
+        with patch.object(kl, "_NEAR_DUPLICATE_SCAN_CAP", 2):
+            assert kl._scan_near_duplicate_notes(store) == []
+        with patch.object(kl, "_NEAR_DUPLICATE_SCAN_CAP", 3):
+            assert kl._scan_near_duplicate_notes(store) != []
