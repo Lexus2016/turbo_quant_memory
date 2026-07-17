@@ -36,6 +36,10 @@
 - **`semantic_search` excludes `episodic` by default** so session noise does not
   drown durable knowledge. To retrieve handoffs by query, pass
   `tier_filter=["episodic"]`; `recent_context` includes them automatically.
+- **Asking "what did we decide/learn about X"? Pass `source_filter="notes"`** —
+  in doc-heavy projects the indexed markdown blocks otherwise crowd
+  decision/lesson notes out of the top ranks. `source_filter="markdown"`
+  narrows to docs only.
 - Use `tier="durable"` on `remember_note` only when a session-bridging note must
   also appear in ordinary searches.
 

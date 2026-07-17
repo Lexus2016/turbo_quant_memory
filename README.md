@@ -236,7 +236,7 @@ If your threat model is bigger than ours, use a dedicated secret manager (1Passw
 ### 1. Pre-Flight Ritual (Every Session Start)
 1. **Check Migrations & Health:** Call `health()` and `server_info()`. If `migrations_pending` (in `health`) or `migrations.pending` (in `server_info`) is `true`, surface the `migrations_hint` verbatim to the user so they can run the CLI upgrade. **Do not run `migrate --apply` yourself** as it requires closing active MCP clients.
 2. **Resume Where You Left Off:** At session start — or right after a context compaction — call `recent_context()` first. It is a query-free bootstrap that returns your most recently updated notes (newest first), **including session `handoff` notes** that a plain `semantic_search` hides by default. This is the reliable "where did I leave off" entry point when you do not yet know what to query.
-3. **Retrieve Context:** For a specific task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines. To recover a session handoff by query, pass `tier_filter=["episodic"]`.
+3. **Retrieve Context:** For a specific task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines. To recover a session handoff by query, pass `tier_filter=["episodic"]`. When asking "what did we decide/learn about X", pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks.
 
 ### 2. Memory Writing Discipline
 When you learn something important, solve a complex bug, or make an architectural decision, **immediately save it** using `remember_note()`. Do not wait until the end of the session.
