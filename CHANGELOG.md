@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-17
+
 ### Added
 - **`source_filter` on `semantic_search`.** Pass `"notes"` to search only
   memory notes (decisions/lessons/patterns/handoffs) or `"markdown"` for
