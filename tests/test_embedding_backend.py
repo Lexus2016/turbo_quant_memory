@@ -49,6 +49,16 @@ def test_fastembed_adapter_shape(monkeypatch) -> None:
     assert all(isinstance(v, float) for vec in out for v in vec)
 
 
+def test_torch_backend_missing_gives_actionable_error(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)  # simulate not installed
+    ri._load_torch_embedder.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match=r"turbo-memory-mcp\[torch\]"):
+            ri._load_torch_embedder()
+    finally:
+        ri._load_torch_embedder.cache_clear()
+
+
 def _cosine(a, b) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))

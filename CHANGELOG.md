@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TQMEMORY_EMBEDDING_BACKEND=sentence-transformers`, and stays in the dev
   dependency group as the reference for the backend parity test. The old
   `[onnx]` extra is kept as an empty alias so existing install instructions
-  don't break.
+  don't break. Note: the first run after upgrading downloads the ONNX model
+  once (~0.2 GB) — the old PyTorch model cache is not reused. Requesting the
+  PyTorch backend without the `[torch]` extra installed now fails with an
+  actionable error instead of a bare ImportError.
 
 ### Tests
 - Real-model backend parity test: encodes multilingual reference phrases with
