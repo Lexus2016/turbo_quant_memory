@@ -16,13 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   way out. Default behavior (mixed) is unchanged.
 - **Embedding near-duplicate detection in `lint_knowledge_base`.** New
   `near_duplicate_notes` issue kind (severity medium): flags active note
-  pairs whose stored vectors exceed cosine 0.90 — typically the same note
-  saved in two languages, which then crowds itself out of top-k retrieval.
-  Reads vectors already materialized in the retrieval index (no model load),
-  capped at 2000 notes per scan, degrades to no-findings on any failure.
-  Complements the write-time `similar_notes` hint, which is now pinned by a
-  real-model test to fire on cross-lingual twins (EN note + UK translation)
-  at save time.
+  pairs whose title+summary embeddings exceed cosine 0.90 — typically the
+  same note saved in two languages, which then crowds itself out of top-k
+  retrieval. Embeds one short probe per active note (a few seconds on real
+  stores; capped at 2000 notes, degrades to no-findings on any failure).
+  Calibrated on real data: bilingual twins score 0.905–0.969 in probe space
+  while the closest distinct pair stays at 0.877; the full-content vectors
+  stored in the retrieval index cannot drive this check (cross-lingual twins
+  drop below 0.70 there and mix with unrelated pairs). Complements the
+  write-time `similar_notes` hint, which is now pinned by a real-model test
+  to fire on cross-lingual twins (EN note + UK translation) at save time.
 
 ## [0.21.0] - 2026-07-17
 

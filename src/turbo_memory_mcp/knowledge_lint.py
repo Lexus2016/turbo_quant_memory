@@ -11,7 +11,7 @@ from typing import Mapping, Sequence
 
 from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
 from .secrets.paths import is_inside_secrets_storage
-from .store import MemoryStore, NOTE_SOURCE_KIND, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
+from .store import MemoryStore, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
 
 _MAX_ISSUES_LIMIT = 1000
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -24,46 +24,53 @@ _TITLE_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 _TITLE_NORMALIZE_RE = re.compile(r"[\W_]+", re.UNICODE)
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "javascript:")
 _ROOT_ENTRY_NAMES = {"index.md", "readme.md", "home.md", "start.md"}
-# Cosine threshold above which two notes are reported as near-duplicates.
-# Measured on this repository's real bilingual EN/UK twin notes: twins score
-# 0.905-0.969, while distinct-but-related notes stay below 0.90.
+# Cosine threshold above which two notes are reported as near-duplicates,
+# applied to TITLE+SUMMARY embeddings. Measured on this repository's real
+# bilingual EN/UK twin notes: twins score 0.905-0.969 in that space while the
+# closest distinct pair (two different release handoffs) reaches 0.877 — the
+# 0.90 boundary separates them. Full-content vectors from the retrieval index
+# CANNOT drive this check: measured there, cross-lingual twins drop below 0.70
+# and mix with unrelated pairs, so the scan embeds short probes directly.
 _NEAR_DUPLICATE_COSINE = 0.90
-# Pairwise scan is O(n^2) on stored vectors (no re-embedding); cap the scan so a
+# Probe embedding is O(n) model calls + O(n^2) vector math; cap the scan so a
 # huge store cannot stall lint. Above the cap the check is skipped, not partial.
 _NEAR_DUPLICATE_SCAN_CAP = 2000
 
 
-def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
-    """Note pairs whose stored embedding vectors are nearly identical.
+def _near_dup_probe_text(note: Mapping[str, object]) -> str:
+    summary = str(note.get("summary") or note.get("content") or "")
+    return f"{note.get('title', '')}. {summary[:200]}"
 
-    This is the embedding-level companion to the string ``duplicate_title``
-    check: it catches semantic twins the string check cannot — most commonly a
-    note saved twice in two languages (EN + UK), which then crowd each other
-    out of top-k retrieval. Reads vectors already materialized in the retrieval
-    index, so it never loads or runs the embedding model. Best-effort: any
-    failure degrades to "no findings" rather than failing lint.
+
+def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
+    """Note pairs that are semantic twins — most commonly the same note saved
+    in two languages (EN + UK), which then crowd each other out of top-k
+    retrieval.
+
+    Embeds a short title+summary probe per active note and compares pairwise —
+    the space where twins separate cleanly from related-but-distinct notes
+    (see the threshold comment). Complements the write-time ``similar_notes``
+    hint: the hint prevents new twins at save time, this catches the legacy
+    ones already stored. Best-effort: any failure degrades to "no findings"
+    rather than failing lint.
     """
     try:
-        from .retrieval_index import RetrievalIndex
-
-        rows = RetrievalIndex(store).list_rows(PROJECT_SCOPE)
-    except Exception:  # noqa: BLE001 — advisory check; lint must survive a broken index
+        notes = store.list_notes(PROJECT_SCOPE)
+    except Exception:  # noqa: BLE001 — advisory check; lint must survive a broken store
         return []
-
-    notes = [
-        row
-        for row in rows
-        if row.get("source_kind") == NOTE_SOURCE_KIND and row.get("vector") is not None
-    ]
     if len(notes) < 2 or len(notes) > _NEAR_DUPLICATE_SCAN_CAP:
         return []
 
     try:
         import numpy as np
-    except ImportError:  # pragma: no cover — numpy ships with fastembed (core dep)
+
+        from .retrieval_index import build_default_embedder
+
+        vectors = build_default_embedder().encode([_near_dup_probe_text(n) for n in notes])
+    except Exception:  # noqa: BLE001 — advisory check; skip rather than fail lint
         return []
 
-    matrix = np.asarray([row["vector"] for row in notes], dtype=np.float32)
+    matrix = np.asarray([list(map(float, v)) for v in vectors], dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0.0] = 1.0
     normalized = matrix / norms
@@ -77,7 +84,7 @@ def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
             continue
         findings.append(
             {
-                "note_ids": sorted([str(notes[i]["item_id"]), str(notes[j]["item_id"])]),
+                "note_ids": sorted([str(notes[i]["note_id"]), str(notes[j]["note_id"])]),
                 "titles": [str(notes[i].get("title", "")), str(notes[j].get("title", ""))],
                 "similarity": round(cosine, 3),
             }
