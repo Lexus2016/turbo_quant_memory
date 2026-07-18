@@ -289,13 +289,15 @@ def _legacy_v1_or_format_version(manifest: dict[str, Any] | None) -> int:
     """
     if not manifest:
         return 0
+    if not isinstance(manifest, dict):
+        return 0
     if "format_version" in manifest:
         return _version_from(manifest)
     return 1
 
 
 def _version_from(manifest: dict[str, Any] | None) -> int:
-    if not manifest:
+    if not manifest or not isinstance(manifest, dict):
         return 0
     raw = manifest.get("format_version", 0)
     try:

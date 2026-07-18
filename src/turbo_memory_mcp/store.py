@@ -177,7 +177,7 @@ class MemoryStore:
 
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
-        existing = self.read_project_manifest() or {}
+        existing = _read_json_if_exists_safe(self.project_manifest_path(), label="project manifest") or {}
         # Preserve any format_version already on disk (e.g. bumped by the
         # NOTES migration to 2). Otherwise fall back to the in-code
         # baseline. Without this, every remember_note would silently
@@ -211,7 +211,7 @@ class MemoryStore:
 
     def write_global_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
-        existing = self.read_global_manifest() or {}
+        existing = _read_json_if_exists_safe(self.global_manifest_path(), label="global manifest") or {}
         format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
         manifest = {
             "scope": GLOBAL_SCOPE,
@@ -813,7 +813,7 @@ class MemoryStore:
         else:
             path = self.project_relations_path(project_id)
         
-        data = _read_json_if_exists(path)
+        data = _read_json_if_exists_safe(path, label="relations")
         if data is None or not isinstance(data, dict) or "relations" not in data:
             return []
         return data["relations"]
@@ -831,8 +831,29 @@ class MemoryStore:
         }
         _write_json_atomic(path, payload)
 
+    def _read_relations_for_write(self, scope: str, project_id: str | None) -> list[dict[str, str]]:
+        """Strict read for write paths: a corrupt relations file RAISES rather
+        than being silently overwritten with just the new relation (audit X4).
+        The read paths (recent_context / search enrichment) use the tolerant
+        ``read_relations`` instead.
+        """
+        if scope == GLOBAL_SCOPE:
+            path = self.global_relations_path()
+        else:
+            path = self.project_relations_path(project_id)
+        try:
+            data = _read_json_if_exists(path)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"relations file is unreadable and would be overwritten: {path} "
+                f"({type(exc).__name__}: {exc}) — fix or remove it first."
+            ) from exc
+        if data is None or not isinstance(data, dict) or "relations" not in data:
+            return []
+        return data["relations"]
+
     def add_relation(self, source: str, target: str, relation_type: str, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> dict[str, str]:
-        relations = self.read_relations(scope, project_id)
+        relations = self._read_relations_for_write(scope, project_id)
         for rel in relations:
             if rel.get("source") == source and rel.get("target") == target and rel.get("type") == relation_type:
                 return rel
@@ -848,7 +869,7 @@ class MemoryStore:
         return new_rel
 
     def remove_relation(self, source: str, target: str, relation_type: str | None = None, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> bool:
-        relations = self.read_relations(scope, project_id)
+        relations = self._read_relations_for_write(scope, project_id)
         initial_len = len(relations)
         
         if relation_type is not None:
@@ -919,7 +940,7 @@ def reconcile_project_identity(
     for child in sorted(projects_root.iterdir()):
         if not child.is_dir():
             continue
-        manifest = _read_json_if_exists(child / "manifest.json")
+        manifest = _read_json_if_exists_safe(child / "manifest.json", label="project manifest")
         if not manifest or manifest.get("scope") != PROJECT_SCOPE:
             continue
         project_id = manifest.get("project_id") or child.name
@@ -969,7 +990,7 @@ def detect_orphaned_buckets(storage_root: Path) -> list[dict[str, Any]]:
     for child in sorted(projects_root.iterdir()):
         if not child.is_dir():
             continue
-        manifest = _read_json_if_exists(child / "manifest.json")
+        manifest = _read_json_if_exists_safe(child / "manifest.json", label="project manifest")
         if not manifest or manifest.get("scope") != PROJECT_SCOPE:
             continue
         root = manifest.get("project_root")
@@ -1066,6 +1087,24 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return _read_json(path)
+
+
+def _read_json_if_exists_safe(path: Path, *, label: str = "file") -> dict[str, Any] | None:
+    """Tolerant ``_read_json_if_exists``: a corrupt/unreadable file yields
+    ``None`` (with a one-line stderr warning) instead of raising, so one bad
+    JSON on a read path cannot break a whole tool call (audit X1/X4). Callers
+    that must distinguish "missing" from "corrupt" should not use this.
+    """
+    if not path.exists():
+        return None
+    try:
+        return _read_json(path)
+    except (OSError, ValueError, TypeError) as exc:
+        print(
+            f"[tqmemory] skipping unreadable {label} {path}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:

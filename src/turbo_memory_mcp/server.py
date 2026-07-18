@@ -2142,13 +2142,22 @@ def _sum_raw_source_bytes(store: MemoryStore, items: list[dict[str, object]]) ->
     for item in items:
         source_kind = str(item.get("source_kind", ""))
         scope = str(item.get("scope", PROJECT_SCOPE))
-        if source_kind == NOTE_SOURCE_KIND:
-            note = store.read_note(str(item["item_id"]), scope)
-            total += len(str(note["content"]).encode("utf-8"))
-            continue
-        if source_kind == MARKDOWN_SOURCE_KIND and item.get("block_id"):
-            block = store.read_markdown_block(str(item["block_id"]))
-            total += len(str(block["content_raw"]).encode("utf-8"))
+        try:
+            if source_kind == NOTE_SOURCE_KIND:
+                note = store.read_note(str(item["item_id"]), scope)
+                total += len(str(note["content"]).encode("utf-8"))
+                continue
+            if source_kind == MARKDOWN_SOURCE_KIND and item.get("block_id"):
+                block = store.read_markdown_block(str(item["block_id"]))
+                total += len(str(block["content_raw"]).encode("utf-8"))
+        except (OSError, ValueError, KeyError) as exc:
+            # Telemetry byte-count must never break the (already successful)
+            # search/hydrate it measures — an unreadable source counts as 0.
+            print(
+                f"[tqmemory] telemetry byte-count skipped an unreadable source: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
     return total
 
 
@@ -2213,8 +2222,14 @@ def _read_json_dir(path: Path) -> list[dict[str, object]]:
 
     payloads: list[dict[str, object]] = []
     for item_path in sorted(path.glob("*.json")):
-        with item_path.open("r", encoding="utf-8") as handle:
-            payloads.append(json.load(handle))
+        try:
+            with item_path.open("r", encoding="utf-8") as handle:
+                payloads.append(json.load(handle))
+        except (OSError, ValueError) as exc:
+            print(
+                f"[tqmemory] skipping unreadable json {item_path}: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
     return payloads
 
 

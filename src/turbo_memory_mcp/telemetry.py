@@ -14,10 +14,13 @@ SEARCH_MILESTONES = (10, 25, 50, 100, 250, 500, 1_000)
 
 def load_usage_stats(store: MemoryStore) -> dict[str, Any]:
     payload = store.read_usage_stats()
-    if not payload:
+    if not payload or not isinstance(payload, dict):
         return _new_usage_payload()
 
-    format_version = int(payload.get("format_version", 0))
+    try:
+        format_version = int(payload.get("format_version", 0))
+    except (TypeError, ValueError):
+        format_version = 0
     if format_version != USAGE_STATS_FORMAT_VERSION:
         payload = _migrate_usage_stats(payload, from_version=format_version)
         store.write_usage_stats(payload)

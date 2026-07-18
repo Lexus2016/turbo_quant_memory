@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
@@ -113,17 +114,16 @@ def semantic_search(
 
     selected = ranked[:normalized_limit]
     overall_state, warning = _resolve_overall_state(selected)
-    items = [
-        build_semantic_item_payload(
-            _decorate_candidate(
-                candidate,
-                store=store,
-                query=query_text,
-                overall_state=overall_state if idx < 2 and overall_state == "ambiguous" else None,
-            )
+    decorated = [
+        _decorate_candidate(
+            candidate,
+            store=store,
+            query=query_text,
+            overall_state=overall_state if idx < 2 and overall_state == "ambiguous" else None,
         )
         for idx, candidate in enumerate(selected)
     ]
+    items = [build_semantic_item_payload(d) for d in decorated if d is not None]
     return build_search_payload(
         query=query_text,
         scope=resolved_scope,
@@ -230,7 +230,7 @@ def _decorate_candidate(
     store: MemoryStore,
     query: str,
     overall_state: str | None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     confidence_state = overall_state or _confidence_state(float(candidate["confidence"]))
     warning = None
     if confidence_state == "ambiguous":
@@ -263,7 +263,17 @@ def _decorate_candidate(
         payload["tier"] = str(candidate["tier"])
 
     if candidate["source_kind"] == NOTE_SOURCE_KIND:
-        note = store.read_note(str(candidate["note_id"]), str(candidate["scope"]))
+        try:
+            note = store.read_note(str(candidate["note_id"]), str(candidate["scope"]))
+        except (OSError, ValueError, KeyError) as exc:
+            # A LanceDB row can outlive its note JSON (deleted / corrupt). Skip
+            # this candidate rather than fail the whole search (audit X2).
+            print(
+                f"[tqmemory] search skipping candidate with unreadable note "
+                f"{candidate.get('note_id')}: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return None
         payload["note_kind"] = note["note_kind"]
         payload["note_status"] = note["note_status"]
         payload["provenance"] = note.get("provenance") or "agent"
