@@ -32,7 +32,9 @@ def _keep_count() -> int:
         n = int(raw)
     except ValueError:
         return _DEFAULT_KEEP
-    return max(1, n)
+    # Clamp to >=2: keep=1 would let a re-run of a failed apply prune the clean
+    # pre-migration snapshot (see module docstring). max(2, n) enforces the floor.
+    return max(2, n)
 
 
 def snapshots_root(storage_root: Path) -> Path:

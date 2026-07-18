@@ -588,7 +588,7 @@ def _handle_doctor(_: argparse.Namespace) -> int:
             if pending:
                 subs = [s.subsystem.value for s in pending]
                 print(f"[WARN] migrations: {len(pending)} pending — {', '.join(subs)}")
-                print("       Run: turbo-memory-mcp migrate --status")
+                print("       Review: turbo-memory-mcp migrate --dry-run  (then --apply)")
                 issues += 1
             else:
                 print("[PASS] migrations: all subsystems up to date")

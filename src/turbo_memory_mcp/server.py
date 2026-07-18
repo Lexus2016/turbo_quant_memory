@@ -170,7 +170,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         provenance: str = "agent",
         tier: str | None = None,
     ) -> dict[str, object]:
-        """Store a typed project note (lesson / decision / pattern / handoff / ...).
+        """Store a typed project note. kind must be exactly one of: lesson, decision, pattern, handoff.
 
         tags: 2-3 lowercase tags are strongly recommended — tags are the only way
           to FILTER notes; an untagged note is reachable by semantic_search alone.

@@ -32,11 +32,15 @@ Public surface:
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platform (e.g. Windows)
+    fcntl = None
 import json
 import os
 import re
 import secrets as _stdlib_secrets
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -56,6 +60,9 @@ META_FILENAME = "meta.json"
 LOCK_FILENAME = ".vault.lock"
 META_VERSION = 1
 VAULT_VERSION = 1
+
+# One-shot guard so the non-POSIX "no vault lock" warning prints once per process.
+_warned_missing_flock = False
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _KDF_PARAMS_RECORD = {
@@ -147,10 +154,29 @@ class SecretsStore:
         STABLE lock file (never on ``vault.tqv``, which is replaced via rename,
         so its lock would not survive the swap) serializes the writers.
 
-        POSIX-only; the daemon targets Unix. The lock is advisory and only
-        guards writers that take it — all in-process write paths do.
+        POSIX uses advisory ``flock``; non-POSIX platforms (no ``fcntl``)
+        degrade to a no-op with a one-time warning. The lock only guards
+        writers that take it — all in-process write paths do.
         """
         self.secrets_dir.mkdir(parents=True, exist_ok=True)
+        if fcntl is None:
+            # Non-POSIX platform (e.g. Windows): fcntl.flock is unavailable.
+            # The in-process dispatch lock already serializes the daemon's
+            # writers; the only path this flock additionally guards is a
+            # standalone CLI racing the daemon, which is not a supported
+            # Windows deployment. Degrade to a no-op (warn once) rather than
+            # crash on import and take down every entry point (F1).
+            global _warned_missing_flock
+            if not _warned_missing_flock:
+                print(
+                    "[tqmemory] warning: cross-process vault lock unavailable "
+                    "(no fcntl on this platform); concurrent CLI+daemon secret "
+                    "writes are not serialized.",
+                    file=sys.stderr,
+                )
+                _warned_missing_flock = True
+            yield
+            return
         fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
