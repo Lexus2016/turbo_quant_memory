@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -314,6 +315,12 @@ def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir:
                 f"vault: {resolved_path}. The secrets/ subtree is hard-isolated "
                 "from semantic_search / hydrate / lint_knowledge_base by design."
             )
+        if not _root_is_allowed(resolved_path, store):
+            raise ValueError(
+                f"Refusing to register an indexing root outside the project "
+                f"tree: {resolved_path}. Set TQMEMORY_ALLOW_EXTERNAL_ROOTS=1 to "
+                f"index roots outside {store.project.project_root}."
+            )
         if resolved_path in seen_paths:
             continue
         seen_paths.add(resolved_path)
@@ -339,6 +346,33 @@ def _resolve_input_path(raw_path: str, *, base_dir: Path) -> Path:
     else:
         candidate = candidate.resolve()
     return candidate
+
+
+def _path_within_root(file_path: Path, root_resolved: Path) -> bool:
+    """True if file_path's real path is inside root_resolved.
+
+    Blocks a .md symlink whose target escapes the indexed tree (audit S1).
+    """
+    try:
+        resolved = file_path.resolve()
+    except OSError:
+        return False
+    try:
+        return resolved == root_resolved or resolved.is_relative_to(root_resolved)
+    except ValueError:
+        return False
+
+
+def _root_is_allowed(resolved_path: Path, store: MemoryStore) -> bool:
+    """Confine indexing roots to the project tree unless explicitly opted in via
+    TQMEMORY_ALLOW_EXTERNAL_ROOTS=1 (audit S2)."""
+    if os.environ.get("TQMEMORY_ALLOW_EXTERNAL_ROOTS") == "1":
+        return True
+    try:
+        project_root = Path(store.project.project_root).resolve()
+    except OSError:
+        return False
+    return _path_within_root(resolved_path, project_root)
 
 
 def _slugify(value: str) -> str:
@@ -369,22 +403,38 @@ def _load_ignore_patterns(root_path: Path) -> list[str]:
 
 def _matches_ignore(relative_posix: str, patterns: list[str]) -> bool:
     """Check if a relative POSIX path matches any ignore pattern."""
+    parts = relative_posix.split("/")
     for pattern in patterns:
         if fnmatch.fnmatch(relative_posix, pattern):
             return True
         # also match against each directory component individually
-        parts = relative_posix.split("/")
         for part in parts[:-1]:  # directories only
             if fnmatch.fnmatch(part, pattern):
                 return True
+        # A slash-less pattern also matches the bare filename, so `secrets.md`
+        # excludes sub/dir/secrets.md too (gitignore semantics; audit S3).
+        if "/" not in pattern and fnmatch.fnmatch(parts[-1], pattern):
+            return True
     return False
 
 
 def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -> list[Path]:
     ignore_patterns = _load_ignore_patterns(root_path)
+    root_resolved = root_path.resolve()
     files: list[Path] = []
     for file_path in root_path.rglob("*.md"):
         if not file_path.is_file():
+            continue
+        # Security (S1): skip a .md whose real path escapes the indexed root
+        # (a symlink to e.g. ~/.aws/credentials), so it cannot be read/exfil'd.
+        # Assumes a static tree during a local single-user index run; a
+        # concurrent check->read swap (TOCTOU) is out of this threat model.
+        if not _path_within_root(file_path, root_resolved):
+            print(
+                f"[tqmemory] skipping .md escaping the indexed root "
+                f"(symlink?): {file_path}",
+                file=sys.stderr,
+            )
             continue
         # Defense-in-depth: even if the boundary guard in _resolve_roots is
         # somehow bypassed, never traverse a secrets vault subtree.

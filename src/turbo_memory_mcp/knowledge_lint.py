@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import posixpath
 import re
 from datetime import datetime, timezone
@@ -366,9 +367,23 @@ def _resolve_input_path(raw_path: str, *, base_dir: Path) -> Path:
 def _iter_markdown_files(
     root_path: Path, *, storage_root: Path | None = None
 ) -> list[Path]:
+    root_resolved = root_path.resolve()
     files: list[Path] = []
     for file_path in root_path.rglob("*.md"):
         if not file_path.is_file():
+            continue
+        # Security (S1): skip a .md whose real path escapes the root (symlink),
+        # mirroring ingestion so the linter cannot read files outside the tree.
+        try:
+            resolved = file_path.resolve()
+            within = resolved == root_resolved or resolved.is_relative_to(root_resolved)
+        except (OSError, ValueError):
+            within = False
+        if not within:
+            print(
+                f"[tqmemory] lint skipping .md escaping the root (symlink?): {file_path}",
+                file=sys.stderr,
+            )
             continue
         if storage_root is not None and is_inside_secrets_storage(
             file_path, storage_root
