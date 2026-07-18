@@ -212,8 +212,8 @@ Enforcement points:
 
 | Step | Expected contract |
 |---|---|
-| Recommended install | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
-| Fallback install | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.2.4` |
+| Recommended install | `uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.23.0` |
+| Fallback install | `python -m pip install git+https://github.com/Lexus2016/turbo_quant_memory@v0.23.0` |
 | Runtime command | `turbo-memory-mcp serve` |
 | Claude Code example | `claude mcp add --scope project tqmemory -- turbo-memory-mcp serve` |
 | Equivalent examples | Codex, Cursor, OpenCode, and Antigravity configs ship in the repository |

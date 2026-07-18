@@ -1,4 +1,4 @@
-# 🧠 Turbo Quant Memory for AI Agents (v0.20.1)
+# 🧠 Turbo Quant Memory for AI Agents (v0.23.0)
 
 > **The first self-installable, trilingual local-first memory & knowledge graph for AI coding agents.** Save up to 60% of your token budget while giving your AI assistant a permanent, hyper-fast, and highly connected brain.
 
@@ -30,7 +30,7 @@ Instead of reading massive files every time, your AI agent uses **Compact Retrie
 
 Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a running tally you can read anytime with `server_info()` (field `usage_stats.headline`). The savings are yours to verify, not ours to promise.
 
-**Live snapshot from a real developer instance (v0.20.1):**
+**Live snapshot from a real developer instance (v0.23.0):**
 
 | What the memory did | Number |
 | :--- | :--- |
@@ -66,7 +66,7 @@ If you prefer the manual way, run this 60-second flow:
 
 1. **Install the CLI Tool:**
    ```bash
-   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.20.1
+   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.23.0
    ```
 
 2. **Add `tqmemory` MCP Server to your client:**

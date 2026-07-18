@@ -32,14 +32,16 @@ def _identity(root: Path) -> ProjectIdentity:
 @pytest.fixture(autouse=True)
 def _real_notes_secrets_chain():
     # Register exactly the NOTES/SECRETS v1->v2 chains so latest_version == 2.
-    # (The global registry may have been cleared by another module's teardown;
-    # registering on top of the real chain would duplicate and raise, so we
-    # clear first, then install a clean single-step chain.)
+    # Save and RESTORE the real registry (rather than clear on teardown) so this
+    # module does not pollute registry-dependent tests that run after it.
+    from turbo_memory_mcp.migrations import registry as _reg
+
+    saved = list(_reg.REGISTRY)
     clear_registry()
     migration(Subsystem.NOTES, from_version=1, to_version=2)(lambda s: None)
     migration(Subsystem.SECRETS, from_version=1, to_version=2)(lambda s: None)
     yield
-    clear_registry()
+    _reg.REGISTRY[:] = saved
 
 
 def _store(tmp_path: Path) -> MemoryStore:

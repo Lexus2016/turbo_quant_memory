@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-18
+
+Hardening release addressing an external acceptance audit of v0.21/0.22.
+
+### Security
+- **Ingestion confinement (S1/S2/S3).** `_iter_markdown_files` (indexing and
+  linting) now skips any `.md` whose real path escapes the indexed root,
+  closing a symlink-based read/exfil of files outside the project (e.g. a
+  `docs/leak.md -> ~/.aws/credentials`). `index_paths` rejects roots outside the
+  project tree unless `TQMEMORY_ALLOW_EXTERNAL_ROOTS=1`. Slash-less
+  `.tqmemoryignore` patterns now also match nested filenames (gitignore
+  semantics).
+
+### Fixed
+- **Corrupt-file resilience (X1-X6).** One malformed JSON no longer breaks core
+  tools: a shared tolerant reader for manifests/relations, isinstance guards in
+  the migration version helpers and telemetry, a strict relations write path
+  that refuses to clobber a corrupt file, a search that skips a candidate whose
+  note JSON is unreadable, and `server_info`/telemetry that isolate per-file
+  read errors.
+- **Phantom migrations on fresh installs (M#1).** A brand-new install no longer
+  reports "pending migrations" forever. Notes manifests are stamped at the
+  current schema only for an empty layout — a legacy layout still runs the tier
+  reclass because the write path never advances the on-disk version — and a
+  fresh storage root stamps the v2 secrets marker.
+- **Windows importability (F1).** The top-level `import fcntl` is guarded so the
+  server imports on non-POSIX platforms; the vault lock degrades to a no-op with
+  a one-time warning there.
+- **Daemon failover (F8) and standalone visibility (F6).** A failover-promoted
+  primary now runs the same migrate/ready gate as normal startup (never serving
+  writes against an unmigrated store) and fails closed on gate error; `health()`
+  emits a `daemon_warning` when the daemon fell back to uncoordinated standalone
+  mode.
+- **Reversible restore (U2).** `migrate --restore-from` snapshots the current
+  state first (printed as an undo handle) and refuses to proceed if that fails.
+- **Snapshot retention (M#9).** `TQMEMORY_SNAPSHOTS_KEEP` is clamped to `>= 2`.
+
+### Docs
+- Corrected the `link_entities` examples (valid `source_uri`/`target_uri`,
+  `note://<id>`, project-root-relative `file://`) and removed the unimplemented
+  "self-cleaning graph" claims across all three READMEs.
+
+### Agent UX
+- `remember_note` docstring lists the exact note kinds; the `doctor`
+  pending-migration hint points at `migrate --dry-run`; `contracts.__all__`
+  exports the newest phase tool-name constants.
+
 ## [0.22.0] - 2026-07-17
 
 ### Added
