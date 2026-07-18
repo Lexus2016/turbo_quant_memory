@@ -434,6 +434,20 @@ def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool
             )
             return 1
     snap_path = Path(path_arg).expanduser().resolve()
+    # U2: snapshot the CURRENT live state before overwriting it, so a wrong
+    # --restore-from is itself reversible — the restore tool is the last-resort
+    # rollback and must not be a one-way door.
+    from .migrations import create_snapshot as _create_snapshot
+
+    try:
+        pre_restore = _create_snapshot(store.storage_root)
+    except Exception as exc:  # noqa: BLE001 - refuse to restore if we cannot back up first
+        print(
+            f"error: could not snapshot the current state before restore: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Snapshotted current state before restore (undo handle): {pre_restore}")
     try:
         restore_snapshot(store.storage_root, snap_path)
     except (FileNotFoundError, ValueError, OSError) as exc:

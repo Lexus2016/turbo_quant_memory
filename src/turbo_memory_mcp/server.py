@@ -434,12 +434,23 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
 
 def _tool_health(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     pending, hint = _migration_pending_signal(cwd=cwd, environ=environ)
-    return build_health_payload(
+    role = _cached_bootstrap.role if _cached_bootstrap else None
+    payload = build_health_payload(
         migrations_pending=pending,
         migrations_hint=hint,
-        daemon_role=_cached_bootstrap.role if _cached_bootstrap else None,
+        daemon_role=role,
         migration_auto_result=_auto_migration_result,
     )
+    if role == "standalone":
+        # F6: make the silent standalone fallback loud. In this mode there is no
+        # cross-process coordination for notes/relations/manifests/LanceDB.
+        payload["daemon_warning"] = (
+            "running in uncoordinated standalone mode (daemon bootstrap fell "
+            "back after retries); concurrent processes on the same storage root "
+            "are NOT serialized. Restart, or ensure a single client, if you rely "
+            "on multi-client coordination."
+        )
+    return payload
 
 
 def _tool_server_info(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
@@ -798,14 +809,37 @@ class ProxyRuntime:
                 def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
                     return local_dispatcher(tool, kwargs)
 
+                ready = threading.Event()
+
                 listener = DaemonListener(
                     bootstrap.endpoint,
                     _listener_handler,
                     dispatch_lock=self._dispatch_lock,
+                    ready_event=ready,
                 )
                 listener.start()
                 self._listener = listener
                 self._endpoint = bootstrap.endpoint
+                # F8: gate the promoted primary through the same
+                # migrate -> warn -> ready path as a normal startup so it never
+                # serves writes against a possibly-unmigrated store. This runs
+                # under _state_lock (like acquire_daemon_role above): a
+                # concurrent caller blocks until ready rather than briefly
+                # busy-failing on a stale dispatcher — correct, at the cost of a
+                # short availability dip if a migration is pending during
+                # failover. On gate failure, tear the half-promoted primary down
+                # (fail closed) instead of leaving the listener up with the
+                # ready gate stuck shut.
+                try:
+                    _gate_primary_ready(ready)
+                except BaseException:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
+                    self._listener = None
+                    self._endpoint = None
+                    raise
                 self._active_dispatcher = local_dispatcher
             elif bootstrap.role == "proxy" and bootstrap.client is not None:
                 self._client = bootstrap.client
@@ -972,6 +1006,16 @@ def run_stdio_server() -> None:
         _run_standalone()
 
 
+def _gate_primary_ready(ready: threading.Event) -> None:
+    """Run the startup migration + pending-migration warning, then open the
+    ready gate. Shared by normal startup (_run_primary) and failover promotion
+    (ProxyRuntime._failover) so a promoted primary never serves writes against a
+    possibly-unmigrated store (audit F8)."""
+    _startup_auto_migrate()
+    _warn_about_pending_migrations()
+    ready.set()
+
+
 def _run_primary(bootstrap: BootstrapResult) -> None:
     endpoint = bootstrap.endpoint
     assert endpoint is not None  # guarded by run_stdio_server
@@ -996,9 +1040,7 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     )
     listener.start()
     try:
-        _startup_auto_migrate()
-        _warn_about_pending_migrations()
-        ready.set()
+        _gate_primary_ready(ready)
         build_server(dispatcher).run(transport="stdio")
     except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
         _reraise_unless_stdio_disconnect(exc)
