@@ -91,6 +91,10 @@ def isolated_registry(monkeypatch, tmp_path):
 def _make_projects(storage_root: Path, ids: list[str]) -> None:
     for pid in ids:
         (storage_root / "projects" / pid).mkdir(parents=True, exist_ok=True)
+    # A pre-v0.7 (secrets-era) install has project buckets but NO secrets
+    # marker. A fresh-store fixture now stamps the v2 marker (M#1); drop it so
+    # these tests exercise the legacy detection/provisioning path.
+    (storage_root / "secrets-manifest.json").unlink(missing_ok=True)
 
 
 # --- direct upgrade function ---
@@ -248,4 +252,7 @@ def test_secrets_manifest_path_at_storage_root(store):
 
 
 def test_read_secrets_manifest_none_when_missing(store):
+    # A fresh-store fixture stamps the v2 marker (M#1); remove it to test the
+    # genuinely-missing case.
+    store.secrets_manifest_path().unlink(missing_ok=True)
     assert store.read_secrets_manifest() is None

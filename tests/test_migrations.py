@@ -1443,9 +1443,17 @@ def test_no_infinite_migrate_loop_after_post_migration_writes(
     def _proxy(store_arg):
         upgrade_notes_v1_to_v2(store_arg)
 
-    # Pre-migration: two writes lay down a v1 manifest.
+    # Pre-migration: two writes, then force the legacy v1 baseline on disk. A
+    # fresh install now correctly stamps v2 (the M#1 fix), so simulate the
+    # pre-migration v1 state directly instead of relying on writes minting v1.
     store.write_project_note("note 1", "x", note_kind="decision")
     store.write_project_note("note 2", "y", note_kind="lesson")
+    for _mpath in (store.project_manifest_path(), store.global_manifest_path()):
+        if not _mpath.exists():
+            continue
+        _m = json.loads(_mpath.read_text(encoding="utf-8"))
+        _m["format_version"] = 1
+        _mpath.write_text(json.dumps(_m), encoding="utf-8")
     assert store.read_project_manifest()["format_version"] == 1
 
     # Run the migration: project + global manifests should land at v2.

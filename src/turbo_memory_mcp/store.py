@@ -51,13 +51,19 @@ DEFAULT_PROVENANCE = NOTE_PROVENANCE_AGENT
 MARKDOWN_FORMAT_VERSION = 1
 RETRIEVAL_FORMAT_VERSION = 4
 USAGE_STATS_FORMAT_VERSION = 2
-NOTES_FORMAT_VERSION = 1
+NOTES_FORMAT_VERSION = 2
 SECRETS_FORMAT_VERSION = 2
-# RETRIEVAL is at 4 (post multilingual re-embed; v3 was Phase 3 BM25 FTS index). NOTES still ships at 1
-# because legacy installs need the v1->v2 reclass to run before manifests bump.
-# SECRETS ships at 2: v1 is the conceptual "subsystem exists but no per-project
-# vaults provisioned yet" baseline (matches NOTES' legacy-v1 convention); the
-# v1->v2 migration walks projects/* and provisions an empty vault per project.
+# RETRIEVAL is at 4 (post multilingual re-embed; v3 was Phase 3 BM25 FTS index).
+# NOTES ships at 2: a fresh install stamps 2 (nothing to migrate) while a
+# pre-Phase-2 layout is detected by the ABSENCE of format_version
+# (runner._legacy_v1_or_format_version), NOT by this constant — and
+# write_project_manifest never advances the on-disk version
+# (_notes_manifest_format_version), so a legacy manifest write cannot skip the
+# v1->v2 tier reclass. SECRETS ships at 2: v1 is the "subsystem exists but no
+# per-project vaults provisioned yet" baseline; ensure_layout stamps the v2
+# secrets-manifest marker on a genuinely fresh storage root so it reports no
+# phantom pending migration, while a legacy root (buckets but no marker) still
+# runs the provisioning migration.
 
 
 def tier_for_kind(note_kind: str | None) -> str:
@@ -160,8 +166,32 @@ class MemoryStore:
         return _read_json_if_exists(self.secrets_manifest_path())
 
     def ensure_layout(self) -> None:
+        self._ensure_fresh_secrets_marker()
         self.project_notes_dir().mkdir(parents=True, exist_ok=True)
         self.global_notes_dir().mkdir(parents=True, exist_ok=True)
+
+    def _ensure_fresh_secrets_marker(self) -> None:
+        """Stamp the v2 secrets manifest on a genuinely fresh storage root so a
+        new install does not report a phantom SECRETS pending migration (M#1).
+
+        Only writes when the marker is absent AND no project bucket exists yet.
+        A root that already has buckets but no marker is a pre-v0.7 install; the
+        marker stays absent so the SECRETS v1->v2 provisioning migration runs.
+        """
+        marker = self.secrets_manifest_path()
+        if marker.exists():
+            return
+        projects_root = self.storage_root / "projects"
+        try:
+            has_buckets = projects_root.is_dir() and any(projects_root.iterdir())
+        except OSError:
+            has_buckets = True  # can't tell -> be conservative, don't stamp
+        if has_buckets:
+            return
+        _write_json_atomic(
+            marker,
+            {"format_version": SECRETS_FORMAT_VERSION, "updated_at": utc_now()},
+        )
 
     def ensure_markdown_layout(self, project_id: str | None = None) -> None:
         self.project_markdown_roots_dir(project_id).mkdir(parents=True, exist_ok=True)
@@ -178,12 +208,11 @@ class MemoryStore:
     def write_project_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
         existing = _read_json_if_exists_safe(self.project_manifest_path(), label="project manifest") or {}
-        # Preserve any format_version already on disk (e.g. bumped by the
-        # NOTES migration to 2). Otherwise fall back to the in-code
-        # baseline. Without this, every remember_note would silently
-        # revert format_version to the constant and re-trigger the
-        # detect/apply loop after each migration.
-        format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
+        # Preserve the on-disk version and never advance it here — the
+        # migration runner owns bumps. Stamp the current schema only for a
+        # genuinely empty/new notes layout, so a fresh install reports no
+        # phantom pending migration and a legacy write cannot skip the reclass.
+        format_version = self._notes_manifest_format_version(existing, self.project_notes_dir())
         # Accumulate every identity source ever resolved to this bucket. A
         # later remote-add (or -remove) then keeps pinning the same id via
         # reconcile_project_identity instead of minting a new bucket, and the
@@ -212,7 +241,7 @@ class MemoryStore:
     def write_global_manifest(self) -> dict[str, Any]:
         self.ensure_layout()
         existing = _read_json_if_exists_safe(self.global_manifest_path(), label="global manifest") or {}
-        format_version = max(int(existing.get("format_version", 0)), NOTES_FORMAT_VERSION)
+        format_version = self._notes_manifest_format_version(existing, self.global_notes_dir())
         manifest = {
             "scope": GLOBAL_SCOPE,
             "storage_root": str(self.storage_root),
@@ -224,6 +253,24 @@ class MemoryStore:
 
     def read_global_manifest(self) -> dict[str, Any] | None:
         return _read_json_if_exists(self.global_manifest_path())
+
+    def _notes_manifest_format_version(self, existing: Mapping[str, Any], notes_dir: Path) -> int:
+        """Format-version to stamp on a notes manifest write (audit M#1).
+
+        Never advances the on-disk version — the migration runner owns bumps;
+        advancing here would make a manifest write skip the v1->v2 tier reclass
+        for a legacy install. A brand-new layout (no versioned manifest and no
+        notes on disk) starts at the current schema so it reports no phantom
+        pending migration; a pre-Phase-2 layout (notes exist without a versioned
+        manifest) reports v1 so the reclass runs.
+        """
+        on_disk = existing.get("format_version")
+        if on_disk is not None:
+            try:
+                return int(on_disk)
+            except (TypeError, ValueError):
+                pass  # invalid version -> treat like missing (records -> v1)
+        return 1 if _dir_has_records(notes_dir) else NOTES_FORMAT_VERSION
 
     def write_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any]:
         resolved_project_id = project_id or self.project.project_id
@@ -1076,6 +1123,21 @@ def sha256_path(value: str | Path) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _dir_has_records(path: Path) -> bool:
+    """True if a notes directory holds at least one real ``*.json`` record.
+
+    Ignores partial-write temp files (``.tmp-*.json``) so a crashed write does
+    not make a fresh install look like a legacy one.
+    """
+    if not path.exists():
+        return False
+    for entry in path.glob("*.json"):
+        if entry.name.startswith(".tmp-"):
+            continue
+        return True
+    return False
 
 
 def _read_json(path: Path) -> dict[str, Any]:
