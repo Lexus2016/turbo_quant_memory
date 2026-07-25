@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from turbo_memory_mcp import __version__
+from turbo_memory_mcp import skill_install as skill_install_module
+from turbo_memory_mcp.cli import main
 from turbo_memory_mcp.skill_install import (
     CLIENT_SKILL_DIRS,
     SKILL_NAME,
+    InstallResult,
     install_skill,
     load_skill,
     parse_skill_version,
@@ -130,9 +133,28 @@ def test_install_reports_failed_target_and_continues(tmp_path: Path) -> None:
     assert by_client["agents"].status == "installed"  # other targets still written
 
 
-import turbo_memory_mcp.skill_install as skill_install_module
-from turbo_memory_mcp.cli import main
-from turbo_memory_mcp.skill_install import InstallResult
+def test_install_treats_unreadable_copy_as_reinstalled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = _skill_file(tmp_path, "agents")
+    target.parent.mkdir(parents=True)
+    target.write_text("---\nversion: 0.1.0\n---\n", encoding="utf-8")
+
+    # chmod(0) would also block the rewrite -> "failed", so simulate an
+    # unreadable copy by raising OSError from read_text for this path only.
+    real_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args, **kwargs) -> str:
+        if self == target:
+            raise PermissionError(13, "Permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    results = install_skill(tmp_path)
+
+    assert results[0].status == "reinstalled"
+    assert results[0].old_version is None
 
 
 def test_cli_skill_install_routes_and_reports(

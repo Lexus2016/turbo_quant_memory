@@ -27,7 +27,7 @@ def load_skill() -> tuple[str, str]:
 
 
 def parse_skill_version(text: str) -> str | None:
-    """Extract the `version:` frontmatter marker, or None when absent."""
+    """Extract the first `version:` line marker, or None when absent."""
     match = _VERSION_RE.search(text)
     return match.group(1) if match else None
 
@@ -78,11 +78,12 @@ def install_skill(
     results: list[InstallResult] = []
     for name, target in resolve_targets(home, client):
         existed = target.is_file()
-        old_version = (
-            parse_skill_version(target.read_text(encoding="utf-8"))
-            if existed
-            else None
-        )
+        old_version: str | None = None
+        if existed:
+            try:
+                old_version = parse_skill_version(target.read_text(encoding="utf-8"))
+            except OSError:
+                old_version = None  # unreadable copy -> treat as reinstalled
         if old_version == new_version:
             results.append(
                 InstallResult(name, target, "current", old_version, new_version)
