@@ -128,3 +128,58 @@ def test_install_reports_failed_target_and_continues(tmp_path: Path) -> None:
     assert by_client["claude"].status == "failed"
     assert by_client["claude"].error
     assert by_client["agents"].status == "installed"  # other targets still written
+
+
+import turbo_memory_mcp.skill_install as skill_install_module
+from turbo_memory_mcp.cli import main
+from turbo_memory_mcp.skill_install import InstallResult
+
+
+def test_cli_skill_install_routes_and_reports(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / ".claude").mkdir()
+
+    exit_code = main(["skill", "install"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "agents" in out and "claude" in out
+    assert _skill_file(tmp_path, "agents").is_file()
+
+
+def test_cli_skill_install_unknown_client(capsys) -> None:
+    exit_code = main(["skill", "install", "--client", "emacs"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "unknown client" in captured.err
+    assert "agents" in captured.err  # known names are listed
+
+
+def test_cli_skill_install_failure_exits_1(monkeypatch, capsys) -> None:
+    def fake_install_skill(home=None, *, client=None, dry_run=False):
+        return [
+            InstallResult("agents", Path("/x"), "failed", None, "9.9.9", "boom")
+        ]
+
+    monkeypatch.setattr(skill_install_module, "install_skill", fake_install_skill)
+
+    exit_code = main(["skill", "install"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "FAIL" in captured.out
+
+
+def test_cli_skill_install_dry_run(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    exit_code = main(["skill", "install", "--dry-run"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "would" in out
+    assert not _skill_file(tmp_path, "agents").exists()

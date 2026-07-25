@@ -149,6 +149,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.set_defaults(handler=_handle_doctor)
 
+    skill_parser = subparsers.add_parser(
+        "skill",
+        help="Manage the bundled agent skill (SKILL.md).",
+        description="Manage the bundled agent skill (SKILL.md).",
+    )
+    skill_subparsers = skill_parser.add_subparsers(
+        dest="skill_command", metavar="action"
+    )
+    skill_install_parser = skill_subparsers.add_parser(
+        "install",
+        help="Install or upgrade the agent skill into detected skill dirs.",
+        description=(
+            "Copy the canonical SKILL.md into ~/.agents/skills/ (always) and "
+            "every detected client skill dir. Idempotent: an older installed "
+            "copy is upgraded, an equal one is left untouched. Re-run after "
+            "'uv tool upgrade'."
+        ),
+    )
+    skill_install_parser.add_argument(
+        "--client",
+        metavar="NAME",
+        help="Install only for this client (agents, claude, gemini, kimi, codex).",
+    )
+    skill_install_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report planned writes without touching disk.",
+    )
+    skill_install_parser.set_defaults(handler=_handle_skill_install)
+
     return parser
 
 
@@ -618,6 +648,44 @@ def _handle_doctor(_: argparse.Namespace) -> int:
     else:
         print(f"\n{issues} issue(s) found. Review WARN/FAIL items above.")
     return issues
+
+
+def _handle_skill_install(args: argparse.Namespace) -> int:
+    """Install/upgrade the bundled agent skill into detected skill dirs."""
+    from .skill_install import CLIENT_SKILL_DIRS, install_skill
+
+    client = args.client
+    if client is not None and client not in CLIENT_SKILL_DIRS:
+        known = ", ".join(sorted(CLIENT_SKILL_DIRS))
+        print(f"error: unknown client {client!r} (known: {known})", file=sys.stderr)
+        return 2
+
+    try:
+        results = install_skill(client=client, dry_run=args.dry_run)
+    except Exception as exc:  # noqa: BLE001 - packaging bug must fail loudly
+        print(f"error: cannot load packaged skill: {exc}", file=sys.stderr)
+        return 1
+
+    failures = 0
+    for r in results:
+        would = "would " if args.dry_run and r.status != "current" else ""
+        if r.status == "failed":
+            failures += 1
+            print(f"  [FAIL] {r.client}: {r.target} — {r.error}")
+        elif r.status == "current":
+            print(f"  [OK] {r.client}: already current (v{r.new_version}) — {r.target}")
+        elif r.status == "installed":
+            print(f"  [OK] {r.client}: {would}installed v{r.new_version} — {r.target}")
+        else:  # upgraded / reinstalled
+            old = r.old_version or "unknown"
+            print(
+                f"  [OK] {r.client}: {would}{r.status} "
+                f"v{old} -> v{r.new_version} — {r.target}"
+            )
+    if failures:
+        print(f"\n{failures} target(s) failed.", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
