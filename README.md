@@ -54,7 +54,7 @@ Simply copy the link to this repository:
 
 And send this exact prompt to your AI assistant (Claude Code, Gemini CLI, Codex, etc.):
 
-> "Hey! Please install and configure the Turbo Quant Memory server for my workspace using this repository: https://github.com/Lexus2016/turbo_quant_memory. Read the README.md, follow the 'Instructions for AI Agents' at the bottom of the file to install it via `uv tool`, register the `tqmemory` MCP server, run health checks, index this project, and set up our persistent memory. Let me know when you're ready!"
+> "Hey! Please install and configure the Turbo Quant Memory server for my workspace using this repository: https://github.com/Lexus2016/turbo_quant_memory. Read the README.md, follow the 'Instructions for AI Agents' at the bottom of the file to install it via `uv tool`, register the `tqmemory` MCP server, run `turbo-memory-mcp skill install`, run health checks, index this project, and set up our persistent memory. Let me know when you're ready!"
 
 Your AI agent will automatically clone, install, register, and index everything for you!
 
@@ -231,41 +231,13 @@ If your threat model is bigger than ours, use a dedicated secret manager (1Passw
 
 > [!IMPORTANT]
 > **ATTENTION AI AGENT (Claude, Gemini, Codex, or Antigravity):**
-> You are equipped with the `tqmemory` MCP server. This is your long-term memory. Read and obey these instructions to ensure seamless integration and zero-friction memory retrieval.
-
-### 1. Pre-Flight Ritual (Every Session Start)
-1. **Check Migrations & Health:** Call `health()` and `server_info()`. If `migrations_pending` (in `health`) or `migrations.pending` (in `server_info`) is `true`, surface the `migrations_hint` verbatim to the user so they can run the CLI upgrade. **Do not run `migrate --apply` yourself** as it requires closing active MCP clients.
-2. **Resume Where You Left Off:** At session start — or right after a context compaction — call `recent_context()` first. It is a query-free bootstrap that returns your most recently updated notes (newest first), **including session `handoff` notes** that a plain `semantic_search` hides by default. This is the reliable "where did I leave off" entry point when you do not yet know what to query.
-3. **Retrieve Context:** For a specific task, run `semantic_search(query="<task_topic>", scope="hybrid")` to retrieve existing architectural decisions, styling rules, lessons, or guidelines. To recover a session handoff by query, pass `tier_filter=["episodic"]`. When asking "what did we decide/learn about X", pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks.
-
-### 2. Memory Writing Discipline
-When you learn something important, solve a complex bug, or make an architectural decision, **immediately save it** using `remember_note()`. Do not wait until the end of the session.
-* **Lessons (`kind="lesson"`):** Store hard-won patterns or bug fixes.
-* **Decisions (`kind="decision"`):** Store structural choices or tooling decisions.
-* **Patterns (`kind="pattern"`):** Store reusable templates or styling conventions.
-* **Handoffs (`kind="handoff"`):** Store episodic progress before pausing or ending a session (automatically assigned to `episodic` tier).
-
-**User-flagged notes:** when the USER explicitly asks to remember something ("remember this", "save this to my knowledge base"), call `remember_note(..., provenance="human-explicit")`. Notes you write on your own initiative keep the default `provenance="agent"` — human-flagged notes rank above agent-written ones of equal relevance.
-
-*Format your notes in English. Keep them concise, technical, and actionable. Add semantic tags.*
-
-### 3. Knowledge Graph Linking
-Use relations to connect ideas, files, and tasks:
-* When saving a note about a bug fix in `src/auth.py`, call `link_entities(source_uri="note://<note_id>", target_uri="file://src/auth.py", relation_type="fixes")`. File URIs are **project-root-relative** (not absolute).
-* Link related notes: `link_entities(source_uri="note://<new_note>", target_uri="note://<old_note>", relation_type="supersedes")`.
-* Link files to tasks: `link_entities(source_uri="file://src/auth.py", target_uri="task://TASK-101", relation_type="implements")`.
-
-### 4. Zero Ambiguity & Memory Updates
-* **Deprecate Outdated Notes:** When a pattern or decision changes, write the new note, then call `deprecate_note()` on the old one to avoid search pollution.
-* **No Smoke Notes:** Do not write temporary or smoke test notes.
-* **Provenance:** Always preserve file paths and line numbers in your memory payloads.
-
-### 5. Secrets Vault (v0.7.0+)
-* **Discover, don't guess:** Find the right `get_secret(name)` call by `semantic_search` for a `pattern`-kind recipe note that documents the credential. Never fish names from chat history.
-* **Fetch through the dedicated field:** `get_secret("name")` returns the value in `secret_value`. Pass it programmatically (env var injection, subprocess argument). Do NOT echo it into summaries, logs, or `remember_note`.
-* **Write what the user gives you:** if the user pastes a credential into the chat (or you generated one inside the conversation), just call `set_secret(name, value)`. You know the exact active `project_id` from cwd resolution; the user running the CLI from terminal may not. Do NOT push the user back to the CLI just to redo what is already done — the exposure happened when they typed it; friction won't undo it.
-* **Reach for the CLI only as prevention:** if the user is ABOUT to share a credential but hasn't pasted yet, then suggest `turbo-memory-mcp secret-set NAME` from a terminal — getpass keeps the value out of the chat in the first place. After the value is already in chat, CLI is friction with no payoff.
-* **Surface `master_key_unavailable` errors verbatim:** the response carries a `setup_hint` field with the exact `export` / `keyring set` commands the user needs. Print it, then stop — do not try to invent keys.
+> Your complete operating manual ships as the **`turbo-quant-memory` agent skill**, bundled with this package. Install it once and every agent on this machine knows how to detect, install, and operate the `tqmemory` memory server:
+>
+> ```bash
+> turbo-memory-mcp skill install
+> ```
+>
+> The command copies the canonical `SKILL.md` into all detected agent skill directories (`~/.agents/skills/` always, plus detected client dirs) and upgrades older copies. Re-run it after every `uv tool upgrade`. The raw skill file also ships inside the installed package at `turbo_memory_mcp/skills/turbo-quant-memory/SKILL.md` and lives in this repository under `src/turbo_memory_mcp/skills/`.
 
 ---
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `turbo-quant-memory` agent skill: the canonical agent operating manual (`SKILL.md`) now ships as a package resource; `turbo-memory-mcp skill install` deploys it into `~/.agents/skills/` and all detected client skill dirs — idempotent, upgrades older copies (`--client`, `--dry-run`).
+
+### Changed
+- README "Instructions for AI Agents" sections (en/ru/uk) now point to the bundled skill instead of duplicating the full directive.
+
 ## [0.23.0] - 2026-07-18
 
 Hardening release addressing an external acceptance audit of v0.21/0.22.

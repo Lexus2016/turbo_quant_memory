@@ -59,6 +59,7 @@ The four secrets tools (`set_secret`, `get_secret`, `list_secrets`, `delete_secr
 - Keep user-facing documentation available in English, Ukrainian, and Russian.
 - Keep the design simple, local-first, and easy to deploy.
 - Avoid product claims that imply direct KV-cache control over hosted models.
+- The `turbo-quant-memory` agent skill (`src/turbo_memory_mcp/skills/turbo-quant-memory/SKILL.md`) is the canonical agent operating manual: update it whenever memory policy, tool recipes, or install flows change, and bump its `version` frontmatter field together with the package version on every release (a test enforces the sync).
 
 ## Current Planning Context
 
