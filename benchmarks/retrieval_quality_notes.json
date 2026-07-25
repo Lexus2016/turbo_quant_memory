@@ -1,0 +1,139 @@
+{
+  "generated_at": "2026-07-25T14:41:36.530741+00:00",
+  "memory_home_source": "/Users/admin/.turbo-quant-memory",
+  "top_k": 10,
+  "tier_filter": [
+    "durable",
+    "episodic",
+    "reference"
+  ],
+  "recency_bonus_max": 0.05,
+  "corpora": [
+    {
+      "label": "global",
+      "scope": "global",
+      "notes_active": 77,
+      "queries": 77,
+      "recency_on": {
+        "cases": 77,
+        "hit@1": 0.8441558441558441,
+        "hit@3": 0.8441558441558441,
+        "hit@5": 0.8441558441558441,
+        "mrr": 0.8441558441558441,
+        "per_tier": {
+          "durable": {
+            "cases": 74,
+            "hit@1": 0.8378378378378378,
+            "hit@3": 0.8378378378378378,
+            "hit@5": 0.8378378378378378,
+            "mrr": 0.8378378378378378
+          },
+          "episodic": {
+            "cases": 3,
+            "hit@1": 1.0,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 1.0
+          }
+        }
+      },
+      "recency_off": {
+        "cases": 77,
+        "hit@1": 0.8441558441558441,
+        "hit@3": 0.8441558441558441,
+        "hit@5": 0.8441558441558441,
+        "mrr": 0.8441558441558441,
+        "per_tier": {
+          "durable": {
+            "cases": 74,
+            "hit@1": 0.8378378378378378,
+            "hit@3": 0.8378378378378378,
+            "hit@5": 0.8378378378378378,
+            "mrr": 0.8378378378378378
+          },
+          "episodic": {
+            "cases": 3,
+            "hit@1": 1.0,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 1.0
+          }
+        }
+      },
+      "delta_on_minus_off": {
+        "hit@1": 0.0,
+        "hit@3": 0.0,
+        "hit@5": 0.0,
+        "mrr": 0.0
+      },
+      "rank_changes": {
+        "up": 0,
+        "down": 0,
+        "unchanged": 77
+      }
+    },
+    {
+      "label": "project:CATS",
+      "scope": "project",
+      "notes_active": 507,
+      "queries": 507,
+      "recency_on": {
+        "cases": 507,
+        "hit@1": 0.9881656804733728,
+        "hit@3": 1.0,
+        "hit@5": 1.0,
+        "mrr": 0.9940828402366864,
+        "per_tier": {
+          "durable": {
+            "cases": 430,
+            "hit@1": 0.9883720930232558,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 0.9941860465116279
+          },
+          "episodic": {
+            "cases": 77,
+            "hit@1": 0.987012987012987,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 0.9935064935064936
+          }
+        }
+      },
+      "recency_off": {
+        "cases": 507,
+        "hit@1": 0.9901380670611439,
+        "hit@3": 1.0,
+        "hit@5": 1.0,
+        "mrr": 0.995069033530572,
+        "per_tier": {
+          "durable": {
+            "cases": 430,
+            "hit@1": 0.9906976744186047,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 0.9953488372093023
+          },
+          "episodic": {
+            "cases": 77,
+            "hit@1": 0.987012987012987,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr": 0.9935064935064936
+          }
+        }
+      },
+      "delta_on_minus_off": {
+        "hit@1": -0.002,
+        "hit@3": 0.0,
+        "hit@5": 0.0,
+        "mrr": -0.001
+      },
+      "rank_changes": {
+        "up": 0,
+        "down": 1,
+        "unchanged": 506
+      }
+    }
+  ]
+}

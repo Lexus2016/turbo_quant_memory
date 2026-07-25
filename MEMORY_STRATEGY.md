@@ -104,7 +104,8 @@ This keeps `global` small, deliberate, and resistant to cross-project contaminat
 1. merge `project` and `global` candidates
 2. apply a strong project bonus
 3. prefer Markdown blocks over memory notes when matches are close
-4. break ties by project preference, then newer `updated_at`, then stable identity
+4. add a small recency bonus (≤ 0.05, decaying over 30 days) so freshly updated rows win close races against older rows with similar lexicon
+5. break ties by project preference, then newer `updated_at`, then stable identity
 
 By default, retrieval searches both indexed Markdown blocks and persistent memory notes.
 

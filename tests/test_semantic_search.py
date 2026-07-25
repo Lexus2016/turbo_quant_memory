@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -386,6 +387,118 @@ def test_semantic_search_rejects_unknown_source_filter(tmp_path: Path) -> None:
     remember_note_impl("Note", "Project auth note.", kind="lesson", environ=env)
     with pytest.raises(ValueError, match="source_filter"):
         semantic_search_impl("auth", scope="project", source_filter="bogus", environ=env)
+
+
+def test_semantic_search_reindexes_note_after_on_disk_content_edit(tmp_path: Path) -> None:
+    """A hand-edited note JSON must be re-embedded on the next search — the
+    mirror row must not keep ranking the note by its pre-edit text."""
+    env = _test_env(tmp_path)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    note = store.write_project_note(
+        "Runtime Guide",
+        "Plain operational note with no searchable keywords.",
+        note_kind="lesson",
+    )
+    first = semantic_search_impl("auth refresh rotation session cache", scope="project", limit=5, environ=env)
+    assert first["result_count"] == 1
+    assert "Plain operational note" in first["items"][0]["compressed_summary"]
+
+    note_path = store.project_note_path(note["note_id"])
+    payload = json.loads(note_path.read_text(encoding="utf-8"))
+    payload["content"] = "Auth refresh rotation session cache runbook."
+    payload["updated_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    note_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    second = semantic_search_impl("auth refresh rotation session cache", scope="project", limit=5, environ=env)
+    assert second["result_count"] == 1
+    assert "Auth refresh rotation" in second["items"][0]["compressed_summary"]
+
+
+def test_semantic_search_reindexes_global_note_after_on_disk_content_edit(tmp_path: Path) -> None:
+    """Same stale-mirror guard for the global scope, whose search path never
+    ran drift repair at all."""
+    env = _test_env(tmp_path)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    note = store.write_global_note(
+        "Global Runtime Guide",
+        "Plain operational note with no searchable keywords.",
+        note_kind="lesson",
+    )
+    first = semantic_search_impl("auth refresh rotation session cache", scope="global", limit=5, environ=env)
+    assert first["result_count"] == 1
+    assert "Plain operational note" in first["items"][0]["compressed_summary"]
+
+    note_path = store.global_note_path(note["note_id"])
+    payload = json.loads(note_path.read_text(encoding="utf-8"))
+    payload["content"] = "Auth refresh rotation session cache runbook."
+    payload["updated_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    note_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    second = semantic_search_impl("auth refresh rotation session cache", scope="global", limit=5, environ=env)
+    assert second["result_count"] == 1
+    assert "Auth refresh rotation" in second["items"][0]["compressed_summary"]
+
+
+def test_semantic_search_recency_bonus_lifts_fresh_note_over_older_close_match(tmp_path: Path) -> None:
+    """A fresh note must win a CLOSE race against an older note with slightly
+    stronger lexical overlap — the case reported live, where months-old notes
+    with similar vocabulary outranked the current one.
+
+    With the KeywordEmbedder both notes share the same dense vector, so the
+    margin comes only from _lexical_bonus: old=0.144 vs fresh=0.112 (~0.032).
+    A capped recency bonus (<= 0.05) flips exactly this band and no more.
+    """
+    env = _test_env(tmp_path)
+    old_ts = (datetime.now(UTC) - timedelta(days=60)).isoformat().replace("+00:00", "Z")
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    old_note = store.write_project_note(
+        "Auth refresh rotation notes",
+        "Guide for auth and refresh and rotation.",
+        note_kind="lesson",
+    )
+    # write_project_note always stamps updated_at=now; backdate it on disk so
+    # the mirror row indexes the old timestamp (this is the state under test).
+    old_path = store.project_note_path(old_note["note_id"])
+    old_payload = json.loads(old_path.read_text(encoding="utf-8"))
+    old_payload["updated_at"] = old_ts
+    old_path.write_text(json.dumps(old_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    store.write_project_note(
+        "Rotation practice",
+        "Guide for auth and refresh and rotation.",
+        note_kind="lesson",
+    )
+
+    payload = semantic_search_impl("auth refresh rotation session cache", scope="project", limit=5, environ=env)
+
+    assert payload["result_count"] == 2
+    assert payload["items"][0]["title"] == "Rotation practice"
+
+
+def test_semantic_search_recency_bonus_does_not_override_a_stronger_old_match(tmp_path: Path) -> None:
+    """Guard rail: the bonus is small by design. An old note that is a clearly
+    better match (gap > 0.05) must still outrank a fresh weaker one."""
+    env = _test_env(tmp_path)
+    old_ts = (datetime.now(UTC) - timedelta(days=60)).isoformat().replace("+00:00", "Z")
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    old_note = store.write_project_note(
+        "Auth refresh rotation session cache",
+        "Auth refresh rotation session cache runbook.",
+        note_kind="lesson",
+    )
+    old_path = store.project_note_path(old_note["note_id"])
+    old_payload = json.loads(old_path.read_text(encoding="utf-8"))
+    old_payload["updated_at"] = old_ts
+    old_path.write_text(json.dumps(old_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    store.write_project_note(
+        "Rotation practice",
+        "Guide for auth and refresh and rotation.",
+        note_kind="lesson",
+    )
+
+    payload = semantic_search_impl("auth refresh rotation session cache", scope="project", limit=5, environ=env)
+
+    assert payload["result_count"] == 2
+    assert payload["items"][0]["title"] == "Auth refresh rotation session cache"
 
 
 def test_source_filter_holds_on_every_path_including_fallback(tmp_path: Path) -> None:

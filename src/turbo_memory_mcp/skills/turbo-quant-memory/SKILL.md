@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.24.1
+version: 0.25.0
 ---
 
 # Turbo Quant Memory (tqmemory)

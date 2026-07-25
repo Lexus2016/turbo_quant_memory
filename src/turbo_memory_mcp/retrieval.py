@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence
 
 from .contracts import build_search_payload, build_semantic_item_payload
@@ -27,6 +27,13 @@ MARKDOWN_KIND_BONUS = 0.02
 # close-but-not-top human note. UNCALIBRATED heuristic — tune on a real corpus
 # (see lesson e1b9b1df42094746 on the P1 threshold miscalibration).
 PROVENANCE_HUMAN_BONUS = 0.06
+# Recency bonus: a fresh row wins a CLOSE race against an older row with
+# slightly stronger lexicon (the live-reported failure where months-old notes
+# outranked the current one). Decays linearly to 0 over RECENCY_WINDOW_DAYS and
+# is capped well below a real relevance gap, so it never buries a clearly
+# better old match.
+RECENCY_BONUS_MAX = 0.05
+RECENCY_WINDOW_DAYS = 30.0
 MAX_SEMANTIC_LIMIT = 20
 AMBIGUOUS_SCORE_DELTA = 0.03
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -164,6 +171,7 @@ def _query_scope(
         # applies it — the API contract must hold on every path.
         rows = [row for row in rows if row.get("source_kind") in set(source_kinds)]
     candidates: list[dict[str, Any]] = []
+    now_epoch = datetime.now(UTC).timestamp()
     for row in rows:
         base_score = _distance_to_score(float(row.get("_distance", 1.0)))
         lexical_bonus = _lexical_bonus(row, query)
@@ -180,8 +188,10 @@ def _query_scope(
             except Exception:  # noqa: BLE001 — advisory; never break search
                 is_human_flagged = False
         provenance_bonus = PROVENANCE_HUMAN_BONUS if is_human_flagged else 0.0
+        updated_epoch = _updated_epoch(str(row["updated_at"]))
+        recency_bonus = _recency_bonus(updated_epoch, now_epoch=now_epoch)
         score = min(base_score + lexical_bonus, 1.0)
-        effective_score = min(score + project_bias + kind_bonus + provenance_bonus, 1.0)
+        effective_score = min(score + project_bias + kind_bonus + provenance_bonus + recency_bonus, 1.0)
         candidates.append(
             {
                 **row,
@@ -191,7 +201,7 @@ def _query_scope(
                 "scope_priority": 0 if scope == PROJECT_SCOPE else 1,
                 "source_priority": 0 if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 1,
                 "provenance_priority": 0 if is_human_flagged else 1,
-                "updated_epoch": _updated_epoch(str(row["updated_at"])),
+                "updated_epoch": updated_epoch,
                 "item_identity": str(row["item_id"]),
             }
         )
@@ -439,6 +449,17 @@ def _normalize_text(value: str) -> str:
     cleaned = cleaned.replace("`", "")
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
+
+
+def _recency_bonus(updated_epoch: float, *, now_epoch: float) -> float:
+    """Linear recency lift: RECENCY_BONUS_MAX for a just-updated row, decaying
+    to 0 at RECENCY_WINDOW_DAYS. Malformed timestamps (epoch 0) get nothing."""
+    if updated_epoch <= 0.0:
+        return 0.0
+    age_days = max(0.0, (now_epoch - updated_epoch)) / 86400.0
+    if age_days >= RECENCY_WINDOW_DAYS:
+        return 0.0
+    return RECENCY_BONUS_MAX * (1.0 - age_days / RECENCY_WINDOW_DAYS)
 
 
 def _updated_epoch(value: str) -> float:

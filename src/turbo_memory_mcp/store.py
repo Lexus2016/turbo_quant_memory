@@ -808,6 +808,10 @@ class MemoryStore:
         resolved_kind = normalize_note_kind(note_kind)
         resolved_tier = tier if tier in NOTE_TIERS else tier_for_kind(resolved_kind)
         resolved_provenance = normalize_provenance(provenance)
+        # Timestamp semantics: `created_at` is preservable (promote_note passes
+        # the original through), `updated_at` is ALWAYS the moment of this
+        # write — no public write-path accepts a backdated updated_at. Tests
+        # that need an aged note must patch the note JSON on disk after write.
         note = {
             "note_id": note_id or generate_note_id(),
             "scope": scope,

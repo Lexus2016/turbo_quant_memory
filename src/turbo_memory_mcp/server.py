@@ -2010,10 +2010,25 @@ def _refresh_project_indexes_if_needed(store: MemoryStore) -> None:
     if _project_retrieval_requires_rebuild(store):
         _rebuild_scope_index_for_format_change(store, PROJECT_SCOPE)
 
+    # Notes-only projects never enter the markdown branch above, so drift
+    # repair must also run here: catches added/removed notes AND on-disk
+    # content edits (updated_at drift) before they surface as stale results.
+    index = RetrievalIndex(store)
+    try:
+        _repair_project_retrieval_if_needed(store, index)
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
+
 
 def _refresh_global_retrieval_if_needed(store: MemoryStore) -> None:
     if _global_retrieval_requires_rebuild(store):
         _rebuild_scope_index_for_format_change(store, GLOBAL_SCOPE)
+
+    index = RetrievalIndex(store)
+    try:
+        _repair_global_retrieval_if_needed(store, index)
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, GLOBAL_SCOPE, exc)
 
 
 def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, object]) -> None:
@@ -2111,28 +2126,42 @@ def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> No
 
 
 def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
-    """Reconcile the project index against the store BY ID, not by re-embedding.
+    """Reconcile the project index against the store, cheaply.
 
     The old contract here was ``count != expected -> sync_project()``, i.e. a
     full O(corpus) re-embed under the dispatch lock on any drift (audit M4).
     Instead, diff the id sets: delete stale rows and re-embed ONLY the missing
     ones. Cheaper, and strictly more correct — it also catches the case where
     the count happens to match but the membership differs.
+
+    Notes are additionally compared by ``updated_at``: an on-disk edit to an
+    existing note_id leaves the id set unchanged but the mirror row stale
+    (embedded from the pre-edit text). Blocks skip this — markdown content
+    changes are already caught by the checksum-based staleness path.
     """
-    expected_note_ids = {str(note["note_id"]) for note in store.list_notes(PROJECT_SCOPE)}
+    notes = store.list_notes(PROJECT_SCOPE)
+    expected_note_ids = {str(note["note_id"]) for note in notes}
     expected_block_ids = {str(block["block_id"]) for block in store.list_markdown_blocks()}
     expected_ids = expected_note_ids | expected_block_ids
-    existing_ids = index.existing_item_ids(PROJECT_SCOPE)
-    if existing_ids == expected_ids:
+    mirror_updated = index.existing_item_updated_at(PROJECT_SCOPE)
+    existing_ids = set(mirror_updated)
+    changed_notes = {
+        str(note["note_id"])
+        for note in notes
+        if str(note["note_id"]) in existing_ids
+        and str(note.get("updated_at") or "") != mirror_updated[str(note["note_id"])]
+    }
+    if existing_ids == expected_ids and not changed_notes:
         return
 
     stale_ids = existing_ids - expected_ids
-    missing_notes = expected_note_ids - existing_ids
+    missing_notes = (expected_note_ids - existing_ids) | changed_notes
     missing_blocks = expected_block_ids - existing_ids
     print(
         f"[tqmemory] project retrieval drift (have {len(existing_ids)}, expected "
         f"{len(expected_ids)}); reconciling by id "
-        f"+{len(missing_notes) + len(missing_blocks)}/-{len(stale_ids)}",
+        f"+{len(missing_notes) + len(missing_blocks)}/-{len(stale_ids)}"
+        + (f" (~{len(changed_notes)} edited)" if changed_notes else ""),
         file=sys.stderr,
     )
     if stale_ids:
@@ -2144,18 +2173,27 @@ def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalInde
 
 
 def _repair_global_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
-    """Reconcile the global index against the store by id (see project variant)."""
-    expected_ids = {str(note["note_id"]) for note in store.list_notes(GLOBAL_SCOPE)}
-    existing_ids = index.existing_item_ids(GLOBAL_SCOPE)
-    if existing_ids == expected_ids:
+    """Reconcile the global index against the store (see project variant)."""
+    notes = store.list_notes(GLOBAL_SCOPE)
+    expected_ids = {str(note["note_id"]) for note in notes}
+    mirror_updated = index.existing_item_updated_at(GLOBAL_SCOPE)
+    existing_ids = set(mirror_updated)
+    changed_ids = {
+        str(note["note_id"])
+        for note in notes
+        if str(note["note_id"]) in existing_ids
+        and str(note.get("updated_at") or "") != mirror_updated[str(note["note_id"])]
+    }
+    if existing_ids == expected_ids and not changed_ids:
         return
 
     stale_ids = existing_ids - expected_ids
-    missing_ids = expected_ids - existing_ids
+    missing_ids = (expected_ids - existing_ids) | changed_ids
     print(
         f"[tqmemory] global retrieval drift (have {len(existing_ids)}, expected "
         f"{len(expected_ids)}); reconciling by id "
-        f"+{len(missing_ids)}/-{len(stale_ids)}",
+        f"+{len(missing_ids)}/-{len(stale_ids)}"
+        + (f" (~{len(changed_ids)} edited)" if changed_ids else ""),
         file=sys.stderr,
     )
     if stale_ids:

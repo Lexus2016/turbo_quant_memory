@@ -10,18 +10,28 @@ from turbo_memory_mcp.server import (
 )
 from turbo_memory_mcp.store import GLOBAL_SCOPE, PROJECT_SCOPE
 
+_STAMP = "2026-01-01T00:00:00Z"
+
 
 class _FakeIndex:
     """Records how a repair call touched the index.
 
     Exposes both the OLD api (count_rows/sync_project/sync_global) and the
-    NEW diff api (existing_item_ids/delete_items/sync_*_notes/sync_project_blocks)
-    so a repair written against either contract executes without AttributeError
-    and the assertions — not a crash — decide pass/fail.
+    NEW diff api (existing_item_ids/existing_item_updated_at/delete_items/
+    sync_*_notes/sync_project_blocks) so a repair written against either
+    contract executes without AttributeError and the assertions — not a
+    crash — decide pass/fail.
     """
 
-    def __init__(self, *, project: set[str] | None = None, global_: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        project: set[str] | None = None,
+        global_: set[str] | None = None,
+        updated_at: dict[str, str] | None = None,
+    ) -> None:
         self._existing = {PROJECT_SCOPE: set(project or set()), GLOBAL_SCOPE: set(global_ or set())}
+        self._updated_at = dict(updated_at or {})
         self.full_resyncs = 0
         self.deleted: list[str] = []
         self.note_upserts: list[str] = []
@@ -40,6 +50,9 @@ class _FakeIndex:
     # --- new diff contract ---
     def existing_item_ids(self, scope: str) -> set[str]:
         return set(self._existing[scope])
+
+    def existing_item_updated_at(self, scope: str) -> dict[str, str]:
+        return {item_id: self._updated_at.get(item_id, _STAMP) for item_id in self._existing[scope]}
 
     def delete_items(self, scope: str, item_ids: Any) -> None:
         self.deleted.extend(str(i) for i in item_ids)
@@ -63,7 +76,10 @@ class _FakeStore:
     def list_notes(self, scope: str, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
         if scope != self._scope:
             return []
-        return [{"note_id": nid, "note_status": "active"} for nid in self._note_ids]
+        return [
+            {"note_id": nid, "note_status": "active", "updated_at": _STAMP}
+            for nid in self._note_ids
+        ]
 
     def list_markdown_blocks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
         return [{"block_id": bid} for bid in self._block_ids]
@@ -121,3 +137,28 @@ def test_repair_global_reconciles_by_id_without_full_resync() -> None:
     assert index.full_resyncs == 0
     assert index.deleted == ["stale"]
     assert sorted(index.note_upserts) == ["g2", "g3"]
+
+
+def test_repair_project_reembeds_note_whose_updated_at_drifted() -> None:
+    # Same id set, but n2's mirror row carries an older updated_at (on-disk
+    # edit). A by-id-only repair is blind here; the row must be re-embedded.
+    store = _FakeStore(note_ids=["n1", "n2"], block_ids=[])
+    index = _FakeIndex(project={"n1", "n2"}, updated_at={"n2": "2025-12-01T00:00:00Z"})
+
+    _repair_project_retrieval_if_needed(store, index)
+
+    assert index.full_resyncs == 0
+    assert index.deleted == []
+    assert index.note_upserts == ["n2"]
+    assert index.block_upserts == []
+
+
+def test_repair_global_reembeds_note_whose_updated_at_drifted() -> None:
+    store = _FakeStore(note_ids=["g1"], block_ids=[], scope=GLOBAL_SCOPE)
+    index = _FakeIndex(global_={"g1"}, updated_at={"g1": "2025-12-01T00:00:00Z"})
+
+    _repair_global_retrieval_if_needed(store, index)
+
+    assert index.full_resyncs == 0
+    assert index.deleted == []
+    assert index.note_upserts == ["g1"]

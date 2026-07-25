@@ -400,6 +400,28 @@ class RetrievalIndex:
         column = table.to_arrow().column(ITEM_ID_FIELD).to_pylist()
         return {str(item_id) for item_id in column if item_id is not None}
 
+    def existing_item_updated_at(self, scope: str, *, project_id: str | None = None) -> dict[str, str]:
+        """Map ``item_id`` -> ``updated_at`` as materialized in the scope table.
+
+        Drift repair compares these against the store's timestamps to catch
+        on-disk edits to an EXISTING item — a pure by-id diff cannot see those.
+        Reads only the two columns; never embeds.
+        """
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return {}
+        arrow = table.to_arrow()
+        ids = arrow.column(ITEM_ID_FIELD).to_pylist()
+        if "updated_at" in arrow.column_names:
+            stamps: list[Any] = arrow.column("updated_at").to_pylist()
+        else:  # legacy tables without the column: force one re-embed by reporting empty stamps
+            stamps = [None] * len(ids)
+        return {
+            str(item_id): str(stamp or "")
+            for item_id, stamp in zip(ids, stamps)
+            if item_id is not None
+        }
+
     def count_rows(self, scope: str, project_id: str | None = None) -> int:
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:

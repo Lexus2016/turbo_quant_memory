@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-07-25
+
+### Added
+- `semantic_search` now applies a small recency bonus in `effective_score` (`RECENCY_BONUS_MAX = 0.05`, linear decay over 30 days) so a freshly updated note wins a close race against an older note with slightly stronger lexical overlap — the live-reported failure where months-old notes outranked the current one. The bonus is capped well below a real relevance gap and never buries a clearly better old match; `score`/`confidence` stay time-free.
+
+### Fixed
+- Drift repair now catches on-disk edits to an EXISTING note: previously it reconciled the LanceDB mirror against the store by id only, so a hand-edited note JSON kept ranking by its pre-edit embedding indefinitely. Repair compares `updated_at` per note and re-embeds changed rows (`RetrievalIndex.existing_item_updated_at`), and it now also runs on the search path for both scopes — before, notes-only projects and the global scope never repaired on search at all.
+
 ## [0.24.1] - 2026-07-25
 
 Documentation-correctness patch for the agent skill. Ships as a release because
