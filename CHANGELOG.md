@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-07-25
+
+Documentation-correctness patch for the agent skill. Ships as a release because
+`skill install` is version-gated: installed copies only refresh when the
+frontmatter version marker changes.
+
+### Fixed
+- `SKILL.md` §2.4 documented `index_paths()` as defaulting to the project root. It does not — a bare call re-indexes already-registered roots and raises `ValueError` when there are none, so the documented first-run command failed on every fresh project. Now `index_paths(paths=["."])`.
+- `SKILL.md` §4 prescribed `pkill -f turbo-memory-mcp && rm -f ~/.turbo-quant-memory/.daemon.lock` for tool timeouts. That pattern matches every tqmemory server on the host (including the agent's own), the hardcoded path is wrong under `TQMEMORY_HOME`, and removing a live lock lets a second primary claim the same store. Replaced with `turbo-memory-mcp doctor` first, which reports owner liveness; stale locks are already reclaimed automatically on next start.
+- `SKILL.md` §3.5 / §4 covered only `master_key_unavailable`. Vault errors are now handled code-agnostically (`master_key_mismatch`, `vault_error`), with the usual mismatch cause named: a `TQMEMORY_SECRETS_PASSPHRASE` shadowing a keyring-keyed vault.
+- `SKILL.md` §2.3 deferred four clients to repo-local `CLIENT_INTEGRATIONS.md`, which a standalone-installed skill cannot read. The generic MCP server entry and the Hermes recipe are now inline, with an absolute URL for the details.
+- README (en/ru/uk) Hermes section installed a nonexistent package (`uv tool install turbo-quant-memory`; the distribution is `turbo-memory-mcp` and is not published to PyPI). Now uses the same `git+https://…` command as the rest of the docs.
+
 ## [0.24.0] - 2026-07-25
 
 ### Added
