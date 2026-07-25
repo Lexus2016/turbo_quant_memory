@@ -47,12 +47,12 @@ gemini mcp add tqmemory turbo-memory-mcp serve
 claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
 ```
 
-For other clients (Cursor, OpenCode, Antigravity, Hermes), see `CLIENT_INTEGRATIONS.md` in the repository. Restart the client afterwards.
+Any other client (Cursor, OpenCode, Antigravity, Kimi Code) takes the same server under its own config format — merge `{"tqmemory": {"command": "turbo-memory-mcp", "args": ["serve"]}}` into its MCP server map. Hermes runs a systemd gateway: add the same entry under `mcp_servers:` in `~/.hermes/config.yaml`, then `systemctl --user restart hermes-gateway`. Per-client details: <https://github.com/Lexus2016/turbo_quant_memory/blob/main/CLIENT_INTEGRATIONS.md>. Restart the client afterwards.
 
 ### 2.4 Verify and index
 
 1. After the client restarts, call `health()` — expect `status: "ok"`.
-2. Index the project's Markdown docs: `index_paths()` (defaults to the project root).
+2. Index the project's Markdown docs: `index_paths(paths=["."])`. The first run MUST name a root — a bare `index_paths()` only re-indexes roots already registered, and raises `ValueError` when there are none.
 3. Call `server_info()` and note the `project_id` — memory is scoped to it.
 
 ## 3. Operate
@@ -93,13 +93,14 @@ When you learn something important, fix a complex bug, or make an architectural 
 - Read the value from the dedicated `secret_value` field; pass it programmatically (env var, subprocess argument, in-memory). NEVER echo it into summaries, logs, or `remember_note`.
 - The user pasted a credential into chat (or you generated one in-conversation) → call `set_secret(name, value)` directly; the exposure already happened, the CLI adds no secrecy now.
 - The user is ABOUT to share a credential but hasn't → suggest `turbo-memory-mcp secret-set NAME` from a terminal (getpass keeps it out of the chat entirely).
-- `master_key_unavailable` → the response carries a `setup_hint` field with the exact commands the user needs. Print it verbatim and stop.
+- Any vault error (`master_key_unavailable`, `master_key_mismatch`, `vault_error`) carries a `setup_hint` field with the exact commands the user needs. Print it verbatim and stop — never invent or regenerate a key.
+- `master_key_mismatch` specifically means the resolved key does not match the vault — usually a `TQMEMORY_SECRETS_PASSPHRASE` shadowing a keyring-keyed vault (that variable is an Argon2id passphrase, never the raw keyring key). The fix is normally to UNSET it. Reads never mint a key, so the vault is intact.
 
 ## 4. Troubleshoot
 
 | Symptom | Action |
 | --- | --- |
 | `migrations_pending` in `health()` | Surface `migrations_hint` verbatim; the user runs `turbo-memory-mcp migrate --apply` with MCP clients closed. Never self-apply. |
-| MCP tool timeouts | Stale daemon lock: `pkill -f turbo-memory-mcp && rm -f ~/.turbo-quant-memory/.daemon.lock`, then `turbo-memory-mcp doctor`. |
-| `master_key_unavailable` | Print the `setup_hint` field verbatim; stop. |
+| MCP tool timeouts | Run `turbo-memory-mcp doctor` FIRST — it prints the lockfile path and whether its owner PID is still alive. Owner dead → just restart the MCP client; the server reclaims stale locks itself. Owner alive → leave the lock alone. Never `pkill -f turbo-memory-mcp`: it kills every tqmemory server on the host, including your own. |
+| `master_key_unavailable` / `master_key_mismatch` | Print the `setup_hint` field verbatim; stop. For a mismatch, suspect a `TQMEMORY_SECRETS_PASSPHRASE` shadowing a keyring-keyed vault. |
 | Anything else | `turbo-memory-mcp doctor` runs lock / migration / storage / socket diagnostics and prints PASS/FAIL per check. |
