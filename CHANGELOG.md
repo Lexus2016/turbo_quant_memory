@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.24.0] - 2026-07-25
 
 ### Added
 - `turbo-quant-memory` agent skill: the canonical agent operating manual (`SKILL.md`) now ships as a package resource; `turbo-memory-mcp skill install` deploys it into `~/.agents/skills/` and all detected client skill dirs — idempotent, upgrades older copies (`--client`, `--dry-run`).
