@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.test_semantic_search import KeywordEmbedder
 from turbo_memory_mcp.retrieval_index import (
     CONFIDENCE_HIGH_SCORE,
     CONFIDENCE_MEDIUM_SCORE,
@@ -20,6 +19,38 @@ from turbo_memory_mcp.retrieval_index import (
 )
 from turbo_memory_mcp.server import build_runtime_context, semantic_search_impl
 from turbo_memory_mcp.store import sha256_text
+
+
+class KeywordEmbedder:
+    """Local copy of the deterministic test embedder (tests are not a package,
+    so cross-test-module imports break on CI). Keep in sync with
+    tests/test_semantic_search.py if the keyword set ever changes."""
+
+    KEYWORDS = (
+        "auth",
+        "refresh",
+        "rotation",
+        "session",
+        "cache",
+        "ambiguous",
+        "token",
+        "login",
+        "project",
+        "global",
+        "install",
+        "package",
+        "runtime",
+    )
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            lowered = text.lower()
+            vector = [0.0] * 384
+            for index, keyword in enumerate(self.KEYWORDS):
+                vector[index] = 1.0 if keyword in lowered else 0.0
+            vectors.append(vector)
+        return vectors
 
 
 @pytest.fixture(autouse=True)
