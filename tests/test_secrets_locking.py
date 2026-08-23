@@ -22,7 +22,7 @@ if sys.platform == "win32":
     # assertions cannot apply. Windows-specific locking coverage: follow-up.
     pytest.skip("fcntl-based vault locking tests are POSIX-only", allow_module_level=True)
 
-import fcntl  # noqa: E402  # POSIX-only; guarded by the module-level skip above
+import fcntl  # POSIX-only; guarded by the module-level skip above
 
 from turbo_memory_mcp.secrets.keyresolver import ENV_PASSPHRASE
 from turbo_memory_mcp.secrets.store import SecretsStore
