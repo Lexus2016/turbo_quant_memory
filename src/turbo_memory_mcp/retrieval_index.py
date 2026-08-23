@@ -45,12 +45,20 @@ ITEM_ID_FIELD = "item_id"
 # and drags a confident dense hit down, worst on doc-heavy corpora). So we gate
 # the BM25 lane on dense confidence, and down-weight it when it does run.
 #
-# HIGH_CONFIDENCE_SCORE is the SINGLE source of truth for the "high confidence"
-# cosine band, reused by retrieval._confidence_state. One number means a deployer
-# who swaps the embedding model recalibrates in exactly one place instead of
-# chasing a corpus-tuned literal scattered across modules.
-HIGH_CONFIDENCE_SCORE = 0.82
-VECTOR_GATE_THRESHOLD = HIGH_CONFIDENCE_SCORE
+# Confidence-state labels are calibrated from a measured top-hit distribution
+# (2026-08-23 audit, 40 targeted queries over this project's live 115-note
+# corpus): the old single 0.82 constant equalled the median top1 (0.828), so
+# half of precise queries missed "high". CONFIDENCE_HIGH_SCORE (0.72) sits
+# ~0.10 below that median; CONFIDENCE_MEDIUM_SCORE (0.52) keeps the upper half
+# of relevant multi-topic hits out of "low" while genuinely weak matches stay low.
+#
+# VECTOR_GATE_THRESHOLD is deliberately INDEPENDENT of those labels: gating is
+# a retrieval precision/recall tradeoff ("skip BM25 only when dense evidence is
+# already near-exact"), not a UX label. Do not retune one when calibrating the
+# other — each has its own measured justification.
+CONFIDENCE_HIGH_SCORE = 0.72
+CONFIDENCE_MEDIUM_SCORE = 0.52
+VECTOR_GATE_THRESHOLD = 0.82
 FTS_LANE_WEIGHT = 0.3
 
 # BM25/FTS tokenizer language. LanceDB's native FTS applies a SINGLE Snowball

@@ -15,6 +15,7 @@ from turbo_memory_mcp.server import (
     promote_note_impl,
     semantic_search_impl,
 )
+from turbo_memory_mcp.retrieval_index import CONFIDENCE_HIGH_SCORE
 from turbo_memory_mcp.store import MARKDOWN_FORMAT_VERSION, sha256_text
 
 
@@ -330,7 +331,7 @@ def test_semantic_search_bm25_only_hit_ranks_first_with_high_confidence(tmp_path
     assert payload["status"] == "ok"
     assert payload["items"][0]["block_id"] == "block-kubernetes"
     assert payload["items"][0]["confidence_state"] == "high"
-    assert payload["items"][0]["score"] >= 0.82
+    assert payload["items"][0]["score"] >= CONFIDENCE_HIGH_SCORE
 
 
 def test_semantic_search_source_filter_narrows_by_source_kind(tmp_path: Path) -> None:

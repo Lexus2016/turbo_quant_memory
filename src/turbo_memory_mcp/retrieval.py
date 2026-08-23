@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence
 
 from .contracts import build_search_payload, build_semantic_item_payload
-from .retrieval_index import HIGH_CONFIDENCE_SCORE, RetrievalIndex
+from .retrieval_index import CONFIDENCE_HIGH_SCORE, CONFIDENCE_MEDIUM_SCORE, RetrievalIndex
 from .store import (
     DEFAULT_SEARCH_TIERS,
     GLOBAL_SCOPE,
@@ -242,11 +242,6 @@ def _decorate_candidate(
     overall_state: str | None,
 ) -> dict[str, Any] | None:
     confidence_state = overall_state or _confidence_state(float(candidate["confidence"]))
-    warning = None
-    if confidence_state == "ambiguous":
-        warning = "Top results are close; hydrate before acting."
-    elif confidence_state == "low":
-        warning = "Low-confidence retrieval; refine the query or hydrate before acting."
 
     payload: dict[str, Any] = {
         "scope": candidate["scope"],
@@ -267,8 +262,6 @@ def _decorate_candidate(
     }
     if candidate.get("block_id"):
         payload["block_id"] = candidate["block_id"]
-    if warning is not None:
-        payload["warning"] = warning
     if candidate.get("tier"):
         payload["tier"] = str(candidate["tier"])
 
@@ -323,14 +316,18 @@ def _resolve_overall_state(candidates: list[Mapping[str, Any]]) -> tuple[str, st
 
     state = _confidence_state(float(candidates[0]["confidence"]))
     if state == "low":
-        return state, "Low-confidence retrieval; refine the query or hydrate before acting."
+        # Single response-level notice (consensus 2026-08-23): per-item
+        # low-confidence warnings fired on every hit of broad multi-topic
+        # queries and trained agents to ignore them. The query is vague, not
+        # each result defective.
+        return state, "Results may be broad; refine the query or hydrate if needed."
     return state, None
 
 
 def _confidence_state(score: float) -> str:
-    if score >= HIGH_CONFIDENCE_SCORE:
+    if score >= CONFIDENCE_HIGH_SCORE:
         return "high"
-    if score >= 0.62:
+    if score >= CONFIDENCE_MEDIUM_SCORE:
         return "medium"
     return "low"
 
