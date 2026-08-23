@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.25.0
+version: 0.26.0
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -60,7 +60,7 @@ Any other client (Cursor, OpenCode, Antigravity, Kimi Code) takes the same serve
 ### 3.1 Session-start ritual
 
 1. Call `health()` + `server_info()` (migrations check — see §1).
-2. Call `recent_context()` FIRST — a query-free bootstrap returning your most recently updated notes (newest first), **including session `handoff` notes** that a plain `semantic_search` hides by default.
+2. Call `recent_context()` FIRST — a query-free bootstrap, **including session `handoff` notes** that a plain `semantic_search` hides by default. Ordering: `project`/`global` scopes are pure recency (newest first); in `hybrid` the current project's notes fill the window first and other projects' promoted notes only backfill leftover slots.
 3. For a specific task: `semantic_search(query="<task topic>", scope="hybrid")`. Asking "what did we decide/learn about X"? Pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks. Recovering a handoff by query? Pass `tier_filter=["episodic"]`.
 
 ### 3.2 Memory writing discipline

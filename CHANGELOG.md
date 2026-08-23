@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-08-23
+
+### Added
+- GitHub Actions CI: pytest matrix on ubuntu (3.11, 3.13) + windows (3.11) with a cached fastembed model; the Windows job exercises the AF_PIPE daemon transport on a real runner for the first time.
+- Lint job: `ruff` and `mypy` gates pinned at a zero-violation baseline (rule set pinned explicitly so ruff minor bumps cannot silently widen it).
+- Calibration regression tests asserting confidence-state BANDS on labeled query classes (targeted / multi-topic / weak), so future recalibration is data-driven.
+
+### Changed
+- **Confidence recalibration from measured distribution**: the old single threshold (`0.82`) equalled the median top-1 score of targeted queries, so half of precise queries missed "high". New labels: high >= 0.72, medium >= 0.52. The BM25 fusion gate is decoupled and stays at its own 0.82.
+- **`semantic_search` warnings**: per-item low-confidence warnings are gone (they fired on every hit of broad multi-topic queries - alert fatigue). A single response-level notice ("Results may be broad...") appears only when the top hit scores below "medium".
+- **`recent_context(scope="hybrid")` is project-first**: the current project's notes fill the window newest-first; global notes only backfill leftover slots. Fixes the measured failure where fresher other-project promotions evicted this project's own handoff from every slot. Promoted copies are deduplicated against their project original. Single-scope behaviour unchanged.
+- README tagline and retrieval description now state verifiable facts only (dropped unverifiable superlatives and numbers that did not match tool output); applied across en/uk/ru.
+- `lancedb` floor bumped to `>=0.30.2`: 0.30.1 published no Windows wheel, breaking installs on windows-latest.
+
+### Fixed
+- Static-analysis findings: 37 mypy errors fixed at source without casts (Sequence-covariant payload params, platform guards for `ctypes.windll`/`binascii`/`fcntl`, `_TorchEmbedder` protocol adapter, `Subsystem` migrated to `StrEnum`), plus 141 ruff findings under the pinned rule set.
+- Test-suite portability bugs surfaced by the first Windows run: unconditional `fcntl` import (now module-level skip), POSIX mode-bit assertions on NTFS (skipped on win32), an os.sep path assertion (now compares `Path.parts`).
+
+### Known Issues
+- On GitHub Actions `windows-latest` runners, creating the daemon named pipe fails with `PermissionError [WinError 5]`; local Windows machines are unaffected. The 10 affected daemon tests carry an explicit skip pending investigation on a real Windows machine (see TECHNICAL_SPEC follow-ups).
+
 ## [0.25.0] - 2026-07-25
 
 ### Added

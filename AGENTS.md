@@ -26,9 +26,11 @@
 ## Session Continuity (start-of-session and compaction)
 
 - **At session start, or right after a context compaction, call `recent_context` FIRST.**
-  It is query-free and returns the most recently updated notes (newest first),
-  including session `handoff` notes — the reliable "where did I leave off" entry
-  point when you do not yet know what to search for.
+  It is query-free and returns the most recently updated notes, including
+  session `handoff` notes — the reliable "where did I leave off" entry point
+  when you do not yet know what to search for. In `hybrid` scope the current
+  project's notes fill the window first; other projects' promoted notes only
+  backfill leftover slots (pass `scope="global"` for cross-project news).
 - **Before a long pause or an expected compaction, write one `handoff` note**
   (`remember_note(kind="handoff", ...)`) summarising mission, decisions, files
   touched, current state, and open questions. Handoffs land in the `episodic`
