@@ -1590,28 +1590,50 @@ def recent_context_impl(
 
     normalized_limit = max(1, min(int(limit), MAX_SEMANTIC_LIMIT))
 
-    scopes_to_read: list[str] = []
-    if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
-        scopes_to_read.append(PROJECT_SCOPE)
-    if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
-        scopes_to_read.append(GLOBAL_SCOPE)
-
-    collected: list[tuple[str, dict[str, Any]]] = []
-    for read_scope in scopes_to_read:
+    def _collect_notes(read_scope: str) -> list[dict[str, Any]]:
+        notes: list[dict[str, Any]] = []
         for note in store.list_notes(read_scope):
             note_tier = str(note.get("tier") or "")
             if allowed_tiers is not None and note_tier and note_tier not in allowed_tiers:
                 continue
-            collected.append((read_scope, note))
+            notes.append(note)
+        # Newest first; note_id as a stable tiebreaker for equal timestamps.
+        notes.sort(
+            key=lambda n: (str(n.get("updated_at", "")), str(n.get("note_id", ""))),
+            reverse=True,
+        )
+        return notes
 
-    # Newest first; note_id as a stable tiebreaker for equal timestamps.
-    collected.sort(
-        key=lambda pair: (str(pair[1].get("updated_at", "")), str(pair[1].get("note_id", ""))),
-        reverse=True,
-    )
+    ordered: list[tuple[str, dict[str, Any]]]
+    if resolved_scope == "hybrid":
+        # Session-bootstrap contract (consensus 2026-08-23): hybrid answers
+        # "where did I leave off HERE", so project notes fill the window first
+        # (newest first); global notes only backfill leftover slots. The merge
+        # is deliberately NOT re-sorted by recency — pure cross-scope recency
+        # let fresher other-project promotions evict this project's own
+        # handoff from every slot (measured live failure).
+        project_notes = _collect_notes(PROJECT_SCOPE)
+        selected = [
+            (PROJECT_SCOPE, note) for note in project_notes[:normalized_limit]
+        ]
+        taken_ids = {str(note.get("note_id", "")) for _, note in selected}
+        for note in _collect_notes(GLOBAL_SCOPE):
+            if len(selected) >= normalized_limit:
+                break
+            promoted_from = note.get("promoted_from") or {}
+            # A promoted copy shares the original's note_id. Suppress it only
+            # when this project's original already occupies a slot; promotions
+            # of OTHER projects and born-global notes pass through.
+            if str(promoted_from.get("note_id", "")) in taken_ids:
+                continue
+            taken_ids.add(str(note.get("note_id", "")))
+            selected.append((GLOBAL_SCOPE, note))
+        ordered = selected
+    else:
+        ordered = [(resolved_scope, note) for note in _collect_notes(resolved_scope)]
 
     items: list[dict[str, object]] = []
-    for read_scope, note in collected[:normalized_limit]:
+    for read_scope, note in ordered[:normalized_limit]:
         relations = store.get_relations_for_entity(
             uri=f"note://{note['note_id']}",
             scope="hybrid",
