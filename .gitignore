@@ -6,6 +6,7 @@
 .claude/
 __pycache__/
 *.py[cod]
+.fastembed-cache/
 
 # Generated retrieval-quality reports embed real per-project data — keep local only
 benchmarks/retrieval_quality.json
