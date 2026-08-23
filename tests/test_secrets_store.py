@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import keyring
@@ -266,6 +267,7 @@ def test_constructor_rejects_empty_project_id(tmp_path):
 # --- file permissions ---
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="NTFS does not expose POSIX mode bits")
 def test_file_permissions(tmp_path, env_passphrase, in_memory_keyring):
     s = _make_store(tmp_path)
     s.provision()
