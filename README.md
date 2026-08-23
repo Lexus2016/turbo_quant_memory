@@ -1,6 +1,6 @@
 # 🧠 Turbo Quant Memory for AI Agents (v0.24.1)
 
-> **The first self-installable, trilingual local-first memory & knowledge graph for AI coding agents.** Save up to 60% of your token budget while giving your AI assistant a permanent, hyper-fast, and highly connected brain.
+> **A self-installable, trilingual, local-first memory & knowledge graph for AI coding agents.** Agents get compact result cards instead of re-reading whole files — persistent, local, and graph-linked.
 
 ---
 
@@ -15,7 +15,7 @@ Imagine you are working with an AI coding assistant (like Claude Code, Gemini CL
 * 📦 **Codebase Index**: Compact Markdown block search so the AI understands your project structure instantly.
 
 ### 💰 Cost-Saving Magic
-Instead of reading massive files every time, your AI agent uses **Compact Retrieval** to query its memory and fetch only highly-relevant 600-token summaries.
+Instead of re-reading source documents on every turn, your AI agent uses **Compact Retrieval**: each search returns small result cards (~220-character previews) and loads full content only via hydrate when needed.
 
 | Metric | Value | Benefit for You |
 | :--- | :--- | :--- |
