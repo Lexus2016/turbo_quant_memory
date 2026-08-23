@@ -87,9 +87,8 @@ def test_promotion_preserves_provenance_and_global_partition(tmp_path: Path) -> 
     assert global_payload["note_kind"] == "pattern"
     assert global_payload["promoted_from"]["scope"] == PROJECT_SCOPE
     assert global_payload["promoted_from"]["note_id"] == "note-promote"
-    assert global_payload["promoted_from"]["source_path"].endswith(
-        "projects/proj1234567890abc/notes/note-promote.json"
-    )
+    source_path = Path(global_payload["promoted_from"]["source_path"])
+    assert source_path.parts[-4:] == ("projects", "proj1234567890abc", "notes", "note-promote.json")
     assert [note["note_id"] for note in store.list_notes(GLOBAL_SCOPE)] == ["note-promote"]
 
 

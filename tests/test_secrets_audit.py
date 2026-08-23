@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 
 import pytest
 
@@ -85,6 +86,7 @@ def test_record_rejects_non_string_name(tmp_path):
         log.record("set", 42)  # type: ignore[arg-type]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="NTFS does not expose POSIX mode bits")
 def test_file_permissions_0600(tmp_path):
     log = AuditLog(_make_dir(tmp_path))
     log.record("set", "x")
