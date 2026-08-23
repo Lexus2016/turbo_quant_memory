@@ -268,6 +268,16 @@ acceptance gate per commit: ruff clean, mypy clean, full pytest green.
 Do the split BEFORE adding another tool family or any change that must touch
 the dispatcher plus unrelated tool impls simultaneously.
 
+### Open Follow-up: AF_PIPE on GitHub Actions runners (found by CI 2026-08-23)
+
+`multiprocessing.connection.Listener` fails with `PermissionError [WinError 5]`
+when creating `\\.\pipe\tqmemory-<user>-<pid>` on `windows-latest` runners,
+while the same code path works on local Windows machines. The 10 affected
+daemon tests carry a `pytestmark_win_daemon` skip with this pointer. Needs
+investigation on a real Windows box (suspects: handle-release race between
+sequential Listeners reusing one pid-based name, or runner session DACLs).
+Until fixed, AF_PIPE transport is exercised only manually on Windows.
+
 ## Summary
 
 Turbo Quant Memory is a practical MCP memory layer:
