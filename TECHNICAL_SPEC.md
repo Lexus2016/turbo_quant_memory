@@ -244,6 +244,30 @@ Enforcement points:
 - building enterprise multi-tenant governance in the current scope
 - solving all repository reasoning through compression alone
 
+## Planned Decomposition of `server.py` (deferred, consensus 2026-08-23)
+
+`server.py` (≈2.4k lines, 19 tool impls + dispatcher) stays a single module
+until a dedicated session performs the split below. Deferred deliberately:
+mechanical churn across ~50 test files right after the static-checks and
+calibration changes carries regression risk with no user-visible gain.
+
+Target layout (tool-family namespaces; `server.py` remains a compatibility
+facade re-exporting impls so existing test imports keep working):
+
+- `tools/notes.py` — remember/deprecate/promote/hydrate/recent_context
+- `tools/search.py` — semantic_search + retrieval-facing glue
+- `tools/namespace.py` — list_scopes/self_test/server_info/health glue
+- `tools/docs.py` — index_paths/lint_knowledge_base
+- `tools/secrets.py` — the four secrets-vault tools
+- `dispatcher.py` — `_dispatch`, env/cwd resolution, daemon proxy wiring
+
+Migration order: one namespace per commit → move shared helpers to
+`dispatch_common.py` as they collide → update test imports per commit →
+acceptance gate per commit: ruff clean, mypy clean, full pytest green.
+
+Do the split BEFORE adding another tool family or any change that must touch
+the dispatcher plus unrelated tool impls simultaneously.
+
 ## Summary
 
 Turbo Quant Memory is a practical MCP memory layer:
