@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from turbo_memory_mcp.identity import ProjectIdentity
-from turbo_memory_mcp.store import (
-    GLOBAL_SCOPE,
-    MemoryStore,
-    PROJECT_SCOPE,
-)
 from turbo_memory_mcp.retrieval import _decorate_candidate
 from turbo_memory_mcp.server import (
+    get_related_entities_impl,
     link_entities_impl,
     unlink_entities_impl,
-    get_related_entities_impl,
+)
+from turbo_memory_mcp.store import (
+    GLOBAL_SCOPE,
+    PROJECT_SCOPE,
+    MemoryStore,
 )
 
 

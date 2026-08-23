@@ -15,8 +15,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..store import (
-    MemoryStore,
     NOTE_TIERS,
+    MemoryStore,
     tier_for_kind,
 )
 from .io import write_json_atomic

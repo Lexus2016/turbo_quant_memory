@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import os
-import sys
 import posixpath
 import re
-from datetime import datetime, timezone
+import sys
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any
 
 from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
 from .secrets.paths import is_inside_secrets_storage
-from .store import MemoryStore, NOTE_TIER_EPISODIC, PROJECT_SCOPE, utc_now
+from .store import NOTE_TIER_EPISODIC, PROJECT_SCOPE, MemoryStore, utc_now
 
 _MAX_ISSUES_LIMIT = 1000
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -84,9 +85,9 @@ def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
         normalized = matrix / norms
         similarity = normalized @ normalized.T
 
-        findings: list[dict[str, object]] = []
+        findings: list[dict[str, Any]] = []
         upper_i, upper_j = np.triu_indices(len(probed), k=1)
-        for i, j in zip(upper_i.tolist(), upper_j.tolist()):
+        for i, j in zip(upper_i.tolist(), upper_j.tolist(), strict=True):
             cosine = float(similarity[i, j])
             if cosine < _NEAR_DUPLICATE_COSINE:
                 continue
@@ -98,9 +99,9 @@ def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
                     "similarity": round(cosine, 3),
                 }
             )
-        findings.sort(key=lambda f: f["similarity"], reverse=True)
+        findings.sort(key=lambda f: float(f["similarity"]), reverse=True)
         return findings
-    except Exception:  # noqa: BLE001 — advisory check; lint must never fail on it
+    except Exception:
         return []
 
 
@@ -118,8 +119,8 @@ def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:
         threshold_days = 14
     if threshold_days <= 0:
         return []
-    now = datetime.now(timezone.utc)
-    stale: list[dict[str, object]] = []
+    now = datetime.now(UTC)
+    stale: list[dict[str, Any]] = []
     for note in store.list_notes(PROJECT_SCOPE):
         tier = str(note.get("tier") or "")
         kind = str(note.get("note_kind") or "")
@@ -129,11 +130,11 @@ def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:
             continue
         raw = str(note.get("updated_at") or note.get("created_at") or "")
         try:
-            ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            ts = datetime.fromisoformat(raw)
         except (ValueError, TypeError):
             continue
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         age_days = (now - ts).days
         if age_days >= threshold_days:
             stale.append(
@@ -143,7 +144,7 @@ def _scan_stale_episodic_notes(store: MemoryStore) -> list[dict[str, object]]:
                     "title": str(note.get("title", "")),
                 }
             )
-    stale.sort(key=lambda entry: -int(entry["age_days"]))
+    stale.sort(key=lambda entry: -float(entry["age_days"]))
     return stale
 
 

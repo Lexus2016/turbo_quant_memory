@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -124,8 +125,6 @@ def test_recent_context_empty_store(tmp_path: Path) -> None:
 
 
 # --- hybrid project-first partitioning + promoted-pair dedupe (2026-08-23) ---
-
-import json
 
 
 def _age_note(env: dict[str, str], note: dict, *, updated_at: str) -> None:

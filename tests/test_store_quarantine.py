@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from turbo_memory_mcp.identity import ProjectIdentity
-from turbo_memory_mcp.store import MemoryStore, PROJECT_SCOPE
+from turbo_memory_mcp.store import PROJECT_SCOPE, MemoryStore
 
 
 def _build_store(tmp_path: Path) -> MemoryStore:

@@ -8,9 +8,9 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 from urllib.parse import urlparse
 
 ENV_PROJECT_ROOT = "TQMEMORY_PROJECT_ROOT"
@@ -73,7 +73,7 @@ class ProjectIdentity:
 # is only a backstop for a filesystem with coarse mtime resolution.
 _IDENTITY_CACHE_TTL_SECONDS = 30.0
 _IDENTITY_CACHE_MAXSIZE = 512
-_IDENTITY_CACHE: dict[tuple, tuple["ProjectIdentity", float]] = {}
+_IDENTITY_CACHE: dict[tuple, tuple[ProjectIdentity, float]] = {}
 _IDENTITY_CACHE_LOCK = threading.Lock()
 
 
@@ -298,8 +298,7 @@ def _normalize_path_identity(value: str) -> str:
 
 def _strip_dot_git(value: str) -> str:
     stripped = value.rstrip("/")
-    if stripped.endswith(".git"):
-        stripped = stripped[:-4]
+    stripped = stripped.removesuffix(".git")
     return stripped
 
 

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Mapping
+from typing import Any
 
 
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:

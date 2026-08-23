@@ -11,11 +11,9 @@ from pathlib import Path
 
 import pytest
 
-import turbo_memory_mcp.migrations as migrations
-import turbo_memory_mcp.server as server
+from turbo_memory_mcp import migrations, server
 from turbo_memory_mcp.contracts import build_health_payload
 from turbo_memory_mcp.daemon import ENV_MIGRATE_ON_STARTUP, BootstrapResult
-
 
 # --- stubs -----------------------------------------------------------------
 

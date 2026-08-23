@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _SNAPSHOT_DIR = ".snapshots"
@@ -73,7 +73,7 @@ def create_snapshot(storage_root: Path) -> Path:
 
     # Microseconds in the stamp keep names monotonic and unique even when
     # several snapshots are taken within the same second (e.g. test loops).
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
     target = snap_root / stamp
     suffix = 1
     while target.exists():
@@ -128,7 +128,7 @@ def restore_snapshot(storage_root: Path, snapshot_path: Path) -> None:
 
     snap_root = snapshots_root(storage_root)
     snap_root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
     staging = snap_root / f".restore_staging_{stamp}"
     staging.mkdir(parents=True)
 

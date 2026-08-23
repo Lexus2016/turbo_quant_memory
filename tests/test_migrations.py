@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -22,7 +23,6 @@ from turbo_memory_mcp.migrations import (
     restore_snapshot,
 )
 from turbo_memory_mcp.store import MemoryStore
-
 
 # --------------------------------------------------------------------------- #
 # Fixtures
@@ -799,8 +799,8 @@ def test_cli_apply_snapshot_failure_reports_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from turbo_memory_mcp.cli import main
     from turbo_memory_mcp import migrations as migrations_pkg
+    from turbo_memory_mcp.cli import main
 
     store.write_markdown_manifest()
 
@@ -980,9 +980,9 @@ def test_upgrade_notes_v1_to_v2_is_idempotent(store: MemoryStore) -> None:
 def test_notes_subsystem_treats_pre_phase2_manifest_as_v1(store: MemoryStore) -> None:
     """Manifest written without `format_version` must read as v1, not v0,
     so the runner triggers the v1->v2 migration on existing installs."""
+    from turbo_memory_mcp.migrations import Subsystem
     from turbo_memory_mcp.migrations.io import write_json_atomic
     from turbo_memory_mcp.migrations.runner import _read_current_version
-    from turbo_memory_mcp.migrations import Subsystem
 
     # Simulate a pre-Phase-2 manifest (no format_version field).
     write_json_atomic(
@@ -1000,8 +1000,8 @@ def test_notes_subsystem_treats_pre_phase2_manifest_as_v1(store: MemoryStore) ->
 def test_notes_bump_writes_format_version_to_both_manifests(
     store: MemoryStore,
 ) -> None:
-    from turbo_memory_mcp.migrations.runner import _bump_manifest
     from turbo_memory_mcp.migrations import Subsystem
+    from turbo_memory_mcp.migrations.runner import _bump_manifest
 
     # Seed both manifests with the legacy shape (no format_version).
     store.write_project_manifest()
@@ -1200,7 +1200,7 @@ def test_table_has_tier_column_detects_phase2_schema() -> None:
     from turbo_memory_mcp.retrieval_index import _table_has_tier_column
 
     class _Schema:
-        names = ["scope", "project_id", "tier", "title", "updated_at"]
+        names: ClassVar[list[str]] = ["scope", "project_id", "tier", "title", "updated_at"]
 
     class _Table:
         schema = _Schema()
@@ -1212,7 +1212,7 @@ def test_table_has_tier_column_rejects_pre_phase2_schema() -> None:
     from turbo_memory_mcp.retrieval_index import _table_has_tier_column
 
     class _Schema:
-        names = ["scope", "project_id", "title", "updated_at"]
+        names: ClassVar[list[str]] = ["scope", "project_id", "title", "updated_at"]
 
     class _Table:
         schema = _Schema()
@@ -1227,7 +1227,7 @@ def test_table_has_tier_column_handles_schema_introspection_failure() -> None:
 
     class _Table:
         @property
-        def schema(self):  # noqa: D401
+        def schema(self):
             raise RuntimeError("schema unavailable")
 
     # Any failure to read schema should fall back to "no tier" (safe)
@@ -1317,8 +1317,8 @@ def test_write_manifest_falls_back_to_constant_when_no_existing_version() -> Non
 
     from turbo_memory_mcp.identity import ProjectIdentity
     from turbo_memory_mcp.store import (
-        MemoryStore,
         NOTES_FORMAT_VERSION,
+        MemoryStore,
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1628,8 +1628,10 @@ def test_ensure_fts_index_is_idempotent() -> None:
     """`_ensure_fts_index` swallows the 'already exists' error so callers
     can invoke it on every search without worrying about state."""
     import tempfile
-    import pyarrow as pa
+
     import lancedb
+    import pyarrow as pa
+
     from turbo_memory_mcp.retrieval_index import _ensure_fts_index
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1658,8 +1660,10 @@ def test_safe_fts_search_returns_empty_on_legacy_table_without_index() -> None:
     """A table that the test never indexed must yield zero FTS rows without
     raising — so search() can degrade to vector-only on legacy installs."""
     import tempfile
-    import pyarrow as pa
+
     import lancedb
+    import pyarrow as pa
+
     from turbo_memory_mcp.retrieval_index import _safe_fts_search
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1728,7 +1732,8 @@ def test_hybrid_search_returns_results_on_live_lancedb(tmp_path) -> None:
     BM25 even when the vector signal is poor."""
     import lancedb
     import pyarrow as pa
-    from turbo_memory_mcp.retrieval_index import _safe_vector_search, _safe_fts_search, _rrf_merge
+
+    from turbo_memory_mcp.retrieval_index import _rrf_merge, _safe_fts_search, _safe_vector_search
 
     db = lancedb.connect(str(tmp_path))
     schema = pa.schema(

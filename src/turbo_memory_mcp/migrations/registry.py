@@ -7,12 +7,16 @@ not skipping versions.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .store import MemoryStore
 from dataclasses import dataclass
-from enum import Enum
-from typing import Callable
+from enum import StrEnum
 
 
-class Subsystem(str, Enum):
+class Subsystem(StrEnum):
     """One independent migration chain per subsystem.
 
     Each value maps 1:1 to a format-version constant in store.py and
@@ -30,7 +34,7 @@ class Subsystem(str, Enum):
     SECRETS = "secrets"
 
 
-MigrationFunc = Callable[[object], None]
+MigrationFunc = Callable[["MemoryStore"], None]
 """An upgrade function takes a MemoryStore and mutates state in place.
 
 The function must be idempotent: re-running it on partially-migrated state

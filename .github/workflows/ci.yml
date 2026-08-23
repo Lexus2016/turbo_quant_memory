@@ -11,6 +11,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Ruff
+        run: uv run --no-sync ruff check src tests
+      - name: Mypy
+        run: uv run --no-sync mypy src/turbo_memory_mcp
+
   test:
     strategy:
       fail-fast: false

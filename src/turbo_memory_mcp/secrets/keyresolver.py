@@ -25,6 +25,7 @@ key while an initialized vault exists would permanently orphan its secrets
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 import os
 import secrets as _stdlib_secrets
@@ -98,7 +99,7 @@ def _maybe_warn_env_looks_like_raw_key(env_value: str) -> None:
         return
     try:
         raw = base64.b64decode(env_value, validate=True)
-    except (ValueError, base64.binascii.Error):
+    except (ValueError, binascii.Error):
         return
     if len(raw) == KEY_SIZE:
         _warned_env_looks_like_raw_key = True
@@ -161,7 +162,7 @@ def resolve_master_key(
     if stored:
         try:
             key = base64.b64decode(stored, validate=True)
-        except (ValueError, base64.binascii.Error) as exc:
+        except (ValueError, binascii.Error) as exc:
             raise MasterKeyUnavailable(
                 f"Existing keyring entry {SERVICE_NAME}/{account} is not valid "
                 f"base64 ({exc}). Delete it and rerun.\n" + _setup_hint()

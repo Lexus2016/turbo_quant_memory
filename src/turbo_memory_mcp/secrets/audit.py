@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 AUDIT_FILENAME = "audit.jsonl"
@@ -24,7 +24,7 @@ _ALLOWED_ACTIONS = frozenset({"set", "get", "list", "delete"})
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class AuditLog:

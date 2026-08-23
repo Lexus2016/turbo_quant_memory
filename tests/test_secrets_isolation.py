@@ -14,6 +14,8 @@ from turbo_memory_mcp.ingestion import _iter_markdown_files as ingest_iter
 from turbo_memory_mcp.ingestion import index_paths_with_sync_plan
 from turbo_memory_mcp.knowledge_lint import (
     _iter_markdown_files as lint_iter,
+)
+from turbo_memory_mcp.knowledge_lint import (
     lint_knowledge_base,
 )
 from turbo_memory_mcp.secrets.paths import is_inside_secrets_storage

@@ -4,14 +4,14 @@ from turbo_memory_mcp import __version__
 from turbo_memory_mcp.contracts import (
     CURRENT_TOOL_NAMES,
     SERVER_ID,
-    build_install_contract,
     build_hydrated_markdown_item_payload,
     build_hydrated_note_item_payload,
     build_hydration_payload,
     build_indexing_payload,
+    build_install_contract,
     build_note_item_payload,
-    build_semantic_item_payload,
     build_self_test_payload,
+    build_semantic_item_payload,
     build_server_info_payload,
 )
 

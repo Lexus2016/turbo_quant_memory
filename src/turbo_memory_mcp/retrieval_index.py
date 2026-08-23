@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
-from .store import ACTIVE_NOTE_STATUS, GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, NOTE_SOURCE_KIND, PROJECT_SCOPE
+from .store import ACTIVE_NOTE_STATUS, GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, NOTE_SOURCE_KIND, PROJECT_SCOPE, MemoryStore
 
 if TYPE_CHECKING:  # pragma: no cover - type-only imports
     import pyarrow as pa
@@ -108,7 +109,7 @@ class TextEmbedder(Protocol):
         """Return one embedding vector per text item."""
 
 
-def build_default_embedder() -> "TextEmbedder":
+def build_default_embedder() -> TextEmbedder:
     """Return the active embedder, selected by the TQMEMORY_EMBEDDING_BACKEND env:
     'fastembed' (default, ONNX Runtime) or 'sentence-transformers' (PyTorch).
 
@@ -126,8 +127,20 @@ def build_default_embedder() -> "TextEmbedder":
     return _load_fastembed_embedder()
 
 
+class _TorchEmbedder:
+    """Adapter exposing the TextEmbedder.encode interface over
+    sentence-transformers (its own encode() signature is too loose to satisfy
+    the protocol structurally - same reason _FastEmbedEmbedder exists)."""
+
+    def __init__(self, model: SentenceTransformer) -> None:
+        self._model = model
+
+    def encode(self, texts: Sequence[str]) -> Any:
+        return self._model.encode(list(texts))
+
+
 @lru_cache(maxsize=1)
-def _load_torch_embedder() -> "SentenceTransformer":
+def _load_torch_embedder() -> _TorchEmbedder:
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as exc:
@@ -138,7 +151,7 @@ def _load_torch_embedder() -> "SentenceTransformer":
             "the default fastembed/ONNX backend (vector-compatible, no reindex)."
         ) from exc
 
-    return SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return _TorchEmbedder(SentenceTransformer(EMBEDDING_MODEL_NAME))
 
 
 class _FastEmbedEmbedder:
@@ -156,7 +169,7 @@ class _FastEmbedEmbedder:
 
 
 @lru_cache(maxsize=1)
-def _load_fastembed_embedder() -> "_FastEmbedEmbedder":
+def _load_fastembed_embedder() -> _FastEmbedEmbedder:
     return _FastEmbedEmbedder(EMBEDDING_MODEL_NAME)
 
 
@@ -426,7 +439,7 @@ class RetrievalIndex:
             stamps = [None] * len(ids)
         return {
             str(item_id): str(stamp or "")
-            for item_id, stamp in zip(ids, stamps)
+            for item_id, stamp in zip(ids, stamps, strict=True)
             if item_id is not None
         }
 
@@ -475,7 +488,7 @@ class RetrievalIndex:
         db_path.mkdir(parents=True, exist_ok=True)
         vectors = self._embed_texts([row["content_search"] for row in rows])
         indexed_rows: list[dict[str, Any]] = []
-        for row, vector in zip(rows, vectors):
+        for row, vector in zip(rows, vectors, strict=True):
             indexed_row = dict(row)
             indexed_row["vector"] = vector
             indexed_rows.append(indexed_row)
@@ -584,7 +597,7 @@ def _safe_vector_search(
         if where_clause:
             builder = builder.where(where_clause)
         return [dict(row) for row in builder.to_list()]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # The vector lane is primary; a persistent failure here (corrupt table,
         # disk full) otherwise looks like "no results". Make it visible (M2).
         print(f"[tqmemory] vector search lane failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -608,7 +621,7 @@ def _safe_fts_search(
         if where_clause:
             builder = builder.where(where_clause)
         return [dict(row) for row in builder.to_list()]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # FTS is the secondary lane; on current installs the index exists, so a
         # failure here (not just a legacy missing-index) is worth surfacing (M2).
         print(f"[tqmemory] fts search lane failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -666,7 +679,7 @@ def _ensure_fts_index(table: Any) -> None:
     """
     try:
         table.create_fts_index("content_search", replace=False, **_fts_index_kwargs())
-    except Exception:  # noqa: BLE001 — already exists or not supported
+    except Exception:
         pass
 
 
@@ -758,13 +771,13 @@ def _table_has_tier_column(table: Any) -> bool:
 def _table_has_column(table: Any, column: str) -> bool:
     try:
         schema_attr = getattr(table, "schema", None)
-    except Exception:  # noqa: BLE001 — defensive: property may raise
+    except Exception:
         return False
     if schema_attr is None:
         return False
     try:
         field_names = list(schema_attr.names)
-    except Exception:  # noqa: BLE001 — defensive: unknown LanceDB versions
+    except Exception:
         return False
     return column in field_names
 
@@ -840,12 +853,12 @@ def _resolve_vector_dimensions() -> int:
     """
     try:
         probe = build_default_embedder().encode(["dimension probe"])
-        return int(len(list(probe[0])))
-    except Exception:  # noqa: BLE001
+        return len(list(probe[0]))
+    except Exception:
         return DEFAULT_VECTOR_DIMENSIONS
 
 
-def _table_schema(dimensions: int | None = None) -> "pa.Schema":
+def _table_schema(dimensions: int | None = None) -> pa.Schema:
     import pyarrow as pa
 
     vector_dim = dimensions if dimensions is not None else _resolve_vector_dimensions()
@@ -880,8 +893,8 @@ __all__ = [
     "ITEM_ID_FIELD",
     "PROJECT_RETRIEVAL_LAYOUT",
     "RETRIEVAL_TABLE_NAME",
-    "RetrievalIndex",
     "VECTOR_DIMENSIONS",
+    "RetrievalIndex",
     "build_default_embedder",
     "mirror_markdown_block",
     "mirror_note_record",

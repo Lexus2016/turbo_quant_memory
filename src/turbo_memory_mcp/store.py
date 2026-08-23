@@ -6,11 +6,12 @@ import hashlib
 import json
 import os
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from . import __version__
@@ -594,7 +595,7 @@ class MemoryStore:
         return self._load_json_records_skipping_corrupt(root_dir, label="markdown root")
 
     def write_markdown_file_manifest(self, manifest_record: Mapping[str, Any]) -> dict[str, Any]:
-        record = {
+        record: dict[str, Any] = {
             "root_id": str(manifest_record["root_id"]),
             "source_path": str(manifest_record["source_path"]),
             "file_key": str(manifest_record["file_key"]),
@@ -630,7 +631,7 @@ class MemoryStore:
         self.write_markdown_manifest(project_id)
 
     def write_markdown_block(self, block_record: Mapping[str, Any]) -> dict[str, Any]:
-        record = {
+        record: dict[str, Any] = {
             "block_id": str(block_record["block_id"]),
             "scope": PROJECT_SCOPE,
             "project_id": self.project.project_id,
@@ -812,7 +813,7 @@ class MemoryStore:
         # the original through), `updated_at` is ALWAYS the moment of this
         # write — no public write-path accepts a backdated updated_at. Tests
         # that need an aged note must patch the note JSON on disk after write.
-        note = {
+        note: dict[str, Any] = {
             "note_id": note_id or generate_note_id(),
             "scope": scope,
             "project_id": project_id or self.project.project_id,
@@ -859,10 +860,7 @@ class MemoryStore:
         return self.global_dir() / "relations.json"
 
     def read_relations(self, scope: str = PROJECT_SCOPE, project_id: str | None = None) -> list[dict[str, str]]:
-        if scope == GLOBAL_SCOPE:
-            path = self.global_relations_path()
-        else:
-            path = self.project_relations_path(project_id)
+        path = self.global_relations_path() if scope == GLOBAL_SCOPE else self.project_relations_path(project_id)
         
         data = _read_json_if_exists_safe(path, label="relations")
         if data is None or not isinstance(data, dict) or "relations" not in data:
@@ -870,10 +868,7 @@ class MemoryStore:
         return data["relations"]
 
     def write_relations(self, relations: list[dict[str, str]], scope: str = PROJECT_SCOPE, project_id: str | None = None) -> None:
-        if scope == GLOBAL_SCOPE:
-            path = self.global_relations_path()
-        else:
-            path = self.project_relations_path(project_id)
+        path = self.global_relations_path() if scope == GLOBAL_SCOPE else self.project_relations_path(project_id)
         
         payload = {
             "format_version": 1,
@@ -888,10 +883,7 @@ class MemoryStore:
         The read paths (recent_context / search enrichment) use the tolerant
         ``read_relations`` instead.
         """
-        if scope == GLOBAL_SCOPE:
-            path = self.global_relations_path()
-        else:
-            path = self.project_relations_path(project_id)
+        path = self.global_relations_path() if scope == GLOBAL_SCOPE else self.project_relations_path(project_id)
         try:
             data = _read_json_if_exists(path)
         except (OSError, ValueError) as exc:
@@ -948,9 +940,10 @@ class MemoryStore:
             
         filtered = []
         for rel in all_relations:
-            if rel.get("source") == uri or rel.get("target") == uri:
-                if relation_type is None or rel.get("type") == relation_type:
-                    filtered.append(rel)
+            if (rel.get("source") == uri or rel.get("target") == uri) and (
+                relation_type is None or rel.get("type") == relation_type
+            ):
+                filtered.append(rel)
         return filtered
 
 
@@ -1126,7 +1119,7 @@ def sha256_path(value: str | Path) -> str:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _dir_has_records(path: Path) -> bool:
@@ -1193,24 +1186,24 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 __all__ = [
-    "DEFAULT_STORAGE_DIRNAME",
     "ACTIVE_NOTE_STATUS",
     "ARCHIVED_NOTE_STATUS",
+    "DEFAULT_PROVENANCE",
+    "DEFAULT_STORAGE_DIRNAME",
     "ENV_STORAGE_HOME",
     "GLOBAL_SCOPE",
     "MARKDOWN_FORMAT_VERSION",
     "MARKDOWN_SOURCE_KIND",
-    "MemoryStore",
-    "NOTE_SOURCE_KIND",
-    "NOTE_PROVENANCE_HUMAN",
-    "NOTE_PROVENANCE_AGENT",
     "NOTE_PROVENANCES",
-    "DEFAULT_PROVENANCE",
+    "NOTE_PROVENANCE_AGENT",
+    "NOTE_PROVENANCE_HUMAN",
+    "NOTE_SOURCE_KIND",
     "NOTE_STATUSES",
+    "PROJECT_SCOPE",
     "RETRIEVAL_FORMAT_VERSION",
     "SUPERSEDED_NOTE_STATUS",
-    "PROJECT_SCOPE",
     "USAGE_STATS_FORMAT_VERSION",
+    "MemoryStore",
     "generate_note_id",
     "normalize_note_status",
     "normalize_provenance",

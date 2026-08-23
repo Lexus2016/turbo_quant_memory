@@ -31,10 +31,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from multiprocessing.connection import Client, Listener
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from . import __version__
 from .store import resolve_storage_root
@@ -86,7 +87,7 @@ class DaemonEndpoint:
         }
 
     @classmethod
-    def from_lockfile(cls, payload: Mapping[str, Any]) -> "DaemonEndpoint":
+    def from_lockfile(cls, payload: Mapping[str, Any]) -> DaemonEndpoint:
         return cls(
             address=str(payload["address"]),
             family=str(payload["family"]),
@@ -101,10 +102,10 @@ def _is_pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if platform.system() == "Windows":
-        try:
-            import ctypes
-        except ImportError:
+        if sys.platform != "win32":
             return False
+        import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         STILL_ACTIVE = 259
         handle = ctypes.windll.kernel32.OpenProcess(
@@ -157,7 +158,7 @@ def _unix_socket_path(environ: Mapping[str, str] | None = None) -> Path:
     except AttributeError:  # Windows: os.getuid missing, but path is unused there.
         uid_part = os.environ.get("USERNAME", "anon")
     discriminator = hashlib.sha1(
-        f"{uid_part}:{storage}".encode("utf-8"), usedforsecurity=False
+        f"{uid_part}:{storage}".encode(), usedforsecurity=False
     ).hexdigest()[:12]
     tmp_dir = Path(tempfile.gettempdir())
     return tmp_dir / f"tqm-{discriminator}.sock"
@@ -346,7 +347,7 @@ class DaemonClient:
         def _worker() -> None:
             try:
                 result["conn"] = self._connect()
-            except BaseException as exc:  # noqa: BLE001 - re-raised on caller thread
+            except BaseException as exc:
                 result["error"] = exc
 
         thread = threading.Thread(
@@ -432,7 +433,8 @@ class DaemonClient:
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
         if not isinstance(reply, Mapping):
-            raise RuntimeError(f"Unexpected reply shape: {reply!r}")
+            # RuntimeError is the IPC protocol contract; callers classify retries on it.
+            raise RuntimeError(f"Unexpected reply shape: {reply!r}")  # noqa: TRY004
         kind = reply.get("kind")
         if kind == MESSAGE_OK:
             return reply.get("result")
@@ -721,11 +723,7 @@ def release_daemon_lock(
 
 __all__ = [
     "AUTHKEY_BYTES",
-    "BootstrapResult",
     "DAEMON_PROTOCOL_VERSION",
-    "DaemonClient",
-    "DaemonEndpoint",
-    "DaemonListener",
     "ENV_DAEMON_DISABLE",
     "ENV_MIGRATE_ON_STARTUP",
     "HEALTH_CONNECT_TIMEOUT_SECONDS",
@@ -735,6 +733,10 @@ __all__ = [
     "MESSAGE_HELLO",
     "MESSAGE_HELLO_ACK",
     "MESSAGE_OK",
+    "BootstrapResult",
+    "DaemonClient",
+    "DaemonEndpoint",
+    "DaemonListener",
     "PrimaryUnreachable",
     "acquire_daemon_role",
     "daemon_is_disabled",

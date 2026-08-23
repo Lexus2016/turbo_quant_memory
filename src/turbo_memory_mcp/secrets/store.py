@@ -35,7 +35,7 @@ from __future__ import annotations
 try:
     import fcntl
 except ImportError:  # pragma: no cover - non-POSIX platform (e.g. Windows)
-    fcntl = None
+    fcntl = None  # type: ignore[assignment]  # guarded by `fcntl is not None` at use sites
 import json
 import os
 import re
@@ -43,8 +43,9 @@ import secrets as _stdlib_secrets
 import sys
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from cryptography.exceptions import InvalidTag
 
@@ -100,7 +101,7 @@ class VaultDecryptError(RuntimeError):
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _validate_name(name: str) -> None:
@@ -404,7 +405,7 @@ class SecretsStore:
             key, mode = resolve_master_key(
                 self.project_id, allow_bootstrap=True, salt=salt
             )
-            data = self._load(key, mode) if vault_existed else {
+            data: dict[str, Any] = self._load(key, mode) if vault_existed else {
                 "version": VAULT_VERSION,
                 "entries": {},
             }

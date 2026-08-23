@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
-from .store import MemoryStore, USAGE_STATS_FORMAT_VERSION, utc_now
+from .store import USAGE_STATS_FORMAT_VERSION, MemoryStore, utc_now
 
 INPUT_COST_ENV = "TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD"
 TOKEN_MILESTONES = (1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000)
@@ -69,7 +70,7 @@ def record_semantic_search_usage(
     compact_context_bytes = _estimate_compact_context_bytes(response_payload)
     items = response_payload.get("items", [])
     estimated_bytes_saved = max(int(raw_source_bytes) - compact_context_bytes, 0)
-    estimated_tokens_saved = int(math.ceil(estimated_bytes_saved / 4)) if estimated_bytes_saved else 0
+    estimated_tokens_saved = math.ceil(estimated_bytes_saved / 4) if estimated_bytes_saved else 0
 
     for counter in (total_counter, project_counter):
         counter["search_calls"] += 1
@@ -195,7 +196,7 @@ def _get_project_counter(stats: dict[str, Any], project_id: str | None, project_
 
 
 def _serialize_counter(counter: Mapping[str, Any], cost_basis: dict[str, Any] | None) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "search_calls": int(counter["search_calls"]),
         "hydrate_calls": int(counter["hydrate_calls"]),
         "compact_items_served": int(counter["compact_items_served"]),

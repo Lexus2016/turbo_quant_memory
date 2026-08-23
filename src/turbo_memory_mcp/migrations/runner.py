@@ -16,10 +16,11 @@ Flow per subsystem:
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..store import MemoryStore
 from .io import write_json_atomic
@@ -152,7 +153,7 @@ def apply_pending(
         log_event("snapshot_created", path=str(snap_path))
 
     outcomes = []
-    for sub, status in pending:
+    for _sub, status in pending:
         for mig in status.pending:
             outcome = _run_one(store, mig)
             outcomes.append(outcome)
@@ -168,7 +169,7 @@ def _run_one(store: MemoryStore, mig: Migration) -> MigrationOutcome:
     try:
         mig.func(store)
         _bump_manifest(store, mig.subsystem, mig.to_version)
-    except Exception as exc:  # noqa: BLE001 — we capture all to log + return
+    except Exception as exc:
         ms = (time.monotonic() - t0) * 1000
         log_event(
             "apply_failure",
@@ -359,4 +360,4 @@ def _bump_one(path: Path, current: dict[str, Any] | None, new_version: int, when
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

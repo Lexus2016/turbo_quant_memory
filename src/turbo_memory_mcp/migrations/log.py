@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ def log_event(event: str, **fields: Any) -> None:
     Always includes timestamp_utc and package_version.
     """
     record = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
         "package_version": __version__,
         "event": event,
         **fields,

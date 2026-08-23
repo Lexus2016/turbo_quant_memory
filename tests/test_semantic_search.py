@@ -7,15 +7,15 @@ from unittest.mock import patch
 
 import pytest
 
+from turbo_memory_mcp.retrieval_index import CONFIDENCE_HIGH_SCORE
 from turbo_memory_mcp.server import (
     build_runtime_context,
     deprecate_note_impl,
     index_paths_impl,
-    remember_note_impl,
     promote_note_impl,
+    remember_note_impl,
     semantic_search_impl,
 )
-from turbo_memory_mcp.retrieval_index import CONFIDENCE_HIGH_SCORE
 from turbo_memory_mcp.store import MARKDOWN_FORMAT_VERSION, sha256_text
 
 

@@ -10,7 +10,7 @@ from .contracts import (
     build_hydrated_note_item_payload,
     build_hydration_payload,
 )
-from .store import GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, MemoryStore, PROJECT_SCOPE
+from .store import GLOBAL_SCOPE, MARKDOWN_SOURCE_KIND, PROJECT_SCOPE, MemoryStore
 
 HYDRATE_WINDOWS = {
     "default": {"before": 1, "after": 1},
@@ -24,7 +24,7 @@ def hydrate(
     *,
     scope: str,
     mode: str = "default",
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_item_id = item_id.strip()
     if not resolved_item_id:
         raise ValueError("hydrate requires a non-empty item_id.")
@@ -60,7 +60,7 @@ def _hydrate_markdown(
     block_id: str,
     *,
     mode: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     window = HYDRATE_WINDOWS[mode]
     neighborhood = store.read_markdown_neighborhood(
         block_id,
@@ -93,7 +93,7 @@ def _hydrate_note(
     *,
     source_path: str,
     mode: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     item = build_hydrated_note_item_payload(note, source_path=source_path)
     return build_hydration_payload(
         mode=mode,

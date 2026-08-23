@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from .contracts import build_search_payload, build_semantic_item_payload
 from .retrieval_index import CONFIDENCE_HIGH_SCORE, CONFIDENCE_MEDIUM_SCORE, RetrievalIndex
@@ -13,11 +14,11 @@ from .store import (
     DEFAULT_SEARCH_TIERS,
     GLOBAL_SCOPE,
     MARKDOWN_SOURCE_KIND,
-    MemoryStore,
     NOTE_PROVENANCE_HUMAN,
     NOTE_SOURCE_KIND,
     NOTE_TIERS,
     PROJECT_SCOPE,
+    MemoryStore,
 )
 
 HYBRID_PROJECT_BIAS = 0.15
@@ -49,7 +50,7 @@ def semantic_search(
     limit: int,
     tier_filter: Sequence[str] | None = None,
     source_filter: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     query_text = query.strip()
     if not query_text:
         raise ValueError("semantic_search requires a non-empty query.")
@@ -185,7 +186,7 @@ def _query_scope(
             try:
                 cand_note = store.read_note(str(row["note_id"]), scope)
                 is_human_flagged = cand_note.get("provenance") == NOTE_PROVENANCE_HUMAN
-            except Exception:  # noqa: BLE001 — advisory; never break search
+            except Exception:
                 is_human_flagged = False
         provenance_bonus = PROVENANCE_HUMAN_BONUS if is_human_flagged else 0.0
         updated_epoch = _updated_epoch(str(row["updated_at"]))
@@ -304,7 +305,7 @@ def _decorate_candidate(
     return payload
 
 
-def _resolve_overall_state(candidates: list[Mapping[str, Any]]) -> tuple[str, str | None]:
+def _resolve_overall_state(candidates: Sequence[Mapping[str, Any]]) -> tuple[str, str | None]:
     if not candidates:
         return "low", "No relevant memory results found."
 
@@ -461,7 +462,7 @@ def _recency_bonus(updated_epoch: float, *, now_epoch: float) -> float:
 
 def _updated_epoch(value: str) -> float:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        return datetime.fromisoformat(value).timestamp()
     except (ValueError, TypeError):
         # A malformed updated_at must not break retrieval ordering; sort an
         # unparseable timestamp as the oldest possible row (audit H3).

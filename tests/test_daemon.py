@@ -7,8 +7,9 @@ import os
 import platform
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -437,7 +438,7 @@ def _capture_local_environ(
     a proxy call's project identity.
     """
 
-    import turbo_memory_mcp.server as server
+    from turbo_memory_mcp import server
 
     captured: dict[str, Any] = {}
 

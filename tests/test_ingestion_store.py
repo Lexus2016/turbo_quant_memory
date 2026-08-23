@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from turbo_memory_mcp.identity import ProjectIdentity
-from turbo_memory_mcp.store import MARKDOWN_SOURCE_KIND, MemoryStore, PROJECT_SCOPE, sha256_text
+from turbo_memory_mcp.store import MARKDOWN_SOURCE_KIND, PROJECT_SCOPE, MemoryStore, sha256_text
 
 
 def _project_identity(project_root: Path) -> ProjectIdentity:

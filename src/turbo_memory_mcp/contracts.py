@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from . import __version__
 
@@ -18,30 +19,14 @@ QUERY_MODES = ("project", "global", "hybrid")
 INDEX_MODES = ("full", "incremental")
 HYDRATE_MODES = ("default", "related")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
-PHASE_2_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "search_memory")
-PHASE_3_TOOL_NAMES = PHASE_2_TOOL_NAMES + ("index_paths",)
-PHASE_4_TOOL_NAMES = PHASE_1_TOOL_NAMES + ("remember_note", "promote_note", "semantic_search", "index_paths")
-PHASE_5_TOOL_NAMES = PHASE_1_TOOL_NAMES + (
-    "remember_note",
-    "promote_note",
-    "deprecate_note",
-    "semantic_search",
-    "hydrate",
-    "index_paths",
-)
-PHASE_6_TOOL_NAMES = PHASE_5_TOOL_NAMES + ("lint_knowledge_base",)
-PHASE_7_TOOL_NAMES = PHASE_6_TOOL_NAMES + (
-    "link_entities",
-    "unlink_entities",
-    "get_related_entities",
-)
-PHASE_9_TOOL_NAMES = PHASE_7_TOOL_NAMES + (
-    "set_secret",
-    "get_secret",
-    "list_secrets",
-    "delete_secret",
-)
-PHASE_10_TOOL_NAMES = PHASE_9_TOOL_NAMES + ("recent_context",)
+PHASE_2_TOOL_NAMES = (*PHASE_1_TOOL_NAMES, "remember_note", "promote_note", "search_memory")
+PHASE_3_TOOL_NAMES = (*PHASE_2_TOOL_NAMES, "index_paths")
+PHASE_4_TOOL_NAMES = (*PHASE_1_TOOL_NAMES, "remember_note", "promote_note", "semantic_search", "index_paths")
+PHASE_5_TOOL_NAMES = (*PHASE_1_TOOL_NAMES, "remember_note", "promote_note", "deprecate_note", "semantic_search", "hydrate", "index_paths")
+PHASE_6_TOOL_NAMES = (*PHASE_5_TOOL_NAMES, "lint_knowledge_base")
+PHASE_7_TOOL_NAMES = (*PHASE_6_TOOL_NAMES, "link_entities", "unlink_entities", "get_related_entities")
+PHASE_9_TOOL_NAMES = (*PHASE_7_TOOL_NAMES, "set_secret", "get_secret", "list_secrets", "delete_secret")
+PHASE_10_TOOL_NAMES = (*PHASE_9_TOOL_NAMES, "recent_context")
 CURRENT_TOOL_NAMES = PHASE_10_TOOL_NAMES
 
 
@@ -72,7 +57,7 @@ def build_contract_snapshot(
     *,
     storage_root: str | None = None,
     current_project: Mapping[str, Any] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "product_name": PRODUCT_NAME,
         "server_id": SERVER_ID,
@@ -101,7 +86,7 @@ def build_health_payload(
     migrations_hint: str | None = None,
     daemon_role: str | None = None,
     migration_auto_result: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload = build_contract_snapshot()
     result: dict[str, object] = {
         "status": "ok",
@@ -128,8 +113,8 @@ def build_server_info_payload(
     index_status: Mapping[str, Any] | None = None,
     usage_stats: Mapping[str, Any] | None = None,
     migrations: Mapping[str, Any] | None = None,
-    orphaned_buckets: list[Mapping[str, Any]] | None = None,
-) -> dict[str, object]:
+    orphaned_buckets: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     if storage_stats is not None:
         payload["storage_stats"] = dict(storage_stats)
@@ -144,7 +129,7 @@ def build_server_info_payload(
     return payload
 
 
-def build_scope_payload() -> dict[str, object]:
+def build_scope_payload() -> dict[str, Any]:
     scopes = [
         {
             "name": "project",
@@ -182,7 +167,7 @@ def build_note_item_payload(
     confidence: float,
     can_hydrate: bool,
     content_preview: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "title": note["title"],
         "note_kind": note["note_kind"],
@@ -218,7 +203,7 @@ def build_note_write_payload(
     action: str,
     content_preview: str,
     warning: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "status": "ok",
         "action": action,
@@ -242,7 +227,7 @@ def build_search_payload(
     items: list[dict[str, object]],
     confidence_state: str | None = None,
     warning: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "status": "ok",
         "query": query,
@@ -257,7 +242,7 @@ def build_search_payload(
     return payload
 
 
-def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, object]:
+def build_semantic_item_payload(item: Mapping[str, Any]) -> dict[str, Any]:
     payload: dict[str, object] = {
         "scope": item["scope"],
         "project_id": item["project_id"],
@@ -301,7 +286,7 @@ def build_recent_context_item_payload(
     source_path: str,
     compressed_summary: str,
     relations: list[dict[str, Any]] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Compact, query-free note payload for the `recent_context` bootstrap tool.
 
     Shaped to be familiar to clients that already consume `semantic_search`
@@ -338,7 +323,7 @@ def build_recent_context_payload(
     scope: str,
     items: list[dict[str, object]],
     tier_filter: list[str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "status": "ok",
         "mode": "recent_context",
@@ -355,7 +340,7 @@ def build_hydrated_markdown_item_payload(
     block: Mapping[str, Any],
     *,
     project_name: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     heading_path = list(block.get("heading_path", []))
     title = heading_path[-1] if heading_path else str(block["source_path"])
     payload: dict[str, object] = {
@@ -386,7 +371,7 @@ def build_hydrated_note_item_payload(
     note: Mapping[str, Any],
     *,
     source_path: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload: dict[str, object] = {
         "scope": note["scope"],
         "project_id": note["project_id"],
@@ -424,10 +409,10 @@ def build_hydration_payload(
     *,
     mode: str,
     item: Mapping[str, Any],
-    neighbors_before: list[Mapping[str, Any]],
-    neighbors_after: list[Mapping[str, Any]],
+    neighbors_before: Sequence[Mapping[str, Any]],
+    neighbors_after: Sequence[Mapping[str, Any]],
     neighbor_window: Mapping[str, int],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "status": "ok",
         "mode": mode,
@@ -452,7 +437,7 @@ def build_indexing_payload(
     skipped_files: int,
     deleted_files: int,
     block_count: int,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "status": "ok",
         "mode": mode,
@@ -469,7 +454,7 @@ def build_self_test_payload(
     *,
     storage_root: str,
     current_project: Mapping[str, Any],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     payload = build_contract_snapshot(storage_root=storage_root, current_project=current_project)
     return {
         "status": "ok",
@@ -494,13 +479,13 @@ def build_self_test_payload(
     }
 
 
-def build_set_secret_payload(*, name: str, project_id: str) -> dict[str, object]:
+def build_set_secret_payload(*, name: str, project_id: str) -> dict[str, Any]:
     return {"status": "ok", "name": name, "project_id": project_id}
 
 
 def build_get_secret_payload(
     *, name: str, project_id: str, secret_value: str
-) -> dict[str, object]:
+) -> dict[str, Any]:
     # ``secret_value`` is a DEDICATED field — never interpolated into
     # descriptive ``summary``/``message`` text. Clients should render it
     # masked by default and pass it through programmatically only.
@@ -514,19 +499,19 @@ def build_get_secret_payload(
 
 def build_get_secret_missing_payload(
     *, name: str, project_id: str
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {"status": "missing", "name": name, "project_id": project_id}
 
 
 def build_list_secrets_payload(
     *, names: list[str], project_id: str
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {"status": "ok", "project_id": project_id, "names": list(names)}
 
 
 def build_delete_secret_payload(
     *, name: str, project_id: str, deleted: bool
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "status": "ok",
         "name": name,
@@ -537,7 +522,7 @@ def build_delete_secret_payload(
 
 def build_secret_error_payload(
     *, name: str, project_id: str, code: str, setup_hint: str
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "status": "error",
         "code": code,
@@ -558,8 +543,8 @@ __all__ = [
     "PHASE_2_TOOL_NAMES",
     "PHASE_3_TOOL_NAMES",
     "PHASE_4_TOOL_NAMES",
-    "PHASE_6_TOOL_NAMES",
     "PHASE_5_TOOL_NAMES",
+    "PHASE_6_TOOL_NAMES",
     "PHASE_7_TOOL_NAMES",
     "PHASE_9_TOOL_NAMES",
     "PHASE_10_TOOL_NAMES",

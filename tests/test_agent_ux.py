@@ -4,7 +4,7 @@ episodic reporting, and remember_note auto-link + hints."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,8 +12,8 @@ import pytest
 from turbo_memory_mcp.identity import ProjectIdentity
 from turbo_memory_mcp.knowledge_lint import _scan_stale_episodic_notes
 from turbo_memory_mcp.server import (
-    lint_knowledge_base_impl,
     link_entities_impl,
+    lint_knowledge_base_impl,
     remember_note_impl,
 )
 from turbo_memory_mcp.store import MemoryStore
@@ -98,7 +98,7 @@ def _store(tmp_path: Path) -> MemoryStore:
 def _backdate(store: MemoryStore, note_id: str, days: int) -> None:
     path = store.project_note_path(note_id)
     record = json.loads(path.read_text(encoding="utf-8"))
-    record["updated_at"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    record["updated_at"] = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     path.write_text(json.dumps(record), encoding="utf-8")
 
 

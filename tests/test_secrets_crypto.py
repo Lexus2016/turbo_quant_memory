@@ -26,7 +26,7 @@ KEY_B = b"\x01" * KEY_SIZE
         b"a",
         b"hello world",
         b"\x00\xff" * 100,
-        "пароль до бази даних".encode("utf-8") * 5,
+        "пароль до бази даних".encode() * 5,
     ],
 )
 def test_encrypt_decrypt_roundtrip(plaintext: bytes) -> None:

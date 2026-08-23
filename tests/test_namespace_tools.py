@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -17,7 +18,6 @@ from turbo_memory_mcp.server import (
     server_info_impl,
 )
 from turbo_memory_mcp.store import RETRIEVAL_FORMAT_VERSION
-from unittest.mock import patch
 
 
 class KeywordEmbedder:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from . import __version__
 
@@ -254,7 +254,7 @@ def _handle_migrate(args: argparse.Namespace) -> int:
 
     try:
         _, store = build_runtime_context()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"error: cannot resolve storage context: {exc}", file=sys.stderr)
         return 1
 
@@ -285,7 +285,7 @@ def _handle_migrate(args: argparse.Namespace) -> int:
     return 1
 
 
-def _daemon_lockfile_present(store) -> "Path | None":
+def _daemon_lockfile_present(store) -> Path | None:
     """Return the lockfile path only if a *live* primary daemon owns it.
 
     Bare file existence is not enough. A daemon that exits uncleanly (SIGKILL,
@@ -311,7 +311,7 @@ def _daemon_lockfile_present(store) -> "Path | None":
     return lock if _is_pid_alive(pid) else None
 
 
-def _migrate_print_status(store, detect_status, Subsystem) -> int:  # noqa: N803
+def _migrate_print_status(store, detect_status, Subsystem) -> int:
     statuses = detect_status(store)
     pending_total = 0
     print(f"storage_root: {store.storage_root}")
@@ -339,7 +339,7 @@ def _migrate_print_status(store, detect_status, Subsystem) -> int:  # noqa: N803
     return 0
 
 
-def _migrate_dry_run(store, apply_pending) -> int:  # noqa: N803
+def _migrate_dry_run(store, apply_pending) -> int:
     outcomes = apply_pending(store, dry_run=True)
     if not outcomes:
         print("Nothing to migrate.")
@@ -355,7 +355,7 @@ def _migrate_dry_run(store, apply_pending) -> int:  # noqa: N803
     return 0
 
 
-def _migrate_apply(store, apply_pending, *, snapshot: bool, force: bool) -> int:  # noqa: N803
+def _migrate_apply(store, apply_pending, *, snapshot: bool, force: bool) -> int:
     from .migrations import create_snapshot as _create_snapshot
     from .migrations import detect_status as _detect_status
 
@@ -434,13 +434,13 @@ def _migrate_apply(store, apply_pending, *, snapshot: bool, force: bool) -> int:
     return 0
 
 
-def _migrate_snapshot_only(store, create_snapshot) -> int:  # noqa: N803
+def _migrate_snapshot_only(store, create_snapshot) -> int:
     path = create_snapshot(store.storage_root)
     print(f"Snapshot created at: {path}")
     return 0
 
 
-def _migrate_list_snapshots(store, list_snapshots) -> int:  # noqa: N803
+def _migrate_list_snapshots(store, list_snapshots) -> int:
     snaps = list_snapshots(store.storage_root)
     if not snaps:
         print("No snapshots present.")
@@ -451,7 +451,7 @@ def _migrate_list_snapshots(store, list_snapshots) -> int:  # noqa: N803
     return 0
 
 
-def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool) -> int:  # noqa: N803
+def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool) -> int:
     from pathlib import Path
 
     if not force:
@@ -471,7 +471,7 @@ def _migrate_restore_from(store, restore_snapshot, path_arg: str, *, force: bool
 
     try:
         pre_restore = _create_snapshot(store.storage_root)
-    except Exception as exc:  # noqa: BLE001 - refuse to restore if we cannot back up first
+    except Exception as exc:
         print(
             f"error: could not snapshot the current state before restore: {exc}",
             file=sys.stderr,
@@ -662,7 +662,7 @@ def _handle_skill_install(args: argparse.Namespace) -> int:
 
     try:
         results = install_skill(client=client, dry_run=args.dry_run)
-    except Exception as exc:  # noqa: BLE001 - packaging bug must fail loudly
+    except Exception as exc:
         print(f"error: cannot load packaged skill: {exc}", file=sys.stderr)
         return 1
 

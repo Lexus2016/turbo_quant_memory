@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_semantic_search import KeywordEmbedder
 from turbo_memory_mcp.retrieval_index import (
     CONFIDENCE_HIGH_SCORE,
     CONFIDENCE_MEDIUM_SCORE,
@@ -19,8 +20,6 @@ from turbo_memory_mcp.retrieval_index import (
 )
 from turbo_memory_mcp.server import build_runtime_context, semantic_search_impl
 from turbo_memory_mcp.store import sha256_text
-
-from tests.test_semantic_search import KeywordEmbedder
 
 
 @pytest.fixture(autouse=True)

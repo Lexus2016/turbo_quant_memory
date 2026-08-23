@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import fnmatch
-import re
 import os
+import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
+from typing import Any
 
 from .contracts import INDEX_MODES, build_indexing_payload
 from .markdown_parser import build_block_id, parse_markdown_blocks
@@ -237,7 +238,7 @@ def assess_project_index_freshness(
             "unindexed_file_count": 0,
         }
 
-    manifests_by_root: dict[str, dict[str, dict[str, object]]] = {}
+    manifests_by_root: dict[str, dict[str, dict[str, Any]]] = {}
     for manifest in store.list_markdown_file_manifests():
         root_bucket = manifests_by_root.setdefault(str(manifest["root_id"]), {})
         root_bucket[str(manifest["source_path"])] = manifest
@@ -262,14 +263,14 @@ def assess_project_index_freshness(
         unindexed_file_count += len(set(actual_source_paths).difference(manifest_source_paths))
 
         for source_path, file_path in actual_source_paths.items():
-            manifest = manifest_source_paths.get(source_path)
-            if manifest is None:
+            manifest_record = manifest_source_paths.get(source_path)
+            if manifest_record is None:
                 continue
 
             stat = file_path.stat()
             size = int(stat.st_size)
             mtime_ns = int(stat.st_mtime_ns)
-            if int(manifest["size"]) == size and int(manifest["mtime_ns"]) == mtime_ns:
+            if int(manifest_record["size"]) == size and int(manifest_record["mtime_ns"]) == mtime_ns:
                 continue
 
             source_text = _read_source_text(file_path, size)
@@ -300,12 +301,12 @@ def build_file_key(root_id: str, source_path: str) -> str:
     return f"{readable}-{sha256_text(f'{root_id}|{normalized_source_path}')[:10]}"
 
 
-def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir: Path) -> list[dict[str, object]]:
+def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir: Path) -> list[dict[str, Any]]:
     existing_by_root_id = {str(root["root_id"]): root for root in store.list_markdown_roots()}
     if not paths:
         return [existing_by_root_id[root_id] for root_id in sorted(existing_by_root_id)]
 
-    registered_roots: list[dict[str, object]] = []
+    registered_roots: list[dict[str, Any]] = []
     seen_paths: set[Path] = set()
     for raw_path in paths:
         resolved_path = _resolve_input_path(raw_path, base_dir=base_dir)
@@ -341,10 +342,7 @@ def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir:
 
 def _resolve_input_path(raw_path: str, *, base_dir: Path) -> Path:
     candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = (base_dir / candidate).resolve()
-    else:
-        candidate = candidate.resolve()
+    candidate = (base_dir / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
     return candidate
 
 
@@ -457,7 +455,7 @@ def _prune_removed_roots(
     store: MemoryStore,
     *,
     keep_root_ids: set[str],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     deleted_files = 0
     deleted_block_ids: list[str] = []
 

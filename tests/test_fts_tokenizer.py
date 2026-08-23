@@ -16,7 +16,6 @@ from turbo_memory_mcp.retrieval_index import (
 )
 from turbo_memory_mcp.server import build_runtime_context, remember_note_impl
 
-
 # --------------------------------------------------------------------------- #
 # _resolve_fts_language / _fts_index_kwargs (pure, no LanceDB needed)
 # --------------------------------------------------------------------------- #

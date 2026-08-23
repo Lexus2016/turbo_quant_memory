@@ -12,6 +12,11 @@ package import.
 """
 from __future__ import annotations
 
+# Import upgrades last so @migration decorators run against a fully
+# loaded registry module. This is the canonical place to register
+# real upgrade steps for every phase.
+from . import upgrades
+from .log import log_event, log_path
 from .registry import (
     REGISTRY,
     Migration,
@@ -29,12 +34,6 @@ from .runner import (
     format_pending_warning,
 )
 from .snapshot import create_snapshot, list_snapshots, restore_snapshot
-from .log import log_event, log_path
-
-# Import upgrades last so @migration decorators run against a fully
-# loaded registry module. This is the canonical place to register
-# real upgrade steps for every phase.
-from . import upgrades  # noqa: F401 — import for side effects
 
 __all__ = [
     "REGISTRY",

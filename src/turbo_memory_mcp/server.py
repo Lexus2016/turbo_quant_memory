@@ -7,9 +7,10 @@ import json
 import os
 import sys
 import threading
+from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -68,12 +69,12 @@ from .store import (
     GLOBAL_SCOPE,
     MARKDOWN_FORMAT_VERSION,
     MARKDOWN_SOURCE_KIND,
-    MemoryStore,
     NOTE_KINDS,
     NOTE_SOURCE_KIND,
     NOTE_TIERS,
     PROJECT_SCOPE,
     RETRIEVAL_FORMAT_VERSION,
+    MemoryStore,
     detect_orphaned_buckets,
     reconcile_project_identity,
     resolve_storage_root,
@@ -144,19 +145,19 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
     )
 
     @mcp.tool()
-    def health() -> dict[str, object]:
+    def health() -> dict[str, Any]:
         return dispatcher("health", {})
 
     @mcp.tool()
-    def server_info() -> dict[str, object]:
+    def server_info() -> dict[str, Any]:
         return dispatcher("server_info", {})
 
     @mcp.tool()
-    def list_scopes() -> dict[str, object]:
+    def list_scopes() -> dict[str, Any]:
         return dispatcher("list_scopes", {})
 
     @mcp.tool()
-    def self_test() -> dict[str, object]:
+    def self_test() -> dict[str, Any]:
         return dispatcher("self_test", {})
 
     @mcp.tool()
@@ -169,7 +170,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         scope: str = "project",
         provenance: str = "agent",
         tier: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Store a typed project note. kind must be exactly one of: lesson, decision, pattern, handoff.
 
         tags: 2-3 lowercase tags are strongly recommended — tags are the only way
@@ -206,7 +207,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         )
 
     @mcp.tool()
-    def promote_note(note_id: str) -> dict[str, object]:
+    def promote_note(note_id: str) -> dict[str, Any]:
         return dispatcher("promote_note", {"note_id": note_id})
 
     @mcp.tool()
@@ -216,7 +217,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         replacement_note_id: str | None = None,
         replacement_scope: str | None = None,
         reason: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         return dispatcher(
             "deprecate_note",
             {
@@ -235,7 +236,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         limit: int = 5,
         tier_filter: list[str] | None = None,
         source_filter: str | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Compact memory retrieval (dense vector + BM25, fused via RRF).
 
         By default only the `durable` and `reference` tiers are searched, so
@@ -268,7 +269,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         item_id: str,
         scope: str,
         mode: str = "default",
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         return dispatcher(
             "hydrate",
             {"item_id": item_id, "scope": scope, "mode": mode},
@@ -278,7 +279,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
     def index_paths(
         paths: list[str] | None = None,
         mode: str = "incremental",
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Register and index Markdown directories into project memory.
 
         Supports .tqmemoryignore files (placed in project root or any indexed
@@ -293,7 +294,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
     def lint_knowledge_base(
         paths: list[str] | None = None,
         max_issues: int = 200,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         return dispatcher(
             "lint_knowledge_base",
             {"paths": paths, "max_issues": max_issues},
@@ -305,7 +306,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         target_uri: str,
         relation_type: str,
         scope: str = "project",
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Create a Knowledge Graph link between two entities.
         
         Entities are specified using URIs:
@@ -329,7 +330,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         target_uri: str,
         relation_type: str | None = None,
         scope: str = "project",
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Remove a Knowledge Graph link between two entities.
 
         source_uri / target_uri use the same URI forms as link_entities:
@@ -350,7 +351,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         uri: str,
         relation_type: str | None = None,
         scope: str = "hybrid",
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Query relations involving a specific entity URI.
 
         uri: the entity to look up, as note://<note_id>, file://<relative/path>,
@@ -367,7 +368,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         )
 
     @mcp.tool()
-    def set_secret(name: str, value: str) -> dict[str, object]:
+    def set_secret(name: str, value: str) -> dict[str, Any]:
         """Store an encrypted secret in the active project's vault.
 
         The value is encrypted with AES-256-GCM under a per-project master
@@ -380,7 +381,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         return dispatcher("set_secret", {"name": name, "value": value})
 
     @mcp.tool()
-    def get_secret(name: str) -> dict[str, object]:
+    def get_secret(name: str) -> dict[str, Any]:
         """Fetch a project secret by exact name.
 
         Returns the value in a dedicated ``secret_value`` field (never in
@@ -391,12 +392,12 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         return dispatcher("get_secret", {"name": name})
 
     @mcp.tool()
-    def list_secrets() -> dict[str, object]:
+    def list_secrets() -> dict[str, Any]:
         """List secret names in the active project. Never returns values."""
         return dispatcher("list_secrets", {})
 
     @mcp.tool()
-    def delete_secret(name: str) -> dict[str, object]:
+    def delete_secret(name: str) -> dict[str, Any]:
         """Delete a project secret by exact name."""
         return dispatcher("delete_secret", {"name": name})
 
@@ -405,7 +406,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 10,
         tier_filter: list[str] | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Query-free session bootstrap: the most recently updated notes.
 
         Call this FIRST when starting a new session or resuming after a context
@@ -490,7 +491,7 @@ def _migration_pending_signal(
                 "large corpora; canonical notes and markdown are not modified."
             )
         return True, hint
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False, None
 
 
@@ -685,6 +686,7 @@ def make_local_dispatcher(
         cwd_override = merged_kwargs.pop("_cwd", None)
         environ_override = merged_kwargs.pop("_environ", None)
         resolved_cwd = cwd_override if cwd_override is not None else default_cwd
+        resolved_environ: Mapping[str, str] | None = None
         if environ_override is not None:
             # Proxy call: resolve project identity from the proxy's forwarded
             # values only. Drop the primary's identity keys first so an empty or
@@ -931,7 +933,7 @@ def _warn_about_pending_migrations() -> None:
         msg = format_pending_warning(store)
         if msg:
             print(msg, file=sys.stderr, flush=True)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -1042,7 +1044,7 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     try:
         _gate_primary_ready(ready)
         build_server(dispatcher).run(transport="stdio")
-    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+    except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
         listener.stop()
@@ -1055,7 +1057,7 @@ def _run_proxy(bootstrap: BootstrapResult) -> None:
     runtime = ProxyRuntime(client)
     try:
         build_server(runtime).run(transport="stdio")
-    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+    except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
         runtime.shutdown()
@@ -1065,7 +1067,7 @@ def _run_standalone() -> None:
     dispatcher = make_local_dispatcher()
     try:
         build_server(dispatcher).run(transport="stdio")
-    except BaseException as exc:  # noqa: BLE001 - narrowed by the helper
+    except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
 
 
@@ -1078,7 +1080,7 @@ def server_info_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, store = build_runtime_context(cwd=cwd, environ=environ)
     storage_stats = collect_storage_stats(store)
     index_status = collect_index_status(store, storage_stats=storage_stats)
@@ -1137,7 +1139,7 @@ def _collect_migrations_status(store: Any) -> dict[str, Any]:
                 "the exact `--restore-from` command."
             )
         return result
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"pending": False, "subsystems": [], "error": str(exc)}
 
 
@@ -1145,7 +1147,7 @@ def self_test_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, store = build_runtime_context(cwd=cwd, environ=environ)
     return build_self_test_payload(
         storage_root=str(store.storage_root),
@@ -1196,7 +1198,7 @@ def link_entities_impl(
     scope: str = "project",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_scope = _normalize_scope(scope)
     if resolved_scope not in (PROJECT_SCOPE, GLOBAL_SCOPE):
         raise ValueError(f"Unsupported scope: {scope}")
@@ -1228,7 +1230,7 @@ def unlink_entities_impl(
     scope: str = "project",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_scope = _normalize_scope(scope)
     if resolved_scope not in (PROJECT_SCOPE, GLOBAL_SCOPE):
         raise ValueError(f"Unsupported scope: {scope}")
@@ -1259,7 +1261,7 @@ def get_related_entities_impl(
     scope: str = "hybrid",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     if not uri.strip():
         raise ValueError("get_related_entities requires a non-empty uri.")
         
@@ -1300,7 +1302,7 @@ def _build_similarity_hints(store: MemoryStore, note: Mapping[str, Any]) -> list
             limit=_SIMILARITY_HINT_LIMIT,
             exclude_item_id=str(note.get("note_id", "")),
         )
-    except Exception:  # noqa: BLE001 — hints are advisory; never fail a write
+    except Exception:
         return []
 
     new_kind = str(note.get("note_kind", ""))
@@ -1351,7 +1353,7 @@ def remember_note_impl(
     tier: str | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_scope = _normalize_scope(scope)
     if resolved_scope == GLOBAL_SCOPE:
         raise ValueError("Direct global writes are disabled; write to project scope and use promote_note.")
@@ -1412,7 +1414,7 @@ def remember_note_impl(
                     scope=resolved_scope,
                 )
             )
-        except Exception:  # noqa: BLE001 — linking is best-effort
+        except Exception:
             pass
     if linked_refs:
         payload["linked_refs"] = linked_refs
@@ -1440,7 +1442,7 @@ def promote_note_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_note_id = note_id.strip()
     if not resolved_note_id:
         raise ValueError("promote_note requires a non-empty note_id.")
@@ -1466,7 +1468,7 @@ def deprecate_note_impl(
     reason: str | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resolved_note_id = note_id.strip()
     if not resolved_note_id:
         raise ValueError("deprecate_note requires a non-empty note_id.")
@@ -1510,7 +1512,7 @@ def semantic_search_impl(
     source_filter: str | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     resolved_scope = scope.strip().lower()
     if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
@@ -1541,7 +1543,7 @@ def hydrate_impl(
     mode: str = "default",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     if scope.strip().lower() == PROJECT_SCOPE:
         _refresh_project_indexes_if_needed(store)
@@ -1562,7 +1564,7 @@ def recent_context_impl(
     tier_filter: Sequence[str] | None = None,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Query-free session bootstrap: most-recently-updated notes, newest first.
 
     Reads canonical note JSON directly (no embedding, no vector search), so it
@@ -1660,7 +1662,7 @@ def index_paths_impl(
     mode: str = "incremental",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     runtime_cwd = Path(cwd).expanduser().resolve() if cwd is not None else store.project.project_root
     payload, sync_plan = index_paths_with_sync_plan(store, paths=paths, mode=mode, cwd=runtime_cwd)
@@ -1674,7 +1676,7 @@ def lint_knowledge_base_impl(
     max_issues: int = 200,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     runtime_cwd = Path(cwd).expanduser().resolve() if cwd is not None else store.project.project_root
     return lint_knowledge_base(store, paths=paths, max_issues=max_issues, cwd=runtime_cwd)
@@ -1716,7 +1718,7 @@ def set_secret_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
     vault = SecretsStore(mem_store.storage_root, project.project_id)
     try:
@@ -1751,7 +1753,7 @@ def get_secret_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
     vault = SecretsStore(mem_store.storage_root, project.project_id)
     try:
@@ -1792,7 +1794,7 @@ def list_secrets_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
     vault = SecretsStore(mem_store.storage_root, project.project_id)
     try:
@@ -1830,7 +1832,7 @@ def delete_secret_impl(
     *,
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project, mem_store = build_runtime_context(cwd=cwd, environ=environ)
     vault = SecretsStore(mem_store.storage_root, project.project_id)
     try:
@@ -1863,7 +1865,7 @@ def delete_secret_impl(
     )
 
 
-def build_current_project_payload(project: ProjectIdentity) -> dict[str, object]:
+def build_current_project_payload(project: ProjectIdentity) -> dict[str, Any]:
     return {
         "project_id": project.project_id,
         "project_name": project.project_name,
@@ -1872,7 +1874,7 @@ def build_current_project_payload(project: ProjectIdentity) -> dict[str, object]
     }
 
 
-def collect_storage_stats(store: MemoryStore) -> dict[str, object]:
+def collect_storage_stats(store: MemoryStore) -> dict[str, Any]:
     snapshot = _cached_storage_snapshot(store)
     retrieval_index = RetrievalIndex(store)
 
@@ -1905,7 +1907,7 @@ def collect_index_status(
     store: MemoryStore,
     *,
     storage_stats: Mapping[str, object] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     stats = dict(storage_stats or collect_storage_stats(store))
     snapshot = _cached_storage_snapshot(store)
     project_stats = dict(stats["project"])
@@ -2053,7 +2055,7 @@ def _refresh_global_retrieval_if_needed(store: MemoryStore) -> None:
         _rebuild_scope_index_after_error(index, GLOBAL_SCOPE, exc)
 
 
-def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, object]) -> None:
+def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, Any]) -> None:
     index = RetrievalIndex(store)
     upsert_block_ids = [str(item_id) for item_id in sync_plan.get("upsert_block_ids", [])]
     delete_block_ids = [str(item_id) for item_id in sync_plan.get("delete_block_ids", [])]
@@ -2273,7 +2275,7 @@ def _load_storage_snapshot(
     project_manifest_mtime_ns: int,
     global_manifest_mtime_ns: int,
     markdown_manifest_mtime_ns: int,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     del project_manifest_mtime_ns, global_manifest_mtime_ns, markdown_manifest_mtime_ns
 
     project_notes = _read_json_dir(Path(project_notes_dir))
@@ -2305,7 +2307,7 @@ def _load_storage_snapshot(
     }
 
 
-def _cached_storage_snapshot(store: MemoryStore) -> dict[str, object]:
+def _cached_storage_snapshot(store: MemoryStore) -> dict[str, Any]:
     return _load_storage_snapshot(
         str(store.project_notes_dir()),
         str(store.global_notes_dir()),
@@ -2372,18 +2374,18 @@ def _max_timestamp(values: list[object]) -> str | None:
 
 
 __all__ = [
-    "Dispatcher",
-    "MCPServer",
     "PRODUCT_NAME",
-    "ProxyRuntime",
     "SERVER_ID",
     "TOOL_HANDLERS",
-    "build_server",
-    "build_runtime_context",
+    "Dispatcher",
+    "MCPServer",
+    "ProxyRuntime",
+    "build_content_preview",
     "build_current_project_payload",
+    "build_runtime_context",
+    "build_server",
     "collect_index_status",
     "collect_storage_stats",
-    "build_content_preview",
     "deprecate_note_impl",
     "hydrate_impl",
     "index_paths_impl",
@@ -2394,7 +2396,7 @@ __all__ = [
     "recent_context_impl",
     "remember_note_impl",
     "run_stdio_server",
-    "semantic_search_impl",
     "self_test_impl",
+    "semantic_search_impl",
     "server_info_impl",
 ]
