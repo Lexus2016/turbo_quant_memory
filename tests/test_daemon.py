@@ -534,6 +534,56 @@ def test_local_dispatcher_direct_primary_call_keeps_default_environ(
     assert captured["environ"] == default_environ
 
 
+def test_local_dispatcher_lock_contention_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #103: a busy dispatch lock must fail fast with an explicit error.
+
+    Regression for the 420s-class hard timeouts: when another operation holds
+    the shared dispatch lock (a slow hydration, a wedged primary), concurrent
+    callers used to queue on the RLock until the MCP host's tool-call timeout.
+    A bounded acquire must instead return a fast "server busy" error, and the
+    same dispatcher must keep working once the lock is free.
+    """
+
+    from turbo_memory_mcp import server
+
+    def _ok(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _ok)
+
+    busy = threading.RLock()
+    held = threading.Event()
+    release = threading.Event()
+
+    def _holder() -> None:
+        busy.acquire()
+        held.set()
+        release.wait(10)
+        busy.release()
+
+    holder = threading.Thread(target=_holder, name="tqmemory-test-lock-holder", daemon=True)
+    holder.start()
+    assert held.wait(5)
+
+    try:
+        dispatch = server.make_local_dispatcher(
+            dispatch_lock=busy,
+            dispatch_lock_timeout=0.05,
+        )
+        start = time.monotonic()
+        with pytest.raises(RuntimeError, match="server busy"):
+            dispatch("health", {})
+        elapsed = time.monotonic() - start
+        # Fails fast — nowhere near the MCP host's default tool timeout.
+        assert elapsed < 5.0
+    finally:
+        release.set()
+        holder.join(10)
+
+    # Once the lock is free the same dispatcher serves normally.
+    assert dispatch("health", {}) == {"ok": True}
+
+
 @pytestmark_win_daemon
 def test_call_does_not_retry_to_prevent_duplicates(storage_env: dict[str, str]) -> None:
     """Regression: RPC failures mid-call must NOT be silently retried, because

@@ -663,10 +663,22 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
 
 _DEFAULT_LOCAL_LOCK = threading.RLock()
 
+# Bounded wait for the shared dispatch lock before failing fast (issue #103).
+#
+# Without a bound, a slow or runaway operation (e.g. a hydration stuck on a
+# dead embedding backend, or a wedged primary) makes every concurrent caller —
+# the primary's stdio handler AND proxied daemon calls from other agent
+# profiles — queue on the RLock for the full MCP host tool-call timeout (up to
+# 600s in the field), surfacing as the 420s-class hard timeouts. A short bound
+# converts that queue into an explicit, retryable "server busy" error so the
+# host fails fast instead of hanging and can back off.
+DISPATCH_LOCK_TIMEOUT_SECONDS = 30.0
+
 
 def make_local_dispatcher(
     *,
     dispatch_lock: threading.RLock | None = None,
+    dispatch_lock_timeout: float = DISPATCH_LOCK_TIMEOUT_SECONDS,
     default_cwd: Path | str | None = None,
     default_environ: Mapping[str, str] | None = None,
 ) -> Dispatcher:
@@ -674,6 +686,10 @@ def make_local_dispatcher(
 
     The lock is shared between the primary's stdio handler and its daemon
     listener workers so MemoryStore / LanceDB access remains single-writer.
+    Lock acquisition is bounded by ``dispatch_lock_timeout``: if another
+    operation still holds the lock after that, the call fails fast with an
+    explicit "server busy" error instead of queueing until the MCP host's
+    tool-call timeout (issue #103).
     """
 
     lock = dispatch_lock or _DEFAULT_LOCAL_LOCK
@@ -699,8 +715,15 @@ def make_local_dispatcher(
             resolved_environ.update({str(k): str(v) for k, v in environ_override.items()})
         else:
             resolved_environ = default_environ
-        with lock:
+        if not lock.acquire(timeout=dispatch_lock_timeout):
+            raise RuntimeError(
+                "memory server busy: another operation holds the dispatch lock "
+                f"(waited {dispatch_lock_timeout:g}s); retry this call later"
+            )
+        try:
             return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
+        finally:
+            lock.release()
 
     return _dispatch
 
@@ -2374,6 +2397,7 @@ def _max_timestamp(values: list[object]) -> str | None:
 
 
 __all__ = [
+    "DISPATCH_LOCK_TIMEOUT_SECONDS",
     "PRODUCT_NAME",
     "SERVER_ID",
     "TOOL_HANDLERS",
