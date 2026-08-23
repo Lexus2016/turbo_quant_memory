@@ -9,12 +9,20 @@ writer is forced to wait instead of clobbering.
 
 from __future__ import annotations
 
-import fcntl
 import os
+import sys
 
 import keyring
 import keyring.backend
 import pytest
+
+if sys.platform == "win32":
+    # fcntl.flock is POSIX-only; on Windows the store takes its documented
+    # no-fcntl fallback (secrets/store.py), so these flock-semantics
+    # assertions cannot apply. Windows-specific locking coverage: follow-up.
+    pytest.skip("fcntl-based vault locking tests are POSIX-only", allow_module_level=True)
+
+import fcntl  # noqa: E402  # POSIX-only; guarded by the module-level skip above
 
 from turbo_memory_mcp.secrets.keyresolver import ENV_PASSPHRASE
 from turbo_memory_mcp.secrets.store import SecretsStore
