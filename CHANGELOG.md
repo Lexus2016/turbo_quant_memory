@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Dispatch-lock contention now fails fast instead of hanging** (issue #103):
+  `make_local_dispatcher` acquires the shared RLock with a bounded
+  `dispatch_lock_timeout` (default 30s) and raises an explicit
+  "memory server busy" error when another operation still holds it. Previously
+  a slow/runaway operation made every concurrent caller — the primary's stdio
+  handler and proxied daemon calls from other agent profiles — queue on the
+  lock until the MCP host's tool-call timeout (up to 600s in the field),
+  surfacing as the 420s-class hard timeouts with silently dropped memory
+  writes. Callers now get a prompt, retryable error and can back off.
+
 ## [0.26.0] - 2026-08-23
 
 ### Added
