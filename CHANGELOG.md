@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.27.0] - 2026-08-25
 
 ### Fixed
 - **Dispatch-lock contention now fails fast instead of hanging** (issue #103):
@@ -17,12 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock until the MCP host's tool-call timeout (up to 600s in the field),
   surfacing as the 420s-class hard timeouts with silently dropped memory
   writes. Callers now get a prompt, retryable error and can back off.
-  The bound is tunable in the field via `TQMEMORY_DISPATCH_LOCK_TIMEOUT`
-  (seconds; `<= 0` restores the previous unbounded wait as an escape hatch for
-  deployments whose legitimate long operations — a large `index_paths` run, a
-  cold embedding backend — would rather queue than get "server busy"), and the
-  busy error now names the tool that holds the lock, both in the message and in
-  a `[tqmemory]` stderr log line, so a stall is diagnosable from the caller side.
+- The `__version__` fallback in `turbo_memory_mcp/__init__.py` was stale at
+  `0.24.1`. It only applies to un-installed source checkouts (the live value
+  comes from `importlib.metadata`), but it now tracks the real version again.
+
+### Added
+- **`TQMEMORY_DISPATCH_LOCK_TIMEOUT`** tunes the dispatch-lock bound above
+  without a release. A value `<= 0` restores the previous unbounded wait, the
+  escape hatch for deployments whose legitimate long operations — a large
+  `index_paths` run, a cold embedding backend — would rather queue than get
+  "server busy". Unparseable values log a warning and fall back to the 30s
+  default rather than disabling dispatch.
+- The busy error now **names the tool holding the lock**, both in the message
+  and in a `[tqmemory]` stderr log line. A caller only ever sees its own tool
+  name, so the holder is the part that makes a field stall diagnosable.
 
 ## [0.26.0] - 2026-08-23
 
