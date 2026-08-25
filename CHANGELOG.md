@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock until the MCP host's tool-call timeout (up to 600s in the field),
   surfacing as the 420s-class hard timeouts with silently dropped memory
   writes. Callers now get a prompt, retryable error and can back off.
+  The bound is tunable in the field via `TQMEMORY_DISPATCH_LOCK_TIMEOUT`
+  (seconds; `<= 0` restores the previous unbounded wait as an escape hatch for
+  deployments whose legitimate long operations — a large `index_paths` run, a
+  cold embedding backend — would rather queue than get "server busy"), and the
+  busy error now names the tool that holds the lock, both in the message and in
+  a `[tqmemory]` stderr log line, so a stall is diagnosable from the caller side.
 
 ## [0.26.0] - 2026-08-23
 

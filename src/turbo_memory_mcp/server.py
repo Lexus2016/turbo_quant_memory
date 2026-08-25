@@ -674,11 +674,41 @@ _DEFAULT_LOCAL_LOCK = threading.RLock()
 # host fails fast instead of hanging and can back off.
 DISPATCH_LOCK_TIMEOUT_SECONDS = 30.0
 
+# Field override for the bound above, in seconds. A value <= 0 restores the old
+# unbounded wait — the escape hatch when a deployment legitimately holds the
+# lock longer than the default (a large `index_paths` run, a cold embedding
+# backend) and would rather queue than get "server busy". Unparseable values
+# fall back to the default.
+ENV_DISPATCH_LOCK_TIMEOUT = "TQMEMORY_DISPATCH_LOCK_TIMEOUT"
+
+# Name of the tool currently holding the shared dispatch lock, so a contention
+# failure can say WHICH operation is blocking instead of only that something
+# is. Guarded by its own short lock; a plain dict avoids a `global` rebind.
+_DISPATCH_HOLDER: dict[str, str | None] = {"tool": None}
+_DISPATCH_HOLDER_LOCK = threading.Lock()
+
+
+def _resolve_dispatch_lock_timeout(environ: Mapping[str, str] | None = None) -> float:
+    """Read the dispatch-lock bound from the environment, else the default."""
+
+    env = os.environ if environ is None else environ
+    raw = str(env.get(ENV_DISPATCH_LOCK_TIMEOUT, "")).strip()
+    if not raw:
+        return DISPATCH_LOCK_TIMEOUT_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        _startup_log(
+            f"{ENV_DISPATCH_LOCK_TIMEOUT}={raw!r} is not a number, "
+            f"using default {DISPATCH_LOCK_TIMEOUT_SECONDS:g}s"
+        )
+        return DISPATCH_LOCK_TIMEOUT_SECONDS
+
 
 def make_local_dispatcher(
     *,
     dispatch_lock: threading.RLock | None = None,
-    dispatch_lock_timeout: float = DISPATCH_LOCK_TIMEOUT_SECONDS,
+    dispatch_lock_timeout: float | None = None,
     default_cwd: Path | str | None = None,
     default_environ: Mapping[str, str] | None = None,
 ) -> Dispatcher:
@@ -689,10 +719,14 @@ def make_local_dispatcher(
     Lock acquisition is bounded by ``dispatch_lock_timeout``: if another
     operation still holds the lock after that, the call fails fast with an
     explicit "server busy" error instead of queueing until the MCP host's
-    tool-call timeout (issue #103).
+    tool-call timeout (issue #103). ``None`` resolves the bound from
+    ``TQMEMORY_DISPATCH_LOCK_TIMEOUT``; a value <= 0 waits without a bound.
     """
 
     lock = dispatch_lock or _DEFAULT_LOCAL_LOCK
+    timeout = (
+        _resolve_dispatch_lock_timeout() if dispatch_lock_timeout is None else dispatch_lock_timeout
+    )
 
     def _dispatch(tool: str, kwargs: Mapping[str, Any]) -> Any:
         handler = TOOL_HANDLERS.get(tool)
@@ -715,14 +749,29 @@ def make_local_dispatcher(
             resolved_environ.update({str(k): str(v) for k, v in environ_override.items()})
         else:
             resolved_environ = default_environ
-        if not lock.acquire(timeout=dispatch_lock_timeout):
-            raise RuntimeError(
-                "memory server busy: another operation holds the dispatch lock "
-                f"(waited {dispatch_lock_timeout:g}s); retry this call later"
+        acquired = lock.acquire(timeout=timeout) if timeout > 0 else lock.acquire()
+        if not acquired:
+            with _DISPATCH_HOLDER_LOCK:
+                holder = _DISPATCH_HOLDER["tool"]
+            blocker = f"{holder!r}" if holder else "another operation"
+            message = (
+                f"memory server busy: {blocker} holds the dispatch lock "
+                f"(waited {timeout:g}s); retry this call later"
             )
+            # Log too: the caller only sees its own failed tool, while the
+            # holder's name is the part that makes the stall diagnosable.
+            _startup_log(f"dispatch lock contention: {tool!r} gave up, held by {blocker}")
+            raise RuntimeError(message)
+        with _DISPATCH_HOLDER_LOCK:
+            previous_holder = _DISPATCH_HOLDER["tool"]
+            _DISPATCH_HOLDER["tool"] = tool
         try:
             return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
         finally:
+            # Restore rather than clear: RLock is reentrant, so a nested
+            # dispatch must hand the slot back to its caller, not blank it.
+            with _DISPATCH_HOLDER_LOCK:
+                _DISPATCH_HOLDER["tool"] = previous_holder
             lock.release()
 
     return _dispatch
@@ -2398,6 +2447,7 @@ def _max_timestamp(values: list[object]) -> str | None:
 
 __all__ = [
     "DISPATCH_LOCK_TIMEOUT_SECONDS",
+    "ENV_DISPATCH_LOCK_TIMEOUT",
     "PRODUCT_NAME",
     "SERVER_ID",
     "TOOL_HANDLERS",

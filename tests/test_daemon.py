@@ -584,6 +584,106 @@ def test_local_dispatcher_lock_contention_fails_fast(monkeypatch: pytest.MonkeyP
     assert dispatch("health", {}) == {"ok": True}
 
 
+def test_local_dispatcher_contention_error_names_the_holding_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The busy error must name WHICH tool holds the lock, not just that one does.
+
+    A caller only ever sees its own tool name, so without the holder the stall
+    is undiagnosable in the field.
+    """
+
+    from turbo_memory_mcp import server
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        entered.set()
+        release.wait(10)
+        return {"ok": True}
+
+    def _fast(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "index_paths", _slow)
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _fast)
+
+    shared = threading.RLock()
+    dispatch = server.make_local_dispatcher(dispatch_lock=shared, dispatch_lock_timeout=0.05)
+    blocker = threading.Thread(
+        target=lambda: dispatch("index_paths", {}),
+        name="tqmemory-test-slow-holder",
+        daemon=True,
+    )
+    blocker.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(RuntimeError, match="'index_paths' holds the dispatch lock"):
+            dispatch("health", {})
+    finally:
+        release.set()
+        blocker.join(10)
+
+    # Holder slot is handed back, so a later contention does not blame a
+    # finished call.
+    assert server._DISPATCH_HOLDER["tool"] is None
+
+
+def test_dispatch_lock_timeout_reads_env_override() -> None:
+    """The bound is tunable in the field without a release."""
+
+    from turbo_memory_mcp import server
+
+    assert server._resolve_dispatch_lock_timeout({}) == server.DISPATCH_LOCK_TIMEOUT_SECONDS
+    assert server._resolve_dispatch_lock_timeout({server.ENV_DISPATCH_LOCK_TIMEOUT: "90"}) == 90.0
+    assert server._resolve_dispatch_lock_timeout({server.ENV_DISPATCH_LOCK_TIMEOUT: " 0 "}) == 0.0
+    # Garbage must not disable dispatch — fall back to the default.
+    assert (
+        server._resolve_dispatch_lock_timeout({server.ENV_DISPATCH_LOCK_TIMEOUT: "soon"})
+        == server.DISPATCH_LOCK_TIMEOUT_SECONDS
+    )
+
+
+def test_local_dispatcher_zero_timeout_waits_unbounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """timeout <= 0 restores the pre-#103 unbounded wait as an escape hatch."""
+
+    from turbo_memory_mcp import server
+
+    def _ok(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _ok)
+
+    busy = threading.RLock()
+    held = threading.Event()
+    release = threading.Event()
+
+    def _holder() -> None:
+        busy.acquire()
+        held.set()
+        release.wait(10)
+        busy.release()
+
+    holder = threading.Thread(target=_holder, name="tqmemory-test-unbounded", daemon=True)
+    holder.start()
+    assert held.wait(5)
+
+    dispatch = server.make_local_dispatcher(dispatch_lock=busy, dispatch_lock_timeout=0.0)
+    result: list[Any] = []
+    waiter = threading.Thread(target=lambda: result.append(dispatch("health", {})), daemon=True)
+    waiter.start()
+    # Still queueing well past any bounded timeout would have fired.
+    waiter.join(0.5)
+    assert waiter.is_alive()
+    assert result == []
+
+    release.set()
+    holder.join(10)
+    waiter.join(10)
+    assert result == [{"ok": True}]
+
+
 @pytestmark_win_daemon
 def test_call_does_not_retry_to_prevent_duplicates(storage_env: dict[str, str]) -> None:
     """Regression: RPC failures mid-call must NOT be silently retried, because
