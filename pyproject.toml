@@ -7,6 +7,8 @@ name = "turbo-memory-mcp"
 version = "0.27.0"
 description = "Local-first MCP memory server for AI coding agents with compact retrieval and project/global scopes."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = [
   "mcp",
@@ -17,6 +19,10 @@ keywords = [
   "retrieval",
   "codex",
   "claude-code",
+  "cursor",
+  "knowledge-graph",
+  "local-first",
+  "rag",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -26,6 +32,8 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development",
   "Topic :: Software Development :: Libraries",

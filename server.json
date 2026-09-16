@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.lexus2016/turbo-quant-memory",
+  "title": "Turbo Quant Memory",
+  "description": "Local-first memory and knowledge graph for coding agents. Compact retrieval, no network.",
+  "version": "0.27.0",
+  "websiteUrl": "https://github.com/Lexus2016/turbo_quant_memory#readme",
+  "repository": {
+    "url": "https://github.com/Lexus2016/turbo_quant_memory",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "turbo-memory-mcp",
+      "version": "0.27.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve",
+          "isRequired": true,
+          "description": "Run the memory server over stdio."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "TQMEMORY_FTS_LANGUAGE",
+          "description": "Snowball stemmer for the BM25 lane. Use Russian for Cyrillic-dominant corpora.",
+          "default": "English",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "TQMEMORY_EMBEDDING_BACKEND",
+          "description": "Embedder backend. Default fastembed (ONNX); sentence-transformers needs the [torch] extra.",
+          "default": "fastembed",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "TQMEMORY_MIGRATE_ON_STARTUP",
+          "description": "Set to 1 to apply pending schema migrations automatically on startup.",
+          "default": "0",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "TQMEMORY_SECRETS_PASSPHRASE",
+          "description": "Argon2id passphrase for the secrets vault on headless hosts. Omit to use the OS keyring.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

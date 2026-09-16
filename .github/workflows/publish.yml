@@ -1,0 +1,52 @@
+name: publish
+
+# Publishes to PyPI via Trusted Publishing (OIDC) — no API token stored anywhere.
+# One-time setup on PyPI: Account -> Publishing -> add a pending publisher with
+#   project: turbo-memory-mcp | owner: Lexus2016 | repo: turbo_quant_memory
+#   workflow: publish.yml     | environment: pypi
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Check metadata renders on PyPI
+        run: uvx twine check dist/*
+      - name: Fail if the tag and the package version disagree
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(uv run --no-project python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          test "$tag" = "$pkg" || { echo "tag $tag != pyproject $pkg"; exit 1; }
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write   # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

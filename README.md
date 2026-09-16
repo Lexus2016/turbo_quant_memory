@@ -1,349 +1,141 @@
-# 🧠 Turbo Quant Memory for AI Agents (v0.24.1)
+<!-- mcp-name: io.github.lexus2016/turbo-quant-memory -->
 
-> **A self-installable, trilingual, local-first memory & knowledge graph for AI coding agents.** Agents get compact result cards instead of re-reading whole files — persistent, local, and graph-linked.
+<p align="center">
+  <img src="assets/readme-hero-en.svg" alt="Turbo Quant Memory" width="820">
+</p>
+
+<h3 align="center">Local-first memory and knowledge graph for AI coding agents</h3>
+
+<p align="center">
+  Your agent stops re-reading files and re-deriving the same conclusions.<br>
+  Your notes, code and secrets never leave your machine.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg">
+  <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP-19%20tools-green.svg">
+  <img alt="Local-first" src="https://img.shields.io/badge/data-100%25%20local-success.svg">
+</p>
 
 ---
 
-## 👋 What is this awesome tool? (For Humans)
+## The problem
 
-Imagine you are working with an AI coding assistant (like Claude Code, Gemini CLI, Cursor, or Codex). Every time you restart a session, the AI forgets everything. It forgets your architectural decisions, custom styling rules, how you solved that tricky database bug, or even your coding preferences. You have to explain it all over again, or feed the AI huge files, which **wastes your time and burns through your token budget (costing you real money)**.
+A long session accumulates hard-won detail about why the code is the way it is. Then the context compacts and it is gone. Next session the agent re-reads the same files, re-derives the same conclusions, and bills you for the same tokens again.
 
-**Turbo Quant Memory** solves this once and for all. It is a local-first **Model Context Protocol (MCP) server** that gives your AI agents a persistent brain. It stores:
-* 🎯 **Decisions & Lessons**: Why things were built this way, so the AI doesn't break them.
-* 💡 **Patterns & Gotchas**: Reusable tricks and hard-won bug fixes.
-* 🕸️ **Knowledge Graph Relations**: Structured associations linking memory notes, source files, tasks, or bugs.
-* 📦 **Codebase Index**: Compact Markdown block search so the AI understands your project structure instantly.
+`CLAUDE.md` does not scale past a few dozen lines, and it cannot answer *"what did we decide about X, and why?"*.
 
-### 💰 Cost-Saving Magic
-Instead of re-reading source documents on every turn, your AI agent uses **Compact Retrieval**: each search returns small result cards (~220-character previews) and loads full content only via hydrate when needed.
+**Turbo Quant Memory** is an MCP server that gives the agent a persistent, searchable store it writes to while it works — decisions, lessons, patterns, session handoffs — plus a compact index of your Markdown. Retrieval returns ~220-character result cards rather than whole documents; the agent loads full content only when a card is not enough.
 
-| Metric | Value | Benefit for You |
-| :--- | :--- | :--- |
-| **Context Savings** | 📉 **~83.79% fewer bytes** | Reduced API costs, longer context windows |
-| **Search Latency** | ⚡ **~400 ms** | Fast enough as the default retrieval path (incl. CPU query embedding) |
-| **Architectural Focus** | 🎯 **Dynamic Pruning** | AI sees only what matters, ignoring session noise |
-| **Linked Knowledge** | 🕸️ **Knowledge Graph** | AI understands relationships between code, tasks, and decisions |
-| **Auto-Enriched Context** | 🔄 **Relations Inline** | Linked files, notes & tasks ride along in `semantic_search` / `hydrate` results — no extra lookups |
+## Why this one
+
+|                          | **Turbo Quant Memory**                | mem0 / OpenMemory        | MCP `memory` server |
+| :----------------------- | :------------------------------------ | :----------------------- | :------------------ |
+| Where your data lives    | your disk, always                     | vendor cloud or self-host | your disk          |
+| Your data leaves the host | **never**                            | yes, unless self-hosted  | never               |
+| Retrieval                | hybrid BM25 + dense vector, RRF-fused | dense vector             | exact graph lookup  |
+| What a search returns    | compact cards, hydrate on demand      | full memories            | full nodes          |
+| Knowledge graph          | yes — with lifecycle + linting        | no                       | yes                 |
+| Non-English content      | Cyrillic exact-match out of the box   | varies                   | n/a                 |
+| Measures its own savings | **yes — `server_info()`**             | no                       | no                  |
+| Price                    | free, MIT                             | paid tiers               | free                |
+
+No HTTP client, no telemetry, no phone-home. Verify it yourself — this returns nothing:
+
+```bash
+grep -rnE '^[[:space:]]*(import|from)[[:space:]]+(requests|httpx|aiohttp|urllib3)\b' src/
+```
+
+To be precise about the one exception: on first run `fastembed` downloads the embedding model (~0.22 GB) from Hugging Face. After that the server runs fully offline. Your notes, code and secrets are never transmitted anywhere — there is nothing in the package that could send them.
+
+## Install
+
+### Let your agent install it
+
+Paste this into Claude Code, Codex, Gemini CLI, Cursor or Antigravity:
+
+> Install and configure the Turbo Quant Memory MCP server for this workspace from
+> https://github.com/Lexus2016/turbo_quant_memory — follow the README, register the
+> `tqmemory` server, run `turbo-memory-mcp skill install`, run the health check, and
+> index this project.
+
+`skill install` copies an operating manual into every agent skill directory on the machine, so every future session already knows how to use the memory without being told.
+
+### Or install it yourself
+
+```bash
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.27.0
+```
+
+Then register the server with your client:
+
+```bash
+claude mcp add --scope project tqmemory -- turbo-memory-mcp serve   # Claude Code
+codex  mcp add tqmemory -- turbo-memory-mcp serve                   # Codex
+gemini mcp add tqmemory turbo-memory-mcp serve                      # Gemini CLI
+```
+
+Cursor, OpenCode, Antigravity and other clients → [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).
+Hermes runs MCP through a systemd gateway → [docs/hermes.md](docs/hermes.md).
 
 <!-- TQ-STATS:BEGIN (auto-generated by scripts/refresh_readme_stats.py — do not edit by hand) -->
 ### 📈 It measures its own savings — see for yourself
 
 Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a running tally you can read anytime with `server_info()` (field `usage_stats.headline`). The savings are yours to verify, not ours to promise.
 
-**Live snapshot from a real developer instance (v0.23.0):**
+**Live snapshot from a real developer instance (v0.27.0):**
 
 | What the memory did | Number |
 | :--- | :--- |
-| 🔢 Input tokens saved (cumulative) | **≈ 980,000** and counting |
-| 🔁 Retrievals served | **885** searches + **179** deep hydrations |
-| 📉 Average saved per retrieval | **≈ 1,100 tokens** |
-| 📚 Knowledge under management | **207** active notes + **440** indexed code blocks |
+| 🔢 Input tokens saved (cumulative) | **≈ 2,640,000** and counting |
+| 🔁 Retrievals served | **2,268** searches + **280** deep hydrations |
+| 📉 Average saved per retrieval | **≈ 1,200 tokens** |
+| 📚 Knowledge under management | **231** active notes + **763** indexed code blocks |
 | 🛡️ Integrity | **0** corrupted records · **0** pending migrations |
 
 > These are one machine's cumulative numbers, not a synthetic benchmark — your own counter starts at zero and grows as your agent works. Run `server_info()` on your install to see your real figure.
 <!-- TQ-STATS:END -->
 
----
-
-## 🚀 DON'T INSTALL THIS MANUALLY! (Let the AI Do It)
-
-You don't need to type commands in the terminal or configure JSON files. **Let your AI assistant handle the setup!**
-
-Simply copy the link to this repository:
-`https://github.com/Lexus2016/turbo_quant_memory`
-
-And send this exact prompt to your AI assistant (Claude Code, Gemini CLI, Codex, etc.):
-
-> "Hey! Please install and configure the Turbo Quant Memory server for my workspace using this repository: https://github.com/Lexus2016/turbo_quant_memory. Read the README.md, follow the 'Instructions for AI Agents' at the bottom of the file to install it via `uv tool`, register the `tqmemory` MCP server, run `turbo-memory-mcp skill install`, run health checks, index this project, and set up our persistent memory. Let me know when you're ready!"
-
-Your AI agent will automatically clone, install, register, and index everything for you!
-
----
-
-## 🛠️ Quick Start (If You *Really* Want to Do It Yourself)
-
-If you prefer the manual way, run this 60-second flow:
-
-1. **Install the CLI Tool:**
-   ```bash
-   uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.24.1
-   ```
-
-2. **Add `tqmemory` MCP Server to your client:**
-   ```bash
-   # Codex
-   codex mcp add tqmemory -- turbo-memory-mcp serve
-
-   # Gemini CLI
-   gemini mcp add tqmemory turbo-memory-mcp serve
-
-   # Claude Code (Project scope)
-   claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
-   ```
-
-3. **Restart your client and let the magic begin!**
-
-*For custom integrations (Cursor, OpenCode, Antigravity, etc.), see [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md).*
-
----
-
-## 🌟 Advanced Features (Under the Hood)
-
-### 1. Hybrid BM25 + Vector Search (vector-first gated)
-Every query searches a dense-vector space (semantic meaning) and a BM25 full-text index (exact terms like function names, file paths, or IDs). The dense lane leads: when its top hit is confident, it is returned directly; otherwise the BM25 lane is fused in via Reciprocal Rank Fusion (RRF, `k=60`) as a **down-weighted rescue**. This vector-first gating measurably beat plain equal-weight RRF on real multilingual corpora (it stops a noisy keyword lane from dragging a confident semantic hit down). If a lane fails, search degrades gracefully to vector-only.
-
-### 2. Knowledge Graph Relations
-You can build associations between notes, source files, issues, or tasks using directed relations. The memory server automatically enriches search and hydration results with these relations, letting AI agents browse associated context effortlessly.
-
-#### 🔄 Dynamic Relation Lifecycle (Core Strength):
-* **Provenance & timestamps:** Relations are directed and carry a `created_at` timestamp. Deprecating a note flips that note's own status but does **not** cascade to its relations, so an agent should check an endpoint's status when following a link.
-* **Flexible Decoupling (Unlinking):** Any relation can be easily severed using the `unlink_entities()` tool. This gives the agent memory absolute flexibility to adapt to refactorings and design changes.
-* **Knowledge-base linting:** `lint_knowledge_base()` checks the Markdown knowledge base — broken links, orphaned docs, duplicate titles, stale episodic notes, and near-duplicate notes. It does not currently inspect graph relations.
-
-#### 📊 Visual Memory Architecture:
-```mermaid
-graph TD
-    A[AI Agent / Query] -->|1. semantic_search| B[tqmemory Server]
-    B -->|2. Vector Index| C[Dense Vector Search]
-    B -->|2. Full-Text Index| D[BM25 FTS Search]
-    C -->|3. RRF Fusion| E[Knowledge Candidates]
-    D -->|3. RRF Fusion| E
-    E -->|4. Graph Enrichment| F[Knowledge Graph / Associations]
-    F -->|5. Enriched Context| A
-    
-    subgraph Relation Lifecycle
-        G[Create Link: link_entities] -->|Knowledge Evolution| H[Deprecate Note: deprecate_note]
-        H -->|Diagnosis: lint_knowledge_base| I[Sever Link: unlink_entities]
-    end
-```
-
-### 3. Tiered Memory Architecture
-Memory notes are separated into logical tiers:
-* `durable`: Decisions, architectural patterns, lessons.
-* `episodic`: Session handoffs, daily progress.
-* `reference`: Markdown blocks, file references.
-
-Default searches return only `durable` + `reference` so session noise never drowns out critical architectural decisions!
-
-### 4. Lightweight ONNX embedder (default)
-The embedder runs the multilingual model through **ONNX Runtime (fastembed) by default** — no PyTorch in the client install (hundreds of MB saved on macOS, up to multi-GB with CUDA wheels on Linux), a smaller resident footprint (the model itself is ~0.22 GB in ONNX vs ~1 GB+ under PyTorch), and it fits comfortably on a ~2 GB RAM machine. Retrieval quality is identical to the legacy PyTorch backend and the embeddings are vector-compatible, so upgrading needs **no reindex**.
-
-The legacy PyTorch backend remains available for rollback or A/B checks:
-
-```bash
-pip install 'turbo-memory-mcp[torch]'
-export TQMEMORY_EMBEDDING_BACKEND=sentence-transformers   # default: fastembed
-```
-
-### 5. User-Flagged Memory (provenance)
-Every note records **who created it**: `human-explicit` when you explicitly ask the agent to remember something ("remember this", "save this to my knowledge base"), or `agent` when the agent saves a lesson/decision on its own. Human-flagged notes are trusted more — they **rank above agent-written notes of equal relevance** (a deterministic tie-breaker plus a small score bonus). The field is optional and backward compatible: existing notes simply read as `agent`, so no migration is needed.
-
-### 6. Full-text search language (multilingual, opt-in)
-The BM25 full-text lane tokenizes on Unicode word boundaries with lower-casing and accent folding, so **Ukrainian, Russian and other non-English *exact* terms already match** (case- and accent-insensitive) out of the box — Cyrillic is never mangled. What one index cannot do is stem more than one language at once. The default stems **English**; a Cyrillic-dominant deployment can switch the stemmer:
-
-```bash
-export TQMEMORY_FTS_LANGUAGE=Russian   # default: English
-```
-
-Russian stemming additionally matches *inflected* Cyrillic forms (`документ` ↔ `документами`, plus many shared Ukrainian suffixes) — at the cost of English stemming, since LanceDB applies one stemmer per index. Ukrainian has no dedicated Snowball stemmer, so Russian is the closest option; an unsupported value safely falls back to English with a warning. The change takes effect after the FTS index is rebuilt (a retrieval reset + reindex), like switching the embedding model — and inflected matching is in any case already covered semantically by the dense vector lane.
-
----
-
-## 🔐 Secrets Vault (NEW in v0.7.0)
-
-Tired of pasting SSH keys, DB connection strings, or API tokens into every new chat session? The secrets vault solves that — **without you giving up an inch of control over your data**.
-
-### Why this exists
-Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the same bearer token, every session. Project memory wasn't the right home for those (anything indexed is at risk of leaking back into search results). So Phase 9 adds a separate, encrypted, **strictly project-scoped** vault next to your notes.
-
-### What changes in your install
-* Four new MCP tools: `set_secret`, `get_secret`, `list_secrets`, `delete_secret`. Tool count grew `14 → 18` (now `19` with the v0.12.0 `recent_context` bootstrap tool).
-* A one-time migration provisions an empty `secrets/` directory under each existing project on first `turbo-memory-mcp migrate --apply` after upgrade.
-
-### What does NOT change (read this if you're nervous)
-* Your existing notes, markdown index, `semantic_search`, `hydrate`, and `lint_knowledge_base` behave **byte-identically**. The upgrade does not touch them.
-* The vault is **opt-in**. If you never call `set_secret`, the only thing on disk is an empty 28-byte encrypted blob per project. Zero impact.
-* If you remove the feature mentally, you can ignore the four new tools forever and nothing breaks.
-
-### Where your secrets live (and where they don't)
-* **On your machine, encrypted at rest:** `~/.turbo-quant-memory/projects/<project_id>/secrets/vault.tqv`, AES-256-GCM, per-project master key.
-* **Never anywhere else:** the `src/` tree of this package contains zero outbound HTTP code — no `requests`, no `httpx`, no `urllib.request`, no raw sockets. We have nothing to send your secrets to, even if we wanted to. (Verify with `grep -rE 'requests|httpx|urllib\.request|aiohttp' src/` — clean.)
-* **Never in your retrieval index:** the ingestion walker and the lint walker hard-refuse to traverse any `secrets/` subdirectory. `semantic_search` cannot reach the vault by design.
-* **Never in agent transcripts (when used right):** `get_secret` returns the value in a dedicated `secret_value` field, separate from any descriptive text. Agents are instructed to pass it through programmatically, not echo it.
-
-### How to use it
-1. **One-time master-key setup** (pick one path):
-   ```bash
-   # macOS (auto-uses Keychain after first set_secret if you skip this step):
-   keyring set turbo-quant-memory secrets-master-<project_id> <32-byte-base64>
-
-   # Headless / Linux / CI / Docker:
-   export TQMEMORY_SECRETS_PASSPHRASE='your-long-passphrase'   # add to shell rc
-   ```
-   > ⚠️ **`TQMEMORY_SECRETS_PASSPHRASE` is a passphrase, not the raw key.** It is
-   > run through Argon2id to *derive* the master key. Do **not** paste the
-   > `keyring` base64 value into this env var — that derives a *different* key and
-   > a vault created via the keyring will fail to decrypt with a
-   > `master_key_mismatch` error. Pick **one** path: keyring **or** passphrase, and
-   > if you share one daemon across MCP clients, set the same passphrase on all of
-   > them or on none. The env var always wins over the keyring when both are set.
-2. **Save a secret once, reuse forever** — two paths, picked by *whether the value is already in the chat*:
-   * **Value NOT yet in the chat — use the CLI (prophylactic path):**
-     ```bash
-     turbo-memory-mcp secret-set prod-db-dsn
-     # prompts: Value for 'prod-db-dsn' (input hidden): ******
-     ```
-     The value is read via `getpass` — it never enters shell history, scrollback, or any chat transcript. Recommended when you're about to provision a fresh credential and want to keep it out of the conversation entirely.
-   * **Value already in the chat — let the agent write it (reactive path):**
-     ```
-     set_secret("prod-db-dsn", "postgresql://user:pass@host:5432/db")
-     ```
-     Use this whenever the value is already visible: you pasted it, or the agent generated it inside the conversation. The agent resolves the active `project_id` deterministically from `cwd` — better than asking the user to retype the value in a terminal where their cwd may not match the intended project. Once exposure has happened in chat, the CLI offers no additional secrecy; `set_secret` is the safer write path.
-3. **Agents fetch on demand**:
-   ```
-   get_secret("prod-db-dsn") → {"status": "ok", "secret_value": "postgresql://..."}
-   ```
-
-### Threat model — what we protect, what we don't
-**We protect against** (the realistic single-developer threats):
-* Accidental backup leaks (Time Machine, rsync, iCloud Desktop sync of plaintext files).
-* Share-screen / screenshot mishaps showing a stored credential.
-* Accidental `git add` of the wrong file under your home directory.
-
-**We do not protect against** (and never claim to):
-* A compromised root user on your laptop.
-* A live attacker who has already taken over the running daemon process.
-* Hardware-level attacks, evil-maid attacks, cold-boot attacks.
-
-If your threat model is bigger than ours, use a dedicated secret manager (1Password, HashiCorp Vault) and keep tqmemory for knowledge only.
-
-### FAQ
-* **"Will my existing memory be affected?"** No. Notes, markdown, search, hydrate, lint — all unchanged.
-* **"Do I need to do anything to upgrade?"** Only if you want to start using `set_secret`. Otherwise, ignore.
-* **"Where exactly are secrets stored?"** Per project, under `~/.turbo-quant-memory/projects/<project_id>/secrets/` (encrypted blob + minimal metadata + an audit log of access timestamps that never contains the values).
-* **"Can my secrets leak into `semantic_search`?"** No. Hard isolation enforced at the ingester, the linter, and verified by a regression test that plants a sentinel and proves search returns zero hits.
-* **"What if I want this feature off?"** It already is — the vault is empty until you populate it. There is nothing running, nothing transmitted, nothing scheduled.
-* **"What if I delete a project?"** Its vault, audit log, and per-project master key entry are all under that project's directory and go with it.
-
----
-
-## 🤖 Instructions for AI Agents (System Directive)
-
-> [!IMPORTANT]
-> **ATTENTION AI AGENT (Claude, Gemini, Codex, or Antigravity):**
-> Your complete operating manual ships as the **`turbo-quant-memory` agent skill**, bundled with this package. Install it once and every agent on this machine knows how to detect, install, and operate the `tqmemory` memory server:
->
-> ```bash
-> turbo-memory-mcp skill install
-> ```
->
-> The command copies the canonical `SKILL.md` into all detected agent skill directories (`~/.agents/skills/` always, plus detected client dirs) and upgrades older copies. Re-run it after every `uv tool upgrade`. The raw skill file also ships inside the installed package at `turbo_memory_mcp/skills/turbo-quant-memory/SKILL.md` and lives in this repository under `src/turbo_memory_mcp/skills/`.
-
----
-
-## 🛰️ Platform-Specific: Hermes Agent
-
-[Hermes](https://github.com/nicepkg/hermes) runs MCP servers via a systemd-managed gateway — a different setup from Claude Code or Cursor.
-
-### Installation
-
-```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory
-```
-
-Add to `~/.hermes/config.yaml`:
-
-```yaml
-mcp_servers:
-  tqmemory:
-    command: turbo-memory-mcp
-    args: ["serve"]
-    enabled: true
-```
-
-Restart the gateway:
-
-```bash
-systemctl --user restart hermes-gateway
-```
-
-### Troubleshooting MCP Timeouts
-
-If MCP tools timeout with "MCP call timed out after 120.0s", the daemon lock is likely stale from a previous crash or host sleep. Recovery:
-
-```bash
-# 1. Kill all daemon processes
-pkill -f turbo-memory-mcp
-
-# 2. Remove stale lock file
-rm -f ~/.turbo-quant-memory/.daemon.lock
-
-# 3. Check and apply pending migrations
-turbo-memory-mcp migrate --status
-turbo-memory-mcp migrate --apply
-
-# 4. Quick health check
-turbo-memory-mcp doctor
-
-# 5. Restart gateway
-systemctl --user restart hermes-gateway
-
-# 6. Wait 30-60s for MCP reconnect
-```
-
-#### "memory server busy" (v0.27.0+)
-
-A different failure: `memory server busy: 'index_paths' holds the dispatch lock
-(waited 30s); retry this call later`. This is **not** a stale lock — it means a
-concurrent operation is genuinely still running and holding the single-writer
-dispatch lock, and your call gave up rather than queueing until the MCP host's
-own tool-call timeout (the 420-600s hard timeouts seen before v0.27.0, which
-silently dropped memory writes). The error names the tool that is blocking, and
-the same line is logged to stderr with the `[tqmemory]` prefix.
-
-Just retry the call — nothing was written, so a retry cannot duplicate. If a
-deployment legitimately holds the lock longer than the 30s default (a large
-`index_paths` run over a big repo, a cold embedding backend), raise the bound
-or opt back out of it entirely:
-
-```bash
-export TQMEMORY_DISPATCH_LOCK_TIMEOUT=90   # seconds; default 30
-export TQMEMORY_DISPATCH_LOCK_TIMEOUT=0    # <= 0: wait without a bound (pre-0.27.0 behaviour)
-```
-
-Keep the bound below the proxy's own `RPC_TIMEOUT_SECONDS` (120s) so the
-explicit "busy" error wins over an opaque RPC timeout.
-
-### Auto-Migration on Startup
-
-Set `TQMEMORY_MIGRATE_ON_STARTUP=1` in the environment to have the server automatically apply pending schema migrations (with a rolling snapshot) when it starts as primary or standalone:
-
-```yaml
-mcp_servers:
-  tqmemory:
-    command: turbo-memory-mcp
-    args: ["serve"]
-    enabled: true
-    env:
-      TQMEMORY_MIGRATE_ON_STARTUP: "1"
-```
-
-Auto-migration result is visible in the `health()` response under `migration_auto_result`.
-
-### Common Hermes Issues
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| MCP timeout | Stale `.daemon.lock` | `rm -f ~/.turbo-quant-memory/.daemon.lock` |
-| Multiple daemons | Crash left orphans | `pkill -f turbo-memory-mcp` |
-| Tools return errors | Pending schema migration | `turbo-memory-mcp migrate --apply` |
-| Gateway won't load MCP | Config syntax error | Validate `config.yaml` |
-| Silent startup failure | No visibility into daemon role | Check stderr: `[tqmemory] role=...` |
-
----
-
-## 🌍 Language Versions
-This documentation is maintained in three synchronized languages:
-* 🇺🇸 [English README](README.md)
-* 🇺🇦 [Ukrainian README](README.uk.md)
-* 🇷🇺 [Russian README](README.ru.md)
+## What it does
+
+* **Typed notes.** `decision`, `lesson`, `pattern`, `handoff` — each stored with tags, provenance and a knowledge-graph link to the file or issue it is about.
+* **Tiered memory.** `durable` (decisions, patterns) and `reference` (indexed docs) are searched by default; `episodic` (session handoffs) stays out of the way until you ask for it, so yesterday's noise never buries an architectural decision.
+* **Hybrid retrieval.** A dense vector lane leads; a BM25 lane rescues exact terms — function names, file paths, IDs — fused with Reciprocal Rank Fusion. Cyrillic and other non-English terms match exactly, case- and accent-insensitive, with no configuration.
+* **Knowledge graph.** Directed, timestamped relations between notes, files and issues. Search results carry the linked context inline, so the agent does not need a second lookup.
+* **Human notes outrank agent notes.** Anything you explicitly asked to remember is flagged `human-explicit` and ranks above the agent's own observations at equal relevance.
+* **Encrypted secrets vault.** Project-scoped, AES-256-GCM, structurally unreachable from search. → [docs/secrets-vault.md](docs/secrets-vault.md)
+* **Runs on a small machine.** The default embedder is ONNX via fastembed — no PyTorch, ~0.22 GB model, comfortable on 2 GB of RAM.
+
+Full technical detail → [docs/features.md](docs/features.md)
+
+## The 19 MCP tools
+
+| Group | Tools |
+| :--- | :--- |
+| Write | `remember_note` · `deprecate_note` · `promote_note` · `index_paths` |
+| Read | `semantic_search` · `hydrate` · `recent_context` · `list_scopes` |
+| Graph | `link_entities` · `unlink_entities` · `get_related_entities` |
+| Hygiene | `lint_knowledge_base` · `health` · `self_test` · `server_info` |
+| Vault | `set_secret` · `get_secret` · `list_secrets` · `delete_secret` |
+
+## Documentation
+
+| | |
+| :--- | :--- |
+| [MEMORY_STRATEGY.md](MEMORY_STRATEGY.md) | How to actually use the memory day to day |
+| [CLIENT_INTEGRATIONS.md](CLIENT_INTEGRATIONS.md) | Per-client setup: Cursor, OpenCode, Antigravity, … |
+| [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md) | Architecture and storage format |
+| [docs/features.md](docs/features.md) | Retrieval, graph, tiers, embedder, FTS language |
+| [docs/secrets-vault.md](docs/secrets-vault.md) | Vault setup, threat model, FAQ |
+| [docs/hermes.md](docs/hermes.md) | Hermes gateway setup and troubleshooting |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+## License
+
+[MIT](LICENSE). Copy it, modify it, fork it, ship it inside a closed-source product, sell it. Attribution is the only condition.
+
+## Languages
+
+🇺🇸 [English](README.md) · 🇺🇦 [Українська](README.uk.md) · 🇷🇺 [Русский](README.ru.md)

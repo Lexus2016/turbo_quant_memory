@@ -5,6 +5,47 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **MIT `LICENSE`.** The repository shipped with no license file, so GitHub
+  reported `"license": null` and the code was legally "all rights reserved" —
+  a hard blocker for corporate users, for `awesome-*` lists, and for every MCP
+  directory. Declared via PEP 639 (`license = "MIT"` + `license-files`), so the
+  built wheel now carries `License-Expression: MIT` and bundles the file.
+- **`server.json`** — the manifest for the official MCP registry
+  (`registry.modelcontextprotocol.io`), validated against the 2025-12-11 schema.
+  Server name `io.github.lexus2016/turbo-quant-memory`, PyPI package
+  `turbo-memory-mcp`, `uvx` runtime hint, the four tunable env vars declared.
+- **`.github/workflows/publish.yml`** — builds sdist + wheel on a published
+  release and uploads to PyPI via Trusted Publishing (OIDC, no stored token),
+  with a guard that fails when the git tag and `pyproject.toml` version disagree.
+- **`mcp-name:` ownership token** in `README.md`, which the registry requires to
+  find in the PyPI long description before it will accept the package claim.
+- Python 3.12/3.13 classifiers (CI already covered 3.13) and the `cursor`,
+  `knowledge-graph`, `local-first`, `rag` keywords.
+
+### Changed
+- **The three READMEs were rewritten from 349 to ~140 lines each.** The old
+  first screen spent ~40 lines on beginner framing, then gave a quarter of the
+  file to the secrets vault and another quarter to Hermes troubleshooting. The
+  new one leads with the hero banner (previously unreferenced), badges, the
+  problem statement, and a comparison table against mem0 / OpenMemory / the
+  stock MCP `memory` server. Nothing was deleted — the long-form sections moved
+  to `docs/features*.md`, `docs/secrets-vault*.md` and `docs/hermes*.md` in all
+  three languages.
+- The README install command and title pinned `v0.24.1` while the package was
+  at `0.27.0`; same stale pin in the bundled `SKILL.md`. Both now track 0.27.0.
+
+### Fixed
+- **The "zero network code" claim was overstated and its proof command did not
+  hold.** `grep -rE 'requests|httpx|urllib\.request|aiohttp' src/` matched the
+  word "requests" inside an English error-message string in
+  `retrieval_index.py`, so the command a reader was told returns nothing in fact
+  returned a hit. The check is now anchored to import statements, and the claim
+  states the real boundary: no HTTP client and no telemetry in the package, with
+  `fastembed`'s one-time model download named explicitly as the exception.
+
 ## [0.27.0] - 2026-08-25
 
 ### Fixed
