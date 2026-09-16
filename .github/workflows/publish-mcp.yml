@@ -1,0 +1,56 @@
+name: publish-mcp
+
+# Publishes server.json to the official MCP Registry.
+# Authentication is GitHub Actions OIDC — no PAT, no browser, nothing stored.
+# The registry verifies package ownership by looking for the literal token
+#   mcp-name: io.github.lexus2016/turbo-quant-memory
+# in the PyPI long description, which README.md carries as an HTML comment.
+# Runs after the PyPI upload, since the registry rejects a version it cannot
+# find on PyPI.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write   # required for OIDC authentication
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fail if server.json disagrees with pyproject
+        run: |
+          pkg=$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          srv=$(jq -r '.version' server.json)
+          pkgname=$(jq -r '.packages[0].version' server.json)
+          test "$pkg" = "$srv" || { echo "server.json version $srv != pyproject $pkg"; exit 1; }
+          test "$pkg" = "$pkgname" || { echo "packages[0].version $pkgname != pyproject $pkg"; exit 1; }
+
+      - name: Wait for the version to be visible on PyPI
+        run: |
+          name=$(jq -r '.packages[0].identifier' server.json)
+          ver=$(jq -r '.packages[0].version' server.json)
+          for i in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/$name/$ver/json" >/dev/null 2>&1; then
+              echo "$name $ver is live on PyPI"; exit 0
+            fi
+            echo "attempt $i: not visible yet, waiting 10s"; sleep 10
+          done
+          echo "timed out waiting for $name $ver on PyPI"; exit 1
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
