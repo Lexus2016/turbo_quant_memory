@@ -10,7 +10,9 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/turbo-quant-memory/"><img alt="PyPI" src="https://img.shields.io/pypi/v/turbo-quant-memory.svg"></a>
   <a href="LICENSE"><img alt="Лицензия: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://registry.modelcontextprotocol.io/v0/servers?search=turbo-quant-memory"><img alt="MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-listed-6f42c1.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg">
   <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="MCP-инструменты" src="https://img.shields.io/badge/MCP-19%20tools-green.svg">
