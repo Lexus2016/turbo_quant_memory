@@ -66,7 +66,7 @@ Paste this into Claude Code, Codex, Gemini CLI, Cursor or Antigravity:
 ### Or install it yourself
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.27.0
+uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.28.0
 ```
 
 Then register the server with your client:
@@ -85,14 +85,14 @@ Hermes runs MCP through a systemd gateway → [docs/hermes.md](docs/hermes.md).
 
 Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a running tally you can read anytime with `server_info()` (field `usage_stats.headline`). The savings are yours to verify, not ours to promise.
 
-**Live snapshot from a real developer instance (v0.27.0):**
+**Live snapshot from a real developer instance (v0.28.0):**
 
 | What the memory did | Number |
 | :--- | :--- |
 | 🔢 Input tokens saved (cumulative) | **≈ 2,640,000** and counting |
-| 🔁 Retrievals served | **2,268** searches + **280** deep hydrations |
+| 🔁 Retrievals served | **2,275** searches + **280** deep hydrations |
 | 📉 Average saved per retrieval | **≈ 1,200 tokens** |
-| 📚 Knowledge under management | **231** active notes + **763** indexed code blocks |
+| 📚 Knowledge under management | **234** active notes + **763** indexed code blocks |
 | 🛡️ Integrity | **0** corrupted records · **0** pending migrations |
 
 > These are one machine's cumulative numbers, not a synthetic benchmark — your own counter starts at zero and grows as your agent works. Run `server_info()` on your install to see your real figure.

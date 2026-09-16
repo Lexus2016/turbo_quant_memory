@@ -3,7 +3,7 @@
   "name": "io.github.lexus2016/turbo-quant-memory",
   "title": "Turbo Quant Memory",
   "description": "Local-first memory and knowledge graph for coding agents. Compact retrieval, no network.",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "websiteUrl": "https://github.com/Lexus2016/turbo_quant_memory#readme",
   "repository": {
     "url": "https://github.com/Lexus2016/turbo_quant_memory",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "turbo-memory-mcp",
-      "version": "0.27.0",
+      "version": "0.28.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
