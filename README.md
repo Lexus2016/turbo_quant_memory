@@ -1,7 +1,10 @@
 <!-- mcp-name: io.github.Lexus2016/turbo-quant-memory -->
 
 <p align="center">
-  <img src="assets/readme-hero-en.svg" alt="Turbo Quant Memory" width="820">
+  <!-- Absolute on purpose: this file is the PyPI long_description, and PyPI proxies
+       images through pypi-camo, which cannot resolve a repo-relative path. Keep the
+       localized READMEs relative — they are only ever rendered on GitHub. -->
+  <img src="https://raw.githubusercontent.com/Lexus2016/turbo_quant_memory/main/assets/readme-hero-en.svg" alt="Turbo Quant Memory" width="820">
 </p>
 
 <h3 align="center">Local-first memory and knowledge graph for AI coding agents</h3>
@@ -87,14 +90,14 @@ Hermes runs MCP through a systemd gateway → [docs/hermes.md](docs/hermes.md).
 
 Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a running tally you can read anytime with `server_info()` (field `usage_stats.headline`). The savings are yours to verify, not ours to promise.
 
-**Live snapshot from a real developer instance (v0.28.0):**
+**Live snapshot from a real developer instance (v0.28.2):**
 
 | What the memory did | Number |
 | :--- | :--- |
 | 🔢 Input tokens saved (cumulative) | **≈ 2,640,000** and counting |
-| 🔁 Retrievals served | **2,275** searches + **280** deep hydrations |
+| 🔁 Retrievals served | **2,280** searches + **280** deep hydrations |
 | 📉 Average saved per retrieval | **≈ 1,200 tokens** |
-| 📚 Knowledge under management | **234** active notes + **763** indexed code blocks |
+| 📚 Knowledge under management | **237** active notes + **763** indexed code blocks |
 | 🛡️ Integrity | **0** corrupted records · **0** pending migrations |
 
 > These are one machine's cumulative numbers, not a synthetic benchmark — your own counter starts at zero and grows as your agent works. Run `server_info()` on your install to see your real figure.

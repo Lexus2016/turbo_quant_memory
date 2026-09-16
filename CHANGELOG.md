@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.2] - 2026-09-16
+
+### Fixed
+- **The hero banner was a broken image on PyPI.** `README.md` is the PyPI
+  long_description, and PyPI serves description images through its `pypi-camo`
+  proxy, which cannot resolve a repository-relative path — the proxied URL
+  decoded to the literal string `assets/readme-hero-en.svg` and returned
+  nothing, leaving a blank 820px gap at the top of the project page. The `src`
+  is now absolute (raw.githubusercontent.com) with a comment saying why, so it
+  does not get "tidied" back to a relative path.
+  - The badges were never affected, which is also the proof that the format was
+    not the issue: they are SVG too and proxy fine, so only the relative path
+    was at fault.
+  - `README.uk.md` / `README.ru.md` deliberately keep relative paths — they are
+    only ever rendered on GitHub, where relative is correct.
+  - This needed a release because a published PyPI description is immutable.
+
 ## [0.28.1] - 2026-09-16
 
 ### Fixed

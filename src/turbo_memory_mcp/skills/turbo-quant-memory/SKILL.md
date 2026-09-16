@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.28.1
+version: 0.28.2
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -23,7 +23,7 @@ Check whether tqmemory is already available:
 
 ```bash
 uv tool install turbo-quant-memory
-# or pinned: uv tool install 'turbo-quant-memory==0.28.1'
+# or pinned: uv tool install 'turbo-quant-memory==0.28.2'
 ```
 
 ### 2.2 Install this skill
