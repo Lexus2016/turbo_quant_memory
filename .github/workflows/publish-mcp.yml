@@ -3,7 +3,7 @@ name: publish-mcp
 # Publishes server.json to the official MCP Registry.
 # Authentication is GitHub Actions OIDC — no PAT, no browser, nothing stored.
 # The registry verifies package ownership by looking for the literal token
-#   mcp-name: io.github.lexus2016/turbo-quant-memory
+#   mcp-name: io.github.Lexus2016/turbo-quant-memory
 # in the PyPI long description, which README.md carries as an HTML comment.
 # Runs after the PyPI upload, since the registry rejects a version it cannot
 # find on PyPI.

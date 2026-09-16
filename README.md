@@ -1,4 +1,4 @@
-<!-- mcp-name: io.github.lexus2016/turbo-quant-memory -->
+<!-- mcp-name: io.github.Lexus2016/turbo-quant-memory -->
 
 <p align="center">
   <img src="assets/readme-hero-en.svg" alt="Turbo Quant Memory" width="820">

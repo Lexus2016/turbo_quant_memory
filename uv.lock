@@ -2647,7 +2647,7 @@ wheels = [
 
 [[package]]
 name = "turbo-quant-memory"
-version = "0.28.0"
+version = "0.28.1"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },

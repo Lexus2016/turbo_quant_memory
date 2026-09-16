@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.1] - 2026-09-16
+
+### Fixed
+- **The MCP Registry namespace is case-sensitive**, and 0.28.0 used
+  `io.github.lexus2016/turbo-quant-memory` against a GitHub login of
+  `Lexus2016`. The registry refused the publish with
+  `403 ... You have permission to publish: io.github.Lexus2016/*`. Corrected in
+  `server.json` and in the `mcp-name:` token in `README.md`.
+  - This needed a new PyPI release rather than an edit: the registry verifies
+    ownership by finding the literal `mcp-name: <server-name>` in the PyPI long
+    description via a case-sensitive `strings.Index`, and a published release's
+    description is immutable. The 0.28.0 description carries the lowercase
+    token permanently, so the registry can only ever validate 0.28.1 onward.
+  - The JSON schema's own `name` pattern (`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
+    accepts either case, so schema validation could not catch this — only the
+    live publish could.
+
+### Added
+- **`glama.json`** at the repository root, which is what Glama reads to index an
+  MCP server rather than relying on keyword crawling.
+- **`.github/workflows/publish-mcp.yml`** publishes `server.json` to
+  registry.modelcontextprotocol.io using GitHub Actions OIDC — no PAT stored and
+  no interactive browser login. It asserts `server.json` agrees with
+  `pyproject.toml` on both version fields, then polls PyPI until the version is
+  actually resolvable, because the registry rejects a version it cannot find
+  there and the upload is not queryable the instant `publish.yml` finishes.
+
 ## [0.28.0] - 2026-09-16
 
 ### Changed
