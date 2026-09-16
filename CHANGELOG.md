@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.3] - 2026-09-16
+
+### Security
+- **The 0.28.2 sdist shipped a stray `.playwright-mcp/` console log**, which
+  GitGuardian flagged. The log contained a single token-shaped string: an
+  ephemeral Fastly anti-bot challenge token for pypi.org that had already been
+  rejected with HTTP 401 (`PAT challenge aborted` on the next line). It is not a
+  credential, grants no access and was tied to one browser session, so the
+  practical impact is nil — but it should never have been committed or
+  published. The directory is now gitignored and removed from the repository.
+  - 0.28.2 should be yanked on PyPI; its files are immutable and cannot be
+    edited in place.
+  - The wheel was never affected — it only ever contained the module.
+
+### Fixed
+- **The sdist now uses an explicit allow-list** instead of hatchling's default,
+  which sweeps in everything not gitignored. 0.28.2 therefore published
+  `.planning/`, `.github/`, `AUDIT_REPORT*.md`, `benchmarks/`, `scripts/`,
+  `CLAUDE.md`, `AGENTS.md` and the stray Playwright log. That default is the
+  actual root cause: it turns any stray file in a working tree into a published
+  artifact. The sdist drops from 1.11 MB to 708 KB and now carries only `src`,
+  `tests`, `docs`, `examples`, `assets`, the READMEs, `CHANGELOG`, `LICENSE`
+  and `server.json`.
+
 ## [0.28.2] - 2026-09-16
 
 ### Fixed

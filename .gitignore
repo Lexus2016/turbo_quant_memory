@@ -14,3 +14,8 @@ benchmarks/retrieval_quality.md
 benchmarks/retrieval_quality_global.json
 benchmarks/retrieval_quality_global.md
 benchmarks/paraphrase_fixture.json
+
+# Playwright MCP writes run artifacts (console logs, page snapshots) into the
+# working directory. They are session junk and leaked a bot-challenge token
+# into a release once — never track them.
+.playwright-mcp/

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "turbo-quant-memory"
-version = "0.28.2"
+version = "0.28.3"
 description = "Local-first MCP memory server for AI coding agents with compact retrieval and project/global scopes."
 readme = "README.md"
 license = "MIT"
@@ -81,6 +81,25 @@ dev = [
   # verify fastembed's ONNX conversion still matches. Clients never install it.
   "ruff>=0.6,<1.0",
   "sentence-transformers>=5.3.0,<6.0",
+]
+
+[tool.hatch.build.targets.sdist]
+# Explicit allow-list. Hatchling's default sweeps in everything not gitignored,
+# which shipped .planning/, AUDIT_REPORT*.md, benchmarks/, CLAUDE.md and a stray
+# .playwright-mcp/ console log into the 0.28.2 sdist. An allow-list makes a
+# stray file in the working tree a non-event for the published artifact.
+include = [
+  "/src",
+  "/tests",
+  "/docs",
+  "/examples",
+  "/assets",
+  "/README.md",
+  "/README.uk.md",
+  "/README.ru.md",
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/server.json",
 ]
 
 [tool.hatch.build.targets.wheel]
