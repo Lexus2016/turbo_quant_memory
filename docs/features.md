@@ -42,7 +42,7 @@ The embedder runs the multilingual model through **ONNX Runtime (fastembed) by d
 The legacy PyTorch backend remains available for rollback or A/B checks:
 
 ```bash
-pip install 'turbo-memory-mcp[torch]'
+uv tool install --force 'turbo-quant-memory[torch]'
 export TQMEMORY_EMBEDDING_BACKEND=sentence-transformers   # default: fastembed
 ```
 

@@ -64,7 +64,7 @@ grep -rnE '^[[:space:]]*(import|from)[[:space:]]+(requests|httpx|aiohttp|urllib3
 ### Або встановіть вручну
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.28.0
+uv tool install turbo-quant-memory
 ```
 
 Далі зареєструйте сервер у своєму клієнті:

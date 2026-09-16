@@ -66,7 +66,7 @@ Paste this into Claude Code, Codex, Gemini CLI, Cursor or Antigravity:
 ### Or install it yourself
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.28.0
+uv tool install turbo-quant-memory
 ```
 
 Then register the server with your client:

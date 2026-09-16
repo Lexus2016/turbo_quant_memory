@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "turbo-memory-mcp"
+name = "turbo-quant-memory"
 version = "0.28.0"
 description = "Local-first MCP memory server for AI coding agents with compact retrieval and project/global scopes."
 readme = "README.md"
@@ -52,7 +52,7 @@ dependencies = [
 [project.optional-dependencies]
 # ONNX (fastembed) is the default embedder since it moved into core deps.
 # The legacy PyTorch backend stays available as an opt-in extra for rollback:
-# `pip install turbo-memory-mcp[torch]` + TQMEMORY_EMBEDDING_BACKEND=sentence-transformers.
+# `uv tool install --force 'turbo-quant-memory[torch]'` + TQMEMORY_EMBEDDING_BACKEND=sentence-transformers.
 # Kept an empty `onnx` alias so pre-flip install instructions don't break.
 onnx = []
 torch = [
@@ -67,7 +67,11 @@ Issues = "https://github.com/Lexus2016/turbo_quant_memory/issues"
 Changelog = "https://github.com/Lexus2016/turbo_quant_memory/releases"
 
 [project.scripts]
+# turbo-memory-mcp is the documented command and every existing MCP config
+# uses it; turbo-quant-memory is an alias so `uvx turbo-quant-memory serve`
+# resolves without --from now that the distribution carries the brand name.
 turbo-memory-mcp = "turbo_memory_mcp.cli:main"
+turbo-quant-memory = "turbo_memory_mcp.cli:main"
 
 [dependency-groups]
 dev = [
@@ -78,6 +82,9 @@ dev = [
   "ruff>=0.6,<1.0",
   "sentence-transformers>=5.3.0,<6.0",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/turbo_memory_mcp"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

@@ -2646,7 +2646,7 @@ wheels = [
 ]
 
 [[package]]
-name = "turbo-memory-mcp"
+name = "turbo-quant-memory"
 version = "0.28.0"
 source = { editable = "." }
 dependencies = [

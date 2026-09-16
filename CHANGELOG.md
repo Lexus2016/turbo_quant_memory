@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.28.0] - 2026-09-16
 
+### Changed
+- **The PyPI distribution is now `turbo-quant-memory`, renamed from
+  `turbo-memory-mcp`.** The project answered to four different names — repo
+  `turbo_quant_memory`, distribution `turbo-memory-mcp`, server id `tqmemory`,
+  registry name `io.github.lexus2016/turbo-quant-memory` — and the distribution
+  was the only one that matched nothing. With zero PyPI users this was the free
+  moment to align it with the repository, the README title and the registry
+  entry. `uv tool install turbo-quant-memory` is now the documented install.
+  - **The `turbo-memory-mcp` command is unchanged**, so every existing MCP
+    client config keeps working untouched. A `turbo-quant-memory` console-script
+    alias was added alongside it so `uvx turbo-quant-memory serve` resolves
+    without `--from`, which is what `server.json`'s `uvx` runtime hint needs.
+  - `[tool.hatch.build.targets.wheel] packages` is now explicit: the
+    distribution name no longer matches the `turbo_memory_mcp` module directory,
+    so hatchling can no longer infer it.
+  - The `[torch]` fallback instructions named a `pip install` that would land in
+    the wrong environment (the active venv, not the uv-tool environment actually
+    running the server). They now say
+    `uv tool install --force 'turbo-quant-memory[torch]'`, in the README docs and
+    in the `RuntimeError` hint that `_load_torch_embedder` raises.
+
 ### Added
 - **MIT `LICENSE`.** The repository shipped with no license file, so GitHub
   reported `"license": null` and the code was legally "all rights reserved" —

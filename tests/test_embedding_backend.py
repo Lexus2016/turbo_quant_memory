@@ -53,7 +53,7 @@ def test_torch_backend_missing_gives_actionable_error(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)  # simulate not installed
     ri._load_torch_embedder.cache_clear()
     try:
-        with pytest.raises(RuntimeError, match=r"turbo-memory-mcp\[torch\]"):
+        with pytest.raises(RuntimeError, match=r"turbo-quant-memory\[torch\]"):
             ri._load_torch_embedder()
     finally:
         ri._load_torch_embedder.cache_clear()

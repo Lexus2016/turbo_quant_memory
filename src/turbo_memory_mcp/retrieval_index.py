@@ -147,7 +147,7 @@ def _load_torch_embedder() -> _TorchEmbedder:
         raise RuntimeError(
             "TQMEMORY_EMBEDDING_BACKEND=sentence-transformers requests the legacy "
             "PyTorch backend, but sentence-transformers is not installed. Install it "
-            "with `pip install turbo-memory-mcp[torch]` or unset the env var to use "
+            "with `uv tool install --force 'turbo-quant-memory[torch]'` or unset the env var to use "
             "the default fastembed/ONNX backend (vector-compatible, no reindex)."
         ) from exc
 

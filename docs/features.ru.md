@@ -42,7 +42,7 @@ graph TD
 Старый PyTorch-бэкенд доступен для отката или A/B-проверок:
 
 ```bash
-pip install 'turbo-memory-mcp[torch]'
+uv tool install --force 'turbo-quant-memory[torch]'
 export TQMEMORY_EMBEDDING_BACKEND=sentence-transformers   # по умолчанию: fastembed
 ```
 

@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
-      "identifier": "turbo-memory-mcp",
+      "identifier": "turbo-quant-memory",
       "version": "0.28.0",
       "runtimeHint": "uvx",
       "transport": {

@@ -22,8 +22,8 @@ Check whether tqmemory is already available:
 ### 2.1 Install the CLI
 
 ```bash
-uv tool install git+https://github.com/Lexus2016/turbo_quant_memory
-# or pinned: uv tool install git+https://github.com/Lexus2016/turbo_quant_memory@v0.28.0
+uv tool install turbo-quant-memory
+# or pinned: uv tool install 'turbo-quant-memory==0.28.0'
 ```
 
 ### 2.2 Install this skill
