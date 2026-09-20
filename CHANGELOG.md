@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.1] - 2026-09-20
+
+### Fixed
+- **`--version` reported the wrong number on every install since 0.28.0.**
+  `__init__.py` read package metadata under the pre-rename distribution name
+  `turbo-memory-mcp`, which stopped resolving when 0.28.0 renamed the
+  distribution to `turbo-quant-memory`. Every installed copy therefore fell
+  through to the hardcoded source fallback; 0.28.1-0.28.3 happened to be right
+  because the release ritual bumped that literal, and 0.29.0 did not — so
+  `turbo-memory-mcp --version` answered `0.28.3`. The same stale string reached
+  `server_info`/`health` (`version`), the daemon handshake (`server_version`),
+  and the migration log (`package_version`). Fixed by reading the new name
+  first, keeping the old one as a fallback for pre-rename environments, and
+  pinning the literal to pyproject.toml in `tests/test_version_metadata.py`.
+  Reported in #4.
+- `server_info`/`health` advertised `package_name: turbo-memory-mcp`, a
+  distribution that has not existed since 0.28.0. It is now
+  `turbo-quant-memory`. `runtime_command` is deliberately unchanged — the
+  console script really is still `turbo-memory-mcp serve`.
+- The packaged `SKILL.md` was still stamped `0.28.3`, so `skill install` left
+  0.29.0 copies claiming the previous version. The guard that should have
+  caught it (`test_skill_version_matches_package_version`) passed only because
+  `__version__` was stale in the same way.
+- `uv tool upgrade turbo-memory-mcp` no longer resolves after the rename.
+  Existing installs upgrade once with `uv tool install --force
+  turbo-quant-memory`; the README install section now says so.
+
 ## [0.29.0] - 2026-09-20
 
 ### Changed
@@ -41,29 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   competing for before anyone builds one.
 
 ### Fixed
-- **`--version` reported the wrong number on every install since 0.28.0.**
-  `__init__.py` read package metadata under the pre-rename distribution name
-  `turbo-memory-mcp`, which stopped resolving when 0.28.0 renamed the
-  distribution to `turbo-quant-memory`. Every installed copy therefore fell
-  through to the hardcoded source fallback; 0.28.1-0.28.3 happened to be right
-  because the release ritual bumped that literal, and 0.29.0 did not — so
-  `turbo-memory-mcp --version` answered `0.28.3`. The same stale string reached
-  `server_info`/`health` (`version`), the daemon handshake (`server_version`),
-  and the migration log (`package_version`). Fixed by reading the new name
-  first, keeping the old one as a fallback for pre-rename environments, and
-  pinning the literal to pyproject.toml in `tests/test_version_metadata.py`.
-  Reported in #4.
-- `server_info`/`health` advertised `package_name: turbo-memory-mcp`, a
-  distribution that has not existed since 0.28.0. It is now
-  `turbo-quant-memory`. `runtime_command` is deliberately unchanged — the
-  console script really is still `turbo-memory-mcp serve`.
-- The packaged `SKILL.md` was still stamped `0.28.3`, so `skill install` left
-  0.29.0 copies claiming the previous version. The guard that should have
-  caught it (`test_skill_version_matches_package_version`) passed only because
-  `__version__` was stale in the same way.
-- `uv tool upgrade turbo-memory-mcp` no longer resolves after the rename.
-  Existing installs upgrade once with `uv tool install --force
-  turbo-quant-memory`; the README install section now says so.
 - Constant documentation now records what was measured rather than asking for a
   tune. `VECTOR_GATE_THRESHOLD` stays 0.82 (validated: 0.82/0.95/1.01 identical,
   0.00 costs -0.064 MRR). `RECENCY_BONUS_MAX` stays 0.05, at the peak of a

@@ -6,7 +6,7 @@ __all__ = ["__version__"]
 
 # Kept in sync with pyproject.toml by test_version_metadata.py. Only ever used
 # when the package is not installed at all (a bare source checkout).
-_FALLBACK_VERSION = "0.29.0"
+_FALLBACK_VERSION = "0.29.1"
 
 try:
     # Single source of truth: installed package metadata (driven by

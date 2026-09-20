@@ -9,6 +9,7 @@ copy silently fell back to the hardcoded literal. It stayed invisible until
 
 from __future__ import annotations
 
+import json
 import tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -21,6 +22,8 @@ from turbo_memory_mcp.contracts import PACKAGE_NAME
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+SERVER_JSON = PROJECT_ROOT / "server.json"
+SKILL_MD = PROJECT_ROOT / "src/turbo_memory_mcp/skills/turbo-quant-memory/SKILL.md"
 
 
 def _pyproject() -> dict[str, Any]:
@@ -45,3 +48,20 @@ def test_uninstalled_source_fallback_matches_pyproject() -> None:
 
 def test_contract_package_name_is_the_real_distribution() -> None:
     assert _pyproject()["name"] == PACKAGE_NAME
+
+
+def test_server_json_agrees_with_pyproject() -> None:
+    """publish-mcp.yml asserts this at upload time; fail in pytest instead."""
+    manifest = json.loads(SERVER_JSON.read_text(encoding="utf-8"))
+    expected = _pyproject()["version"]
+
+    assert manifest["version"] == expected
+    assert [pkg["version"] for pkg in manifest["packages"]] == [expected]
+
+
+def test_skill_pinned_install_example_is_current() -> None:
+    """The frontmatter is covered by test_skill_install; the example was not."""
+    expected = _pyproject()["version"]
+    name = _pyproject()["name"]
+
+    assert f"{name}=={expected}" in SKILL_MD.read_text(encoding="utf-8")

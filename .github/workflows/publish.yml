@@ -2,7 +2,7 @@ name: publish
 
 # Publishes to PyPI via Trusted Publishing (OIDC) — no API token stored anywhere.
 # One-time setup on PyPI: Account -> Publishing -> add a pending publisher with
-#   project: turbo-memory-mcp | owner: Lexus2016 | repo: turbo_quant_memory
+#   project: turbo-quant-memory | owner: Lexus2016 | repo: turbo_quant_memory
 #   workflow: publish.yml     | environment: pypi
 on:
   release:
