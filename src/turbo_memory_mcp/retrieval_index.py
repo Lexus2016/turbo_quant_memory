@@ -95,10 +95,20 @@ VECTOR_GATE_THRESHOLD = 0.82
 # is the ONLY setting that costs anything on docs, which is the regression the
 # original equal-weight measurement found — so it is left on the table.
 #
-# 0.9 also gives the lane the semantics this comment always claimed. Because
-# 0.9/(k+1) < 1/(k+1), an FTS-only row can never displace a confident dense top hit;
-# it can only contribute below it. That is the "rescue lane that recovers recall
-# without overruling the dense lane" — which 0.3 never delivered.
+# 0.9 also gives the lane the semantics this comment always claimed — with one
+# correction: by the time this lane runs, VECTOR_GATE_THRESHOLD has already ruled
+# out high dense confidence, so "protects a confident hit" overstates it. What
+# 0.9/(k+1) < 1/(k+1) actually buys is narrower: an FTS-only row can never take
+# rank 1 away from whatever the dense lane currently has there, confident or not;
+# it can only fill in below it, up to rank 8 (w > (k+1)/(k+p) puts the ceiling at
+# p=8 for w=0.9, k=60). Two things follow from that ceiling, left as known limits
+# rather than fixed here: a caller requesting fewer than 8 results will never see
+# an FTS-only hit no matter how exact the lexical match; and an item that scores
+# in BOTH lanes even at moderate rank can still outscore a dense-only rank-1 item,
+# an additive-RRF property this weight does not change (0.3 had it too, just
+# smaller). A confidence-scaled weight (scale FTS by how far top_distance sits
+# below the gate) would remove the first correctly and soften the second; not
+# attempted here for lack of a benchmark case where it changes the outcome.
 #
 # k is NOT a useful dial here: swept over k in {10, 20, 60} at w in
 # {0.3, 0.5, 0.6, 0.9, 1.0}, every cell was identical to three decimals. Lowering k
