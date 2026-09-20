@@ -17,6 +17,7 @@ costs one embed pass rather than one per value.
 Targets (--constant):
   gate    retrieval_index.VECTOR_GATE_THRESHOLD
   recency retrieval.RECENCY_BONUS_MAX  (grid in bonus units, not similarity)
+  fts     retrieval_index.FTS_LANE_WEIGHT (RRF weight of the BM25 lane; 1.0 = equal)
 
     uv run python scripts/sweep_vector_gate.py benchmarks/fixtures/ident.json
     uv run python scripts/sweep_vector_gate.py benchmarks/fixtures/ident.json --constant recency
@@ -39,11 +40,13 @@ from benchmark_retrieval_quality import aggregate
 GRIDS = {
     "gate": [0.0, 0.60, 0.70, 0.82, 0.90, 0.95, 1.01],
     "recency": [0.0, 0.025, 0.05, 0.10, 0.20],
+    "fts": [0.1, 0.3, 0.5, 0.7, 1.0],
 }
-CURRENT = {"gate": 0.82, "recency": 0.05}
+CURRENT = {"gate": 0.82, "recency": 0.05, "fts": 0.3}
 TARGETS = {
     "gate": ("turbo_memory_mcp.retrieval_index", "VECTOR_GATE_THRESHOLD"),
     "recency": ("turbo_memory_mcp.retrieval", "RECENCY_BONUS_MAX"),
+    "fts": ("turbo_memory_mcp.retrieval_index", "FTS_LANE_WEIGHT"),
 }
 
 

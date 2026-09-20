@@ -5,6 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-09-20
+
+### Changed
+- **The BM25 lane was silenced, not down-weighted, and is now audible.**
+  `FTS_LANE_WEIGHT` moves 0.3 -> 0.9. At 0.3 the lane could not surface a single
+  row the vector lane had not already found — arithmetic, not corpus luck: with
+  `k=60` and `fetch_limit=30` every vector-only RRF score sits in `[1/90, 1/61]`
+  while an FTS-only hit at BM25 rank 1 scores `w/61`, so reaching position `p`
+  needs `w > (k+1)/(k+p)` (0.87 for position 10, 0.97 for the top 3). At 0.3 an
+  FTS-only row scored 0.0049 against a worst-case vector 0.0111 and could only
+  reorder rows both lanes already shared. The symptom was in the benchmarks the
+  whole time: Hit@3 45.0% against Hit@5 46.3%, a result list that stops filling up.
+  - Measured on 300 identifier queries over a real note corpus:
+    **Hit@1 35.3% -> 49.0%, Hit@5 46.3% -> 64.7%, MRR 0.402 -> 0.561.**
+  - Measured on 179 doc-block queries: **unchanged** (Hit@1 95.5%, MRR 0.973). 0.9
+    is Pareto-dominant, so the doc-heavy regression that motivated the original
+    down-weighting does not reappear. Equal weight (1.0) buys a further +0.012 MRR
+    on notes but costs -0.015 on docs, and was left on the table.
+  - Because `0.9/(k+1) < 1/(k+1)`, an FTS-only row still cannot displace a confident
+    dense top hit. The lane finally behaves as its own docstring described.
+  - No migration, no re-embed, no schema change: the weight is applied at query
+    time, so existing installs pick this up without reindexing. Result ORDER will
+    change, which is the point.
+
+### Added
+- `scripts/build_paraphrase_fixture.py` — builds fixtures for the previously
+  unusable `benchmark_paraphrase.py`, whose queries do not come from the gold
+  item's own text (`body` and `ident` regimes). The two harnesses that did run
+  derive each query from the gold title and saturate (notes: Hit@1 0.99, Hit@3
+  1.00), which is why no ranking constant could be calibrated before now.
+- `scripts/sweep_ranking_constant.py` — sweeps `VECTOR_GATE_THRESHOLD`,
+  `RECENCY_BONUS_MAX` or `FTS_LANE_WEIGHT` over a grid sharing ONE embed pass.
+- `scripts/probe_rerank_headroom.py` — measures the ceiling a reranker would be
+  competing for before anyone builds one.
+
+### Fixed
+- Constant documentation now records what was measured rather than asking for a
+  tune. `VECTOR_GATE_THRESHOLD` stays 0.82 (validated: 0.82/0.95/1.01 identical,
+  0.00 costs -0.064 MRR). `RECENCY_BONUS_MAX` stays 0.05, at the peak of a
+  unimodal curve whose upside is noise and whose downside is not.
+  `PROVENANCE_HUMAN_BONUS` is documented as UNCALIBRATABLE: 898 of 905 active
+  notes are `provenance=agent` and 7 are `human-explicit`, so no Hit@k/MRR
+  benchmark can separate it from noise. The RRF `k` is documented as not a useful
+  dial — swept over {10, 20, 60} at five weights, every cell identical.
+
 ## [0.28.3] - 2026-09-16
 
 ### Security

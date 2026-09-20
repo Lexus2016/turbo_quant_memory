@@ -72,7 +72,39 @@ ITEM_ID_FIELD = "item_id"
 CONFIDENCE_HIGH_SCORE = 0.72
 CONFIDENCE_MEDIUM_SCORE = 0.52
 VECTOR_GATE_THRESHOLD = 0.82
-FTS_LANE_WEIGHT = 0.3
+# FTS_LANE_WEIGHT is the BM25 lane's RRF weight. It was 0.3, which did not
+# down-weight the lane — it DISABLED it for anything the vector lane had not already
+# found. That is arithmetic, not a property of any corpus: with k=60 and
+# fetch_limit=30 every vector-only score falls in [1/90, 1/61], while an FTS-only hit
+# at BM25 rank 1 scores w/61. To reach position p it must beat the vector row at rank
+# p, i.e. w > (k+1)/(k+p) — 0.87 for position 10, 0.97 for the top 3, and >1 to
+# displace the top hit. At 0.3 an FTS-only row scored 0.0049 against a worst-case
+# vector 0.0111, so the lane could only ever reorder rows both lanes had returned.
+# The symptom was visible all along: Hit@3 45.0% against Hit@5 46.3% on the notes
+# fixture, a result list that stops filling up because there is nothing to fill it.
+#
+# Measured (scripts/sweep_ranking_constant.py --constant fts):
+#   notes, 300 identifier queries | 0.3: Hit@1 35.3% Hit@5 46.3% MRR 0.402
+#                                 | 0.9: Hit@1 49.0% Hit@5 64.7% MRR 0.561
+#                                 | 1.0: Hit@1 43.7% Hit@5 77.7% MRR 0.574
+#   docs, 179 block queries       | 0.3: Hit@1 95.5% MRR 0.973
+#                                 | 0.9: Hit@1 95.5% MRR 0.973  (identical)
+#                                 | 1.0: Hit@1 92.2% MRR 0.958  (-0.015)
+# So 0.9 is Pareto-dominant: +0.159 MRR on notes for exactly zero cost on the
+# doc-heavy corpus the old 0.3 was protecting. 1.0 buys another +0.012 on notes and
+# is the ONLY setting that costs anything on docs, which is the regression the
+# original equal-weight measurement found — so it is left on the table.
+#
+# 0.9 also gives the lane the semantics this comment always claimed. Because
+# 0.9/(k+1) < 1/(k+1), an FTS-only row can never displace a confident dense top hit;
+# it can only contribute below it. That is the "rescue lane that recovers recall
+# without overruling the dense lane" — which 0.3 never delivered.
+#
+# k is NOT a useful dial here: swept over k in {10, 20, 60} at w in
+# {0.3, 0.5, 0.6, 0.9, 1.0}, every cell was identical to three decimals. Lowering k
+# only moves the (k+1)/(k+p) threshold, it does not turn the weight into a smooth
+# knob, so do not try to tune retrieval by changing the RRF k.
+FTS_LANE_WEIGHT = 0.9
 
 # BM25/FTS tokenizer language. LanceDB's native FTS applies a SINGLE Snowball
 # stemmer per index, so this is a per-install choice (not per-document). The
@@ -354,8 +386,10 @@ class RetrievalIndex:
             if (1.0 - min(top_distance, 1.0)) >= VECTOR_GATE_THRESHOLD:
                 return vector_rows[:limit]
 
-        # Low dense confidence: bring in BM25 as a DOWN-WEIGHTED rescue lane so it
-        # can recover recall without overruling the dense lane.
+        # Low dense confidence: bring in BM25 as a rescue lane that recovers recall
+        # without overruling the dense lane. FTS_LANE_WEIGHT is what makes that true
+        # rather than aspirational — see the note on the constant for why a smaller
+        # weight silences the lane outright instead of merely quietening it.
         fts_rows = _safe_fts_search(table, query, fetch_limit, where_clause)
         merged = _rrf_merge(
             [vector_rows, fts_rows], k=60, limit=limit, weights=[1.0, FTS_LANE_WEIGHT]
