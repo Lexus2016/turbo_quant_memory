@@ -57,6 +57,18 @@ ITEM_ID_FIELD = "item_id"
 # a retrieval precision/recall tradeoff ("skip BM25 only when dense evidence is
 # already near-exact"), not a UX label. Do not retune one when calibrating the
 # other — each has its own measured justification.
+#
+# Its VALUE is now measured too, and the answer is regime-dependent — which is the
+# gate behaving as designed rather than a number needing a tune. Swept over 300
+# identifier-style queries (scripts/sweep_ranking_constant.py on the `ident`
+# fixture, where dense similarity is low because the query is a bag of symbols):
+# 0.82, 0.95 and 1.01 score identically to three decimals (MRR 0.402), so the gate
+# fires in 0 of 300 and BM25 always runs; 0.70 moves one case; 0.00 (always skip
+# BM25) costs -0.064 MRR. On the well-formed targeted queries of the 2026-08-23
+# audit the median top1 was 0.828, so there the same threshold fires about half the
+# time. So the gate stands aside exactly where the BM25 lane earns its place
+# (+0.151 MRR over pure vector on that fixture) and engages where dense evidence
+# really is near-exact. Validated from below, no headroom above — leave it at 0.82.
 CONFIDENCE_HIGH_SCORE = 0.72
 CONFIDENCE_MEDIUM_SCORE = 0.52
 VECTOR_GATE_THRESHOLD = 0.82

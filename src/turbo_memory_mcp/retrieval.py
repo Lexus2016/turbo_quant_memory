@@ -25,14 +25,32 @@ HYBRID_PROJECT_BIAS = 0.15
 MARKDOWN_KIND_BONUS = 0.02
 # Additive bonus for notes the user explicitly flagged (provenance=human-explicit).
 # Small enough not to override relevance, large enough to win ties and lift a
-# close-but-not-top human note. UNCALIBRATED heuristic — tune on a real corpus
-# (see lesson e1b9b1df42094746 on the P1 threshold miscalibration).
+# close-but-not-top human note. UNCALIBRATED, and measurably UNCALIBRATABLE on real
+# data: in the largest live corpus 898 of 905 active notes are provenance=agent and
+# 7 are human-explicit (0.8%). A bonus whose population is seven rows cannot be
+# separated from noise by any Hit@k/MRR benchmark, so no sweep will ever justify a
+# value here. Treat it as a deliberate tie-breaker for a rare hand-flagged note, not
+# as a tuned parameter; if the population ever grows, sweep it with
+# scripts/sweep_ranking_constant.py (see lesson e1b9b1df42094746 on the P1
+# threshold miscalibration).
 PROVENANCE_HUMAN_BONUS = 0.06
 # Recency bonus: a fresh row wins a CLOSE race against an older row with
 # slightly stronger lexicon (the live-reported failure where months-old notes
 # outranked the current one). Decays linearly to 0 over RECENCY_WINDOW_DAYS and
 # is capped well below a real relevance gap, so it never buries a clearly
 # better old match.
+#
+# SWEPT (scripts/sweep_ranking_constant.py --constant recency, 300 identifier
+# queries over the largest live corpus). MRR by value: 0.00 -> 0.399,
+# 0.025 -> 0.401, 0.05 -> 0.402, 0.10 -> 0.396, 0.20 -> 0.372. So 0.05 sits at the
+# peak of a unimodal curve. Be honest about the size of that peak: +0.003 MRR over
+# switching the bonus OFF is about one case in 300, which is noise. What the sweep
+# really buys is the DOWNSIDE, which is not noise and now has a number — raising
+# the bonus costs an order of magnitude more than it could ever win (0.10 is
+# -0.006, 0.20 is -0.031). So: keep 0.05, and do not "make recency matter more".
+# The older notes-harness A/B (benchmarks/retrieval_quality_notes.json) reads 0.000
+# on global and -0.002 on CATS; that harness derives each query from the gold
+# note's own title and saturates at Hit@1 0.99, so it cannot see this curve at all.
 RECENCY_BONUS_MAX = 0.05
 RECENCY_WINDOW_DAYS = 30.0
 MAX_SEMANTIC_LIMIT = 20
