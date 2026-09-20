@@ -100,7 +100,7 @@ def test_server_info_payload_fields() -> None:
     install_contract = build_install_contract()
 
     assert payload["product_name"] == "Turbo Quant Memory for AI Agents"
-    assert payload["package_name"] == "turbo-memory-mcp"
+    assert payload["package_name"] == "turbo-quant-memory"
     assert payload["version"] == __version__
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["install"]["primary"]["tool"] == "uv"
@@ -146,7 +146,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     assert payload["tool_count"] == 19
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
-    assert payload["package_name"] == "turbo-memory-mcp"
+    assert payload["package_name"] == "turbo-quant-memory"
     assert payload["version"] == __version__
     assert payload["install"]["primary"]["command"] == install_contract["primary"]["command"]
     assert payload["install"]["fallback"]["command"] == install_contract["fallback"]["command"]

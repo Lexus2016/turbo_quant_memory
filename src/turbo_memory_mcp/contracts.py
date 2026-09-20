@@ -8,7 +8,9 @@ from typing import Any
 from . import __version__
 
 PRODUCT_NAME = "Turbo Quant Memory for AI Agents"
-PACKAGE_NAME = "turbo-memory-mcp"
+# The PyPI distribution, renamed in 0.28.0. The CONSOLE SCRIPT stayed
+# `turbo-memory-mcp` on purpose, so RUNTIME_COMMAND below does not follow.
+PACKAGE_NAME = "turbo-quant-memory"
 SERVER_ID = "tqmemory"
 RUNTIME_COMMAND = "turbo-memory-mcp serve"
 REPOSITORY_URL = "https://github.com/Lexus2016/turbo_quant_memory"

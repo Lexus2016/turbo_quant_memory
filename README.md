@@ -74,6 +74,12 @@ Paste this into Claude Code, Codex, Gemini CLI, Cursor or Antigravity:
 uv tool install turbo-quant-memory
 ```
 
+Upgrading from 0.27.x or earlier? The distribution was renamed in 0.28.0, so
+`uv tool upgrade turbo-memory-mcp` no longer resolves — run
+`uv tool install --force turbo-quant-memory` once, and `uv tool upgrade
+turbo-quant-memory` afterwards. The `turbo-memory-mcp` command itself is
+unchanged, so client configs keep working.
+
 Then register the server with your client:
 
 ```bash
