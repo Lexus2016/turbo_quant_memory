@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
+import pytest
 
 from turbo_memory_mcp.server import build_runtime_context, index_paths_impl
 
@@ -199,3 +202,69 @@ def test_index_paths_full_with_explicit_paths_prunes_removed_roots(tmp_path: Pat
     assert [root["path"] for root in store.list_markdown_roots()] == [str(docs_b.resolve())]
     assert [manifest["source_path"] for manifest in store.list_markdown_file_manifests()] == ["b.md"]
     assert {block["source_path"] for block in store.list_markdown_blocks()} == {"b.md"}
+
+
+# --- root validation before registration (2026-10-04) ---
+# A root used to be persisted before index_paths checked that it is a
+# directory. A file or missing path then stayed registered after the call
+# failed, and every later argument-free reindex raised on it.
+
+
+@pytest.mark.parametrize(
+    ("bad_name", "expected_error"),
+    [("README.md", NotADirectoryError), ("no-such-dir", FileNotFoundError)],
+)
+def test_index_paths_rejected_root_is_not_registered(
+    tmp_path: Path, bad_name: str, expected_error: type[Exception]
+) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("# A\n\nAlpha text.", encoding="utf-8")
+    (project_root / "README.md").write_text("# Readme\n\nA file, not a root.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+
+    with pytest.raises(expected_error):
+        index_paths_impl(paths=[str(project_root / bad_name)], cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert [root["path"] for root in store.list_markdown_roots()] == [str(docs.resolve())]
+    assert index_paths_impl(mode="incremental", cwd=project_root, environ=env)["status"] == "ok"
+
+
+def test_index_paths_registers_nothing_when_any_path_is_invalid(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("# A\n\nAlpha text.", encoding="utf-8")
+    (project_root / "README.md").write_text("# Readme", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError):
+        index_paths_impl(
+            paths=[str(docs), str(project_root / "README.md")], cwd=project_root, environ=env
+        )
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert store.list_markdown_roots() == []
+
+
+def test_reindex_skips_vanished_root_and_still_indexes_the_others(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs_a = project_root / "docs-a"
+    docs_b = project_root / "docs-b"
+    docs_a.mkdir()
+    docs_b.mkdir()
+    (docs_a / "a.md").write_text("# A\n\nAlpha text.", encoding="utf-8")
+    (docs_b / "b.md").write_text("# B\n\nBeta text.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs_a), str(docs_b)], mode="full", cwd=project_root, environ=env)
+    (docs_a / "a.md").write_text("# A\n\nAlpha text, edited after the first index.", encoding="utf-8")
+    shutil.rmtree(docs_b)
+
+    payload = index_paths_impl(mode="incremental", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["changed_files"] == 1
+    assert [root["path"] for root in payload["missing_roots"]] == [str(docs_b.resolve())]
+    contents = [block["content_raw"] for block in store.list_markdown_blocks()]
+    assert any("edited after the first index" in content for content in contents)

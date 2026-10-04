@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A rejected `index_paths` root stayed registered and broke every later
+  reindex.** `index_paths(paths=[...])` persisted each root before checking
+  that it was a directory, so a call with a file or a missing path failed but
+  left that root behind. Every later `index_paths()` without arguments then
+  failed on it, and the pre-search doc refresh swallowed the same error, so
+  indexed docs silently stopped updating. All paths are now validated before
+  any root is written. A file is rejected with `NotADirectoryError`, a missing
+  path with `FileNotFoundError`, and either way nothing is registered.
+- **A registered root whose directory vanished aborted the whole reindex.**
+  The run raised mid-loop after earlier roots had already written their file
+  manifests, so their changes never reached the retrieval index and the next
+  run saw them as up to date. Such a root is now skipped and listed under
+  `missing_roots` in the `index_paths` payload, and the other roots are
+  indexed normally.
+
 ## [0.29.1] - 2026-09-20
 
 ### Fixed

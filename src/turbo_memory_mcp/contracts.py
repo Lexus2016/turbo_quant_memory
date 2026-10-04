@@ -439,8 +439,9 @@ def build_indexing_payload(
     skipped_files: int,
     deleted_files: int,
     block_count: int,
+    missing_roots: Sequence[Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "status": "ok",
         "mode": mode,
         "registered_roots": [dict(root) for root in registered_roots],
@@ -450,6 +451,9 @@ def build_indexing_payload(
         "deleted_files": deleted_files,
         "block_count": block_count,
     }
+    if missing_roots:
+        payload["missing_roots"] = [dict(root) for root in missing_roots]
+    return payload
 
 
 def build_self_test_payload(

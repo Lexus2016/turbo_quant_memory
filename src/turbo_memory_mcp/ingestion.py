@@ -101,11 +101,17 @@ def index_paths_with_sync_plan(
         deleted_files += int(prune_result["deleted_files"])
         deleted_block_ids.update(str(block_id) for block_id in prune_result["deleted_block_ids"])
 
+    missing_roots: list[dict[str, str]] = []
     for root_record in registered_roots:
         root_id = str(root_record["root_id"])
         root_path = Path(root_record["path"]).expanduser().resolve()
         if not root_path.exists() or not root_path.is_dir():
-            raise FileNotFoundError(f"Markdown root does not exist: {root_path}")
+            # A registered root whose directory vanished (moved, deleted,
+            # unmounted). Raising here aborted the run after earlier roots had
+            # already written their manifests, so their changes never reached
+            # the retrieval index; skip it and report it instead.
+            missing_roots.append({"root_id": root_id, "path": str(root_record["path"])})
+            continue
 
         existing_manifests = {
             str(manifest["source_path"]): manifest
@@ -215,6 +221,7 @@ def index_paths_with_sync_plan(
         skipped_files=skipped_files,
         deleted_files=deleted_files,
         block_count=block_count,
+        missing_roots=missing_roots,
     )
     return payload, {
         "upsert_block_ids": sorted(changed_block_ids),
@@ -306,7 +313,7 @@ def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir:
     if not paths:
         return [existing_by_root_id[root_id] for root_id in sorted(existing_by_root_id)]
 
-    registered_roots: list[dict[str, Any]] = []
+    resolved_paths: list[Path] = []
     seen_paths: set[Path] = set()
     for raw_path in paths:
         resolved_path = _resolve_input_path(raw_path, base_dir=base_dir)
@@ -322,9 +329,23 @@ def _resolve_roots(store: MemoryStore, paths: Sequence[str] | None, *, base_dir:
                 f"tree: {resolved_path}. Set TQMEMORY_ALLOW_EXTERNAL_ROOTS=1 to "
                 f"index roots outside {store.project.project_root}."
             )
+        if not resolved_path.exists():
+            raise FileNotFoundError(f"Markdown root does not exist: {resolved_path}")
+        if not resolved_path.is_dir():
+            raise NotADirectoryError(
+                f"Markdown root must be a directory, got a file: {resolved_path}. "
+                "Pass the directory that contains it."
+            )
         if resolved_path in seen_paths:
             continue
         seen_paths.add(resolved_path)
+        resolved_paths.append(resolved_path)
+
+    # Persist only after every path validated: a root written before its
+    # check stayed registered when the call failed, and every later
+    # argument-free reindex then raised on it.
+    registered_roots: list[dict[str, Any]] = []
+    for resolved_path in resolved_paths:
         root_id = build_root_id(resolved_path)
         existing = existing_by_root_id.get(root_id)
         root_record = store.write_markdown_root(
