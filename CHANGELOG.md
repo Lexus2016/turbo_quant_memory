@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run saw them as up to date. Such a root is now skipped and listed under
   `missing_roots` in the `index_paths` payload, and the other roots are
   indexed normally.
+- **The doc-freshness check compared each file against the wrong manifest.**
+  It used a variable left over from an earlier loop (the last manifest in the
+  store) instead of the file's own, so a file whose mtime moved but whose
+  content did not (after `git checkout`, `git stash`, `touch`) counted as
+  changed, and `health` reported the index as `stale`. Such files are now
+  counted separately as `touched_file_count`: they do not mark the index
+  stale, but they trigger one cheap pass that records the new mtime without
+  re-embedding, so they are not re-hashed before every search.
+- **A vanished root started a reindex before every search.** The
+  search-time refresh is now gated on a new `needs_reindex` flag that counts
+  only what a reindex can act on (changed, touched, deleted and unindexed
+  files). `is_stale`, and therefore `health`, still report the missing root.
 
 ## [0.29.1] - 2026-09-20
 

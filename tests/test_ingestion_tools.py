@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from turbo_memory_mcp.server import build_runtime_context, index_paths_impl
+from turbo_memory_mcp.ingestion import assess_project_index_freshness
+from turbo_memory_mcp.server import _refresh_project_markdown_if_stale, build_runtime_context, index_paths_impl
 
 
 def _test_env(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -268,3 +271,111 @@ def test_reindex_skips_vanished_root_and_still_indexes_the_others(tmp_path: Path
     assert [root["path"] for root in payload["missing_roots"]] == [str(docs_b.resolve())]
     contents = [block["content_raw"] for block in store.list_markdown_blocks()]
     assert any("edited after the first index" in content for content in contents)
+
+
+# --- search-time freshness (2026-10-04) ---
+
+
+def test_freshness_ignores_touched_but_unchanged_files(tmp_path: Path) -> None:
+    """The checksum comparison used a variable left over from an earlier loop
+    (the last manifest in the store) instead of the file's own manifest, so a
+    file whose mtime moved but whose content did not read as changed."""
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    files = [docs / f"{name}.md" for name in ("a", "b", "c")]
+    for path in files:
+        path.write_text(f"# {path.stem}\n\nBody of {path.stem}.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    for path in files:
+        later = path.stat().st_mtime_ns + 5_000_000_000
+        os.utime(path, ns=(later, later))
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    report = assess_project_index_freshness(store, cwd=project_root)
+
+    assert report["changed_file_count"] == 0
+    assert report["is_stale"] is False
+
+
+def test_touched_files_are_refreshed_once_then_skipped(tmp_path: Path) -> None:
+    """A touched file's manifest keeps the old mtime until a reindex rewrites
+    it; without that one reindex the file is re-read and re-hashed before
+    every search."""
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    readme = docs / "a.md"
+    readme.write_text("# a\\n\\nBody.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    later = readme.stat().st_mtime_ns + 5_000_000_000
+    os.utime(readme, ns=(later, later))
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    before = assess_project_index_freshness(store, cwd=project_root)
+    _refresh_project_markdown_if_stale(store)
+    after = assess_project_index_freshness(store, cwd=project_root)
+
+    assert before["touched_file_count"] == 1
+    assert before["needs_reindex"] is True
+    assert after["touched_file_count"] == 0
+    assert after["needs_reindex"] is False
+
+
+def test_freshness_still_counts_a_real_content_change(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    for name in ("a", "b", "c"):
+        (docs / f"{name}.md").write_text(f"# {name}\n\nBody of {name}.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    (docs / "a.md").write_text("# a\n\nA genuinely different body.", encoding="utf-8")
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    report = assess_project_index_freshness(store, cwd=project_root)
+
+    assert report["changed_file_count"] == 1
+    assert report["needs_reindex"] is True
+
+
+def _index_two_roots_then_remove_one(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
+    project_root, env = _test_env(tmp_path)
+    docs_a = project_root / "docs-a"
+    docs_b = project_root / "docs-b"
+    docs_a.mkdir()
+    docs_b.mkdir()
+    (docs_a / "a.md").write_text("# A\n\nAlpha text.", encoding="utf-8")
+    (docs_b / "b.md").write_text("# B\n\nBeta text.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs_a), str(docs_b)], mode="full", cwd=project_root, environ=env)
+    shutil.rmtree(docs_b)
+    return project_root, env, docs_a
+
+
+def test_vanished_root_alone_does_not_trigger_search_time_reindex(tmp_path: Path) -> None:
+    """A reindex cannot bring a vanished root back, so it must not run before
+    every search; health keeps reporting the root via is_stale."""
+    project_root, env, _ = _index_two_roots_then_remove_one(tmp_path)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    report = assess_project_index_freshness(store, cwd=project_root)
+    with patch(
+        "turbo_memory_mcp.server.index_paths_with_sync_plan",
+        side_effect=AssertionError("search-time reindex triggered by a vanished root"),
+    ) as reindex:
+        _refresh_project_markdown_if_stale(store)
+
+    assert report["missing_root_count"] == 1
+    assert report["is_stale"] is True
+    assert report["needs_reindex"] is False
+    reindex.assert_not_called()
+
+
+def test_vanished_root_does_not_block_reindex_of_changed_live_root(tmp_path: Path) -> None:
+    project_root, env, docs_a = _index_two_roots_then_remove_one(tmp_path)
+    (docs_a / "a.md").write_text("# A\n\nAlpha text, edited after the root vanished.", encoding="utf-8")
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    _refresh_project_markdown_if_stale(store)
+
+    contents = [block["content_raw"] for block in store.list_markdown_blocks()]
+    assert any("edited after the root vanished" in content for content in contents)

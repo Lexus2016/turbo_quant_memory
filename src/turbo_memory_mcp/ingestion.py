@@ -239,19 +239,22 @@ def assess_project_index_freshness(
     if not roots:
         return {
             "is_stale": False,
+            "needs_reindex": False,
             "missing_root_count": 0,
             "changed_file_count": 0,
+            "touched_file_count": 0,
             "missing_file_count": 0,
             "unindexed_file_count": 0,
         }
 
     manifests_by_root: dict[str, dict[str, dict[str, Any]]] = {}
-    for manifest in store.list_markdown_file_manifests():
-        root_bucket = manifests_by_root.setdefault(str(manifest["root_id"]), {})
-        root_bucket[str(manifest["source_path"])] = manifest
+    for file_manifest in store.list_markdown_file_manifests():
+        root_bucket = manifests_by_root.setdefault(str(file_manifest["root_id"]), {})
+        root_bucket[str(file_manifest["source_path"])] = file_manifest
 
     missing_root_count = 0
     changed_file_count = 0
+    touched_file_count = 0
     missing_file_count = 0
     unindexed_file_count = 0
 
@@ -284,15 +287,25 @@ def assess_project_index_freshness(
             if source_text is None:
                 continue
             source_checksum = sha256_text(source_text)
-            if str(manifest["source_checksum"]) != source_checksum:
+            if str(manifest_record["source_checksum"]) != source_checksum:
                 changed_file_count += 1
+            else:
+                touched_file_count += 1
 
+    # is_stale is the health signal and includes vanished roots. needs_reindex
+    # gates the search-time refresh: only what a reindex can act on. A vanished
+    # root cannot be brought back by one, while a touched file needs one cheap
+    # pass to record its new mtime (or it is re-hashed before every search).
     return {
         "is_stale": any(
             count > 0 for count in (missing_root_count, changed_file_count, missing_file_count, unindexed_file_count)
         ),
+        "needs_reindex": any(
+            count > 0 for count in (changed_file_count, touched_file_count, missing_file_count, unindexed_file_count)
+        ),
         "missing_root_count": missing_root_count,
         "changed_file_count": changed_file_count,
+        "touched_file_count": touched_file_count,
         "missing_file_count": missing_file_count,
         "unindexed_file_count": unindexed_file_count,
     }

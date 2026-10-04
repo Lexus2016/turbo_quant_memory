@@ -2099,7 +2099,7 @@ def _sync_with_warning(action: Callable[[], None]) -> str | None:
 
 def _refresh_project_markdown_if_stale(store: MemoryStore) -> None:
     freshness = assess_project_index_freshness(store, cwd=store.project.project_root)
-    if not freshness["is_stale"]:
+    if not freshness["needs_reindex"]:
         return
 
     try:
