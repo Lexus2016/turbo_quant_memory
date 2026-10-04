@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`recent_context(format="text")`** returns the same recency window as
+  compact plain text: a header, then one line per note with date, kind,
+  title and its `hydrate("<id>", "<scope>")` handle, followed by an indented
+  summary. It exists for Claude Code `SessionStart` hooks: an `mcp_tool` hook's
+  text is read like command stdout, and output that starts with `{` and ends
+  with `}` is parsed as hook-control JSON, so the default JSON payload never
+  reached the context. `CLIENT_INTEGRATIONS` now ships a ready
+  `SessionStart` (`matcher: "compact"`) snippet that re-injects recent memory
+  after every compaction. The default `format="json"` output and its output
+  schema are unchanged.
+
+### Changed
+- Minimum `mcp` raised from 1.12.4 to 1.19.0. Returning bare text content
+  while keeping the dict output schema needs
+  `Annotated[CallToolResult, dict]`, which `mcp` < 1.19 mis-parses: on 1.18 the
+  JSON mode fails with a `CallToolResult` validation error.
+
 ### Fixed
 - **A rejected `index_paths` root stayed registered and broke every later
   reindex.** `index_paths(paths=[...])` persisted each root before checking

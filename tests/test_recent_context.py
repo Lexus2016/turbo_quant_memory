@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from turbo_memory_mcp.server import (
     build_runtime_context,
+    build_server,
     deprecate_note_impl,
+    make_local_dispatcher,
     promote_note_impl,
     recent_context_impl,
     remember_note_impl,
@@ -257,3 +262,93 @@ def test_single_scopes_unchanged_by_partitioning(tmp_path: Path) -> None:
 
     assert [it["title"] for it in project_payload["items"]] == ["P note"]
     assert any(it["title"] == "G note newer" for it in global_payload["items"])
+
+
+# --- format="text": hook-safe plain text (2026-10-04) ---
+# Claude Code reads an mcp_tool hook's text content like command stdout: text
+# that starts with "{" and ends with "}" is parsed as hook-control JSON and is
+# never added to the context. A SessionStart(compact) hook that calls
+# recent_context therefore needs an output mode that is plain text.
+
+
+def _line_with(text: str, needle: str) -> str:
+    return next(line for line in text.splitlines() if needle in line)
+
+
+def test_recent_context_text_format_is_not_hook_json(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    remember_note_impl("A decision", "chose option X for reasons", kind="decision", environ=env)
+
+    text = recent_context_impl(format="text", environ=env)
+
+    assert isinstance(text, str)
+    assert not text.strip().startswith("{")
+
+
+def test_recent_context_text_lists_each_note_with_hydrate_handle(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    decision = remember_note_impl("A decision", "chose option X for reasons", kind="decision", environ=env)
+    handoff = remember_note_impl("Session handoff", "paused mid auth refresh login", kind="handoff", environ=env)
+
+    text = recent_context_impl(format="text", environ=env)
+
+    for stored, kind in ((decision, "decision"), (handoff, "handoff")):
+        line = _line_with(text, stored["item"]["title"])
+        assert kind in line
+        assert stored["item"]["item_id"] in line
+        assert '"project"' in line
+    assert "paused mid auth refresh login" in text
+
+
+def test_recent_context_text_marks_global_backfill_scope(tmp_path: Path) -> None:
+    env = _hybrid_env(tmp_path)
+    remember_note_impl("Only project note", "body", kind="lesson", environ=env)
+    shared = remember_note_impl("Cross-project news", "body", kind="lesson", environ=env)
+    promote_note_impl(shared["item"]["item_id"], environ=env)
+    deprecate_note_impl(shared["item"]["item_id"], environ=env)
+
+    text = recent_context_impl(scope="hybrid", format="text", environ=env)
+
+    assert '"global"' in _line_with(text, "Cross-project news")
+    assert '"project"' in _line_with(text, "Only project note")
+
+
+def test_recent_context_text_empty_store_says_so(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+
+    text = recent_context_impl(format="text", environ=env)
+
+    assert "no notes" in text.lower()
+    assert not text.strip().startswith("{")
+
+
+def test_recent_context_rejects_unknown_format(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    with pytest.raises(ValueError):
+        recent_context_impl(format="xml", environ=env)
+
+
+def test_mcp_recent_context_text_reaches_client_as_plain_text(tmp_path: Path) -> None:
+    """End to end through the MCP layer: what an mcp_tool hook actually reads."""
+    env = _test_env(tmp_path)
+    remember_note_impl("Session handoff", "paused mid auth refresh login", kind="handoff", environ=env)
+    server = build_server(make_local_dispatcher(default_environ=env))
+
+    async def _call() -> tuple[Any, Any, Any]:
+        async with create_connected_server_and_client_session(server) as session:
+            text_result = await session.call_tool("recent_context", {"format": "text"})
+            json_result = await session.call_tool("recent_context", {})
+            tools = await session.list_tools()
+        return text_result, json_result, tools
+
+    text_result, json_result, tools = asyncio.run(_call())
+
+    assert not text_result.isError
+    text = text_result.content[0].text
+    assert "Session handoff" in text
+    assert not text.strip().startswith("{")
+    # The default JSON contract must not change: the structured payload stays
+    # the bare dict, not FastMCP's {"result": ...} wrapper for union returns.
+    assert json_result.structuredContent["mode"] == "recent_context"
+    schema = next(t for t in tools.tools if t.name == "recent_context").outputSchema
+    assert "result" not in (schema or {}).get("properties", {})

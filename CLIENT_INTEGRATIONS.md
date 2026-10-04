@@ -31,6 +31,32 @@ Shared runtime contract:
 - Supports `claude mcp add ...`, `.mcp.json`, and project or user scopes.
 - Project scope is preferred when memory must stay repository-specific.
 - Use the shared runtime contract without extra wrappers.
+- Optional: re-inject recent memory after every compaction with a `SessionStart`
+  hook. Claude Code runs `mcp_tool` hooks after `/clear` and compaction (not at
+  launch) and treats JSON output as hook control data rather than context, so
+  request `format: "text"`. Put it in `~/.claude/settings.json` or
+  `.claude/settings.json`; `server` must match the name the server is
+  registered under:
+
+  ```json
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "matcher": "compact",
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "tqmemory",
+              "tool": "recent_context",
+              "input": { "format": "text", "limit": 5 }
+            }
+          ]
+        }
+      ]
+    }
+  }
+  ```
 
 ### Codex
 

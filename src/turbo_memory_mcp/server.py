@@ -10,7 +10,9 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+from mcp.types import CallToolResult, TextContent
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -20,6 +22,7 @@ except ImportError:  # pragma: no cover - compatibility for current stable SDK
 from .contracts import (
     DEFAULT_QUERY_MODE,
     PRODUCT_NAME,
+    RECENT_CONTEXT_FORMATS,
     SERVER_ID,
     build_delete_secret_payload,
     build_get_secret_missing_payload,
@@ -34,6 +37,7 @@ from .contracts import (
     build_self_test_payload,
     build_server_info_payload,
     build_set_secret_payload,
+    render_recent_context_text,
 )
 from .daemon import (
     ENV_MIGRATE_ON_STARTUP,
@@ -401,12 +405,16 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         """Delete a project secret by exact name."""
         return dispatcher("delete_secret", {"name": name})
 
+    # Annotated[CallToolResult, dict]: the output schema stays the plain dict
+    # schema, while format="text" can return bare text content. A `dict | str`
+    # return would make FastMCP wrap every payload as {"result": ...}.
     @mcp.tool()
     def recent_context(
         scope: str = DEFAULT_QUERY_MODE,
         limit: int = 10,
         tier_filter: list[str] | None = None,
-    ) -> dict[str, Any]:
+        format: str = "json",
+    ) -> Annotated[CallToolResult, dict[str, Any]]:
         """Query-free session bootstrap: the most recently updated notes.
 
         Call this FIRST when starting a new session or resuming after a context
@@ -419,11 +427,21 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         surface promoted cross-project knowledge.
         tier_filter: defaults to all tiers (so handoffs are included). Pass e.g.
         ["durable"] to exclude episodic session notes.
+        format: 'json' (default) or 'text' — compact plain text, one line per
+        note with its hydrate handle. Use 'text' from a Claude Code
+        SessionStart mcp_tool hook: hooks treat JSON output as control data,
+        not context.
         """
-        return dispatcher(
+        result = dispatcher(
             "recent_context",
-            {"scope": scope, "limit": limit, "tier_filter": tier_filter},
+            {"scope": scope, "limit": limit, "tier_filter": tier_filter, "format": format},
         )
+        if isinstance(result, str):
+            return CallToolResult(
+                content=[TextContent(type="text", text=result)],
+                structuredContent={"status": "ok", "mode": "recent_context", "format": "text", "text": result},
+            )
+        return result
 
     return mcp
 
@@ -562,6 +580,7 @@ def _tool_recent_context(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -
         scope=str(kwargs.get("scope", DEFAULT_QUERY_MODE)),
         limit=int(kwargs.get("limit", 10)),
         tier_filter=kwargs.get("tier_filter"),
+        format=str(kwargs.get("format", "json")),
         cwd=cwd,
         environ=environ,
     )
@@ -1634,9 +1653,10 @@ def recent_context_impl(
     scope: str = DEFAULT_QUERY_MODE,
     limit: int = 10,
     tier_filter: Sequence[str] | None = None,
+    format: str = "json",
     cwd: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | str:
     """Query-free session bootstrap: most-recently-updated notes, newest first.
 
     Reads canonical note JSON directly (no embedding, no vector search), so it
@@ -1644,11 +1664,17 @@ def recent_context_impl(
     `episodic` tier, so session `handoff` notes surface here even though a plain
     semantic_search hides them. This closes the cold-start gap: a fresh session
     can recover "where did I leave off" without guessing a query.
+
+    format="text" returns the same window as plain text (see
+    render_recent_context_text) for injection by a SessionStart hook.
     """
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     resolved_scope = scope.strip().lower()
     if resolved_scope not in {PROJECT_SCOPE, GLOBAL_SCOPE, "hybrid"}:
         raise ValueError(f"Unsupported scope: {scope}")
+    resolved_format = format.strip().lower()
+    if resolved_format not in RECENT_CONTEXT_FORMATS:
+        raise ValueError(f"Unsupported format: {format}")
 
     allowed_tiers: set[str] | None = None
     resolved_tier_filter: list[str] | None = None
@@ -1723,9 +1749,12 @@ def recent_context_impl(
             )
         )
 
-    return build_recent_context_payload(
+    payload = build_recent_context_payload(
         scope=resolved_scope, items=items, tier_filter=resolved_tier_filter
     )
+    if resolved_format == "text":
+        return render_recent_context_text(payload)
+    return payload
 
 
 def index_paths_impl(

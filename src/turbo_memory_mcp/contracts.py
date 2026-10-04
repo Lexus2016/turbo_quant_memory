@@ -20,6 +20,7 @@ DEFAULT_QUERY_MODE = "project"
 QUERY_MODES = ("project", "global", "hybrid")
 INDEX_MODES = ("full", "incremental")
 HYDRATE_MODES = ("default", "related")
+RECENT_CONTEXT_FORMATS = ("json", "text")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = (*PHASE_1_TOOL_NAMES, "remember_note", "promote_note", "search_memory")
 PHASE_3_TOOL_NAMES = (*PHASE_2_TOOL_NAMES, "index_paths")
@@ -338,6 +339,30 @@ def build_recent_context_payload(
     return payload
 
 
+def render_recent_context_text(payload: Mapping[str, Any]) -> str:
+    """Render a `recent_context` payload as plain text for hook injection.
+
+    Claude Code parses hook output that starts with "{" and ends with "}" as
+    hook-control JSON instead of adding it to the context, so this must never
+    look like a JSON object. One line per note carries the hydrate handle
+    (item_id + scope); the summary follows on an indented line.
+    """
+    scope = payload["scope"]
+    items = list(payload["items"])
+    if not items:
+        return f"# tqmemory recent_context: no notes yet (scope={scope})"
+    lines = [f"# tqmemory recent_context: {len(items)} notes, scope={scope}, newest first"]
+    for item in items:
+        title = " ".join(str(item["title"]).split())
+        lines.append(
+            f"- {str(item['updated_at'])[:10]} [{item['note_kind']}] {title}"
+            f' hydrate("{item["item_id"]}", "{item["scope"]}")'
+        )
+        if item.get("compressed_summary"):
+            lines.append(f"  {item['compressed_summary']}")
+    return "\n".join(lines)
+
+
 def build_hydrated_markdown_item_payload(
     block: Mapping[str, Any],
     *,
@@ -556,6 +581,7 @@ __all__ = [
     "PHASE_10_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
+    "RECENT_CONTEXT_FORMATS",
     "RUNTIME_COMMAND",
     "SERVER_ID",
     "TRANSPORT",
@@ -582,4 +608,5 @@ __all__ = [
     "build_server_info_payload",
     "build_set_secret_payload",
     "build_supported_client_tiers",
+    "render_recent_context_text",
 ]

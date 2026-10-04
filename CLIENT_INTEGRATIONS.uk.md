@@ -31,6 +31,32 @@
 - Підтримує `claude mcp add ...`, `.mcp.json` і project або user scopes.
 - Project scope кращий, коли пам'ять має лишатися прив'язаною до конкретного репозиторію.
 - Варто використовувати спільний runtime-контракт без зайвих обгорток.
+- Опційно: після кожної компакції повертати свіжу пам'ять у контекст хуком
+  `SessionStart`. Claude Code запускає `mcp_tool`-хуки після `/clear` і
+  компакції (не під час старту), а JSON-вивід трактує як службові дані хука, а
+  не як контекст, тож потрібен `format: "text"`. Додайте блок у
+  `~/.claude/settings.json` або `.claude/settings.json`; `server` має збігатися
+  з назвою, під якою зареєстровано сервер:
+
+  ```json
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "matcher": "compact",
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "tqmemory",
+              "tool": "recent_context",
+              "input": { "format": "text", "limit": 5 }
+            }
+          ]
+        }
+      ]
+    }
+  }
+  ```
 
 ### Codex
 
