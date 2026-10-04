@@ -668,7 +668,7 @@ def _handle_skill_install(args: argparse.Namespace) -> int:
 
     failures = 0
     for r in results:
-        would = "would " if args.dry_run and r.status != "current" else ""
+        would = "would be " if args.dry_run and r.status != "current" else ""
         if r.status == "failed":
             failures += 1
             print(f"  [FAIL] {r.client}: {r.target} — {r.error}")

@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.29.1
+version: 0.30.0
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -23,7 +23,7 @@ Check whether tqmemory is already available:
 
 ```bash
 uv tool install turbo-quant-memory
-# or pinned: uv tool install 'turbo-quant-memory==0.29.1'
+# or pinned: uv tool install 'turbo-quant-memory==0.30.0'
 ```
 
 ### 2.2 Install this skill
@@ -56,6 +56,19 @@ Any other client (Cursor, OpenCode, Antigravity, Kimi Code) takes the same serve
 1. After the client restarts, call `health()` — expect `status: "ok"`.
 2. Index the project's Markdown docs: `index_paths(paths=["."])`. The first run MUST name a root — a bare `index_paths()` only re-indexes roots already registered, and raises `ValueError` when there are none.
 3. Call `server_info()` and note the `project_id` — memory is scoped to it.
+
+### 2.5 Keep tqmemory and this skill in sync
+
+This skill's `version:` (frontmatter) always equals the package version it shipped with. Compare it with `server_info().version` or `turbo-memory-mcp --version`. `turbo-memory-mcp skill install --dry-run` shows every installed copy's version against the packaged one, without writing anything.
+
+- **Package newer than this skill:** run `turbo-memory-mcp skill install`. It rewrites every copy whose version differs and leaves matching ones untouched.
+- **This skill newer than the package, or the user asks to update:** do it in this order:
+  1. `uv tool upgrade turbo-quant-memory`
+  2. `turbo-memory-mcp skill install`
+  3. Tell the user to restart every MCP client. Running servers, including the shared daemon, keep the old code until then.
+  4. After the restart, call `health()`. On `migrations_pending`, follow §1.
+- **Never hand-edit an installed copy.** `skill install` replaces it on the next version change and skips it while the versions match, so a local edit either vanishes or silently diverges.
+- **Editing the canonical skill** (`src/turbo_memory_mcp/skills/turbo-quant-memory/SKILL.md` in the tqmemory repo): ship the edit in a release that bumps the package version, and set `version:` and the pinned install line in §2.1 to that version. `skill install` upgrades only on a version change, so an edit without a bump never reaches installed copies. `tests/test_skill_install.py` and `tests/test_version_metadata.py` fail when they drift.
 
 ## 3. Operate
 

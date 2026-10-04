@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.30.0] - 2026-10-04
 
 ### Added
 - **`recent_context(format="text")`** returns the same recency window as
@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   context either, because it is not hook-output JSON. The default
   `format="json"` output and its output schema are unchanged.
 
+- **SKILL.md §2.5 "Keep tqmemory and this skill in sync".** It covers how to
+  compare the skill's `version:` with the package, the upgrade order
+  (`uv tool upgrade` → `skill install` → restart MCP clients → `health()`),
+  and why installed copies must never be hand-edited. It also states the
+  rule for editing the canonical skill: the edit ships in a release that bumps
+  the package version, because `skill install` rewrites a copy only when its
+  `version:` differs. An edit without a bump never reaches users; this
+  machine's copies were still at 0.26.0.
+- SKILL.md mentions the optional Claude Code compaction hook and
+  `recent_context(format="text")`.
+
 ### Changed
 - Minimum `mcp` raised from 1.12.4 to 1.19.0. Returning bare text content
   while keeping the dict output schema needs
@@ -29,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON mode fails with a `CallToolResult` validation error.
 
 ### Fixed
+- `skill install --dry-run` printed "would upgraded" / "would installed"; it now
+  prints "would be upgraded" / "would be installed".
 - **A rejected `index_paths` root stayed registered and broke every later
   reindex.** `index_paths(paths=[...])` persisted each root before checking
   that it was a directory, so a call with a file or a missing path failed but
