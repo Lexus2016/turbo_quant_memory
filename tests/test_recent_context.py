@@ -322,6 +322,23 @@ def test_recent_context_text_empty_store_says_so(tmp_path: Path) -> None:
     assert not text.strip().startswith("{")
 
 
+def test_recent_context_hook_format_is_sessionstart_hook_json(tmp_path: Path) -> None:
+    """Verified live on Claude Code 2.1.289: plain text from an mcp_tool hook
+    is recorded but never shown to the model; only JSON additionalContext is.
+    The payload must be the hook-output object and nothing else, or Claude
+    Code's schema validation rejects it."""
+    env = _test_env(tmp_path)
+    stored = remember_note_impl("Session handoff", "paused mid auth refresh login", kind="handoff", environ=env)
+
+    payload = recent_context_impl(format="hook", environ=env)
+
+    assert set(payload) == {"hookSpecificOutput"}
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    context = payload["hookSpecificOutput"]["additionalContext"]
+    assert stored["item"]["item_id"] in _line_with(context, "Session handoff")
+    assert "paused mid auth refresh login" in context
+
+
 def test_recent_context_rejects_unknown_format(tmp_path: Path) -> None:
     env = _test_env(tmp_path)
     with pytest.raises(ValueError):
@@ -352,3 +369,20 @@ def test_mcp_recent_context_text_reaches_client_as_plain_text(tmp_path: Path) ->
     assert json_result.structuredContent["mode"] == "recent_context"
     schema = next(t for t in tools.tools if t.name == "recent_context").outputSchema
     assert "result" not in (schema or {}).get("properties", {})
+
+
+def test_mcp_recent_context_hook_reaches_client_as_hook_json(tmp_path: Path) -> None:
+    """What an mcp_tool hook reads: text content that parses as hook JSON."""
+    env = _test_env(tmp_path)
+    remember_note_impl("Session handoff", "paused mid auth refresh login", kind="handoff", environ=env)
+    server = build_server(make_local_dispatcher(default_environ=env))
+
+    async def _call() -> Any:
+        async with create_connected_server_and_client_session(server) as session:
+            return await session.call_tool("recent_context", {"format": "hook"})
+
+    result = asyncio.run(_call())
+
+    assert not result.isError
+    hook_output = json.loads(result.content[0].text)
+    assert "Session handoff" in hook_output["hookSpecificOutput"]["additionalContext"]

@@ -11,13 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`recent_context(format="text")`** returns the same recency window as
   compact plain text: a header, then one line per note with date, kind,
   title and its `hydrate("<id>", "<scope>")` handle, followed by an indented
-  summary. It exists for Claude Code `SessionStart` hooks: an `mcp_tool` hook's
-  text is read like command stdout, and output that starts with `{` and ends
-  with `}` is parsed as hook-control JSON, so the default JSON payload never
-  reached the context. `CLIENT_INTEGRATIONS` now ships a ready
-  `SessionStart` (`matcher: "compact"`) snippet that re-injects recent memory
-  after every compaction. The default `format="json"` output and its output
-  schema are unchanged.
+  summary. On real notes it is about 20% of the JSON size.
+- **`recent_context(format="hook")`** wraps that text as Claude Code
+  `SessionStart` hook output (`hookSpecificOutput.additionalContext`).
+  `CLIENT_INTEGRATIONS` ships a ready `SessionStart` (`matcher: "compact"`)
+  `mcp_tool` snippet that re-injects recent memory after every compaction.
+  Verified end to end on Claude Code 2.1.289: an `mcp_tool` hook's plain text
+  is recorded in the transcript but never shown to the model, while its JSON
+  `additionalContext` is. The default JSON payload never reached the
+  context either, because it is not hook-output JSON. The default
+  `format="json"` output and its output schema are unchanged.
 
 ### Changed
 - Minimum `mcp` raised from 1.12.4 to 1.19.0. Returning bare text content

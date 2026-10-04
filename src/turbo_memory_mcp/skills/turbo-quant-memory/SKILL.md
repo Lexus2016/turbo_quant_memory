@@ -49,6 +49,8 @@ claude mcp add --scope project tqmemory -- turbo-memory-mcp serve
 
 Any other client (Cursor, OpenCode, Antigravity, Kimi Code) takes the same server under its own config format — merge `{"tqmemory": {"command": "turbo-memory-mcp", "args": ["serve"]}}` into its MCP server map. Hermes runs a systemd gateway: add the same entry under `mcp_servers:` in `~/.hermes/config.yaml`, then `systemctl --user restart hermes-gateway`. Per-client details: <https://github.com/Lexus2016/turbo_quant_memory/blob/main/CLIENT_INTEGRATIONS.md>. Restart the client afterwards.
 
+**Claude Code, optional:** offer (do not silently add; it edits the user's settings) a `SessionStart` hook with `"matcher": "compact"` and `{"type": "mcp_tool", "server": "tqmemory", "tool": "recent_context", "input": {"format": "hook", "limit": 5}}`. It re-injects recent notes after every compaction. Use `format: "hook"`: an `mcp_tool` hook's plain text never reaches the model, only its JSON `additionalContext` does. The full snippet is in CLIENT_INTEGRATIONS.md.
+
 ### 2.4 Verify and index
 
 1. After the client restarts, call `health()` — expect `status: "ok"`.
@@ -60,7 +62,7 @@ Any other client (Cursor, OpenCode, Antigravity, Kimi Code) takes the same serve
 ### 3.1 Session-start ritual
 
 1. Call `health()` + `server_info()` (migrations check — see §1).
-2. Call `recent_context()` FIRST — a query-free bootstrap, **including session `handoff` notes** that a plain `semantic_search` hides by default. Ordering: `project`/`global` scopes are pure recency (newest first); in `hybrid` the current project's notes fill the window first and other projects' promoted notes only backfill leftover slots.
+2. Call `recent_context()` FIRST — a query-free bootstrap, **including session `handoff` notes** that a plain `semantic_search` hides by default. Ordering: `project`/`global` scopes are pure recency (newest first); in `hybrid` the current project's notes fill the window first and other projects' promoted notes only backfill leftover slots. `recent_context(format="text")` returns the same window as one line per note plus a short summary, about 5× smaller than the JSON.
 3. For a specific task: `semantic_search(query="<task topic>", scope="hybrid")`. Asking "what did we decide/learn about X"? Pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks. Recovering a handoff by query? Pass `tier_filter=["episodic"]`.
 
 ### 3.2 Memory writing discipline

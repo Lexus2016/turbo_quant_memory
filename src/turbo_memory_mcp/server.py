@@ -30,6 +30,7 @@ from .contracts import (
     build_health_payload,
     build_list_secrets_payload,
     build_note_write_payload,
+    build_recent_context_hook_payload,
     build_recent_context_item_payload,
     build_recent_context_payload,
     build_scope_payload,
@@ -427,10 +428,11 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         surface promoted cross-project knowledge.
         tier_filter: defaults to all tiers (so handoffs are included). Pass e.g.
         ["durable"] to exclude episodic session notes.
-        format: 'json' (default) or 'text' — compact plain text, one line per
-        note with its hydrate handle. Use 'text' from a Claude Code
-        SessionStart mcp_tool hook: hooks treat JSON output as control data,
-        not context.
+        format: 'json' (default); 'text' — compact plain text, one line per
+        note with its hydrate handle (about 20% of the JSON size); 'hook' — the
+        same text as Claude Code SessionStart hook output. Use 'hook' from a
+        SessionStart mcp_tool hook: Claude Code shows the model only an
+        mcp_tool hook's JSON additionalContext, never its plain text.
         """
         result = dispatcher(
             "recent_context",
@@ -1665,8 +1667,9 @@ def recent_context_impl(
     semantic_search hides them. This closes the cold-start gap: a fresh session
     can recover "where did I leave off" without guessing a query.
 
-    format="text" returns the same window as plain text (see
-    render_recent_context_text) for injection by a SessionStart hook.
+    format="text" returns the same window as compact plain text (see
+    render_recent_context_text); format="hook" wraps that text as SessionStart
+    hook output for a Claude Code mcp_tool hook.
     """
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     resolved_scope = scope.strip().lower()
@@ -1754,6 +1757,8 @@ def recent_context_impl(
     )
     if resolved_format == "text":
         return render_recent_context_text(payload)
+    if resolved_format == "hook":
+        return build_recent_context_hook_payload(render_recent_context_text(payload))
     return payload
 
 

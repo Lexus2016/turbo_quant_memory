@@ -20,7 +20,7 @@ DEFAULT_QUERY_MODE = "project"
 QUERY_MODES = ("project", "global", "hybrid")
 INDEX_MODES = ("full", "incremental")
 HYDRATE_MODES = ("default", "related")
-RECENT_CONTEXT_FORMATS = ("json", "text")
+RECENT_CONTEXT_FORMATS = ("json", "text", "hook")
 PHASE_1_TOOL_NAMES = ("health", "server_info", "list_scopes", "self_test")
 PHASE_2_TOOL_NAMES = (*PHASE_1_TOOL_NAMES, "remember_note", "promote_note", "search_memory")
 PHASE_3_TOOL_NAMES = (*PHASE_2_TOOL_NAMES, "index_paths")
@@ -351,7 +351,8 @@ def render_recent_context_text(payload: Mapping[str, Any]) -> str:
     items = list(payload["items"])
     if not items:
         return f"# tqmemory recent_context: no notes yet (scope={scope})"
-    lines = [f"# tqmemory recent_context: {len(items)} notes, scope={scope}, newest first"]
+    noun = "note" if len(items) == 1 else "notes"
+    lines = [f"# tqmemory recent_context: {len(items)} {noun}, scope={scope}, newest first"]
     for item in items:
         title = " ".join(str(item["title"]).split())
         lines.append(
@@ -361,6 +362,16 @@ def render_recent_context_text(payload: Mapping[str, Any]) -> str:
         if item.get("compressed_summary"):
             lines.append(f"  {item['compressed_summary']}")
     return "\n".join(lines)
+
+
+def build_recent_context_hook_payload(text: str) -> dict[str, Any]:
+    """Wrap rendered recent_context text as Claude Code SessionStart hook output.
+
+    Verified on Claude Code 2.1.289: an mcp_tool hook's plain-text result is
+    recorded but never shown to the model, while JSON `additionalContext` is.
+    Any extra top-level key would fail Claude Code's hook-output validation.
+    """
+    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
 
 
 def build_hydrated_markdown_item_payload(
@@ -598,6 +609,7 @@ __all__ = [
     "build_list_secrets_payload",
     "build_note_item_payload",
     "build_note_write_payload",
+    "build_recent_context_hook_payload",
     "build_recent_context_item_payload",
     "build_recent_context_payload",
     "build_scope_payload",
