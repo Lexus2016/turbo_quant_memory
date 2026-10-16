@@ -73,6 +73,7 @@ _TEMP_SUFFIX = ".tmp"
 _LOCK_SUFFIX = ".lock"
 _KIND_WATERMARK = "watermark"
 _MAX_SNAPSHOT_PASSES = 3
+_MAX_DIFF_LINES = 2000
 _RECORDABLE_ATTRIBUTIONS = frozenset({"inferred", "unknown"})
 _ALL_ATTRIBUTIONS = frozenset({"inferred", "unknown", "restore"})
 _KINDS = frozenset({"content", "deletion"})
@@ -266,10 +267,11 @@ class Journal:
     def restore(self, rel_path: str, version: int | Literal["HEAD"]) -> dict[str, Any]:
         """Write ``version`` (a version id, or ``"HEAD"`` for the committed blob) back to ``rel_path``.
 
-        Nothing is written unless the target content is read successfully first. Under a per-workspace lock the
-        destination is snapshotted with attribution ``"restore"`` until a re-read after the snapshot matches it
-        (at most three passes), then replaced, so the returned undo id holds the content that was overwritten.
-        A destination too large to snapshot, or one that never settles, is refused without writing.
+        Nothing is written unless the target content is read successfully first, and a target larger than the
+        per-file limit is refused: the restored file could not be snapshotted, so the restore could not be undone.
+        Under a per-workspace lock the destination is snapshotted with attribution ``"restore"`` until a re-read
+        after the snapshot matches it (at most three passes), then replaced, so the returned undo id holds the
+        content that was overwritten. A destination too large to snapshot, or one that never settles, is refused.
         """
 
         rel = self._relative(rel_path)
@@ -280,6 +282,8 @@ class Journal:
             target = self.read_version(version)
         else:
             raise ValueError("version must be a version id or 'HEAD'")
+        if len(target) > self._limits.max_file_bytes:
+            raise ValueError(f"{rel} is larger than the per-file journal limit; restoring it could not be undone")
 
         dest = self.workspace.root / rel
         if dest.is_dir():
@@ -290,13 +294,12 @@ class Journal:
             mode = stat.S_IMODE(dest.stat().st_mode) if dest.is_file() else None
             dest.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(dest, target, mode=mode)
-        added, removed = _line_diff(old, target)
         return {
             "status": "ok",
             "path": rel,
             "restored_version": version,
             "previous_version_id": snapshot.version_id if snapshot is not None else None,
-            "diff": {"added": added, "removed": removed},
+            "diff": _diff_summary(old, target),
         }
 
     def _snapshot_until_stable(self, rel: str, dest: Path) -> tuple[VersionRecord | None, bytes | None]:
@@ -895,16 +898,31 @@ def _release(fd: int) -> None:
         pass  # closing the descriptor releases the lock anyway
 
 
-def _line_diff(old: bytes, new: bytes) -> tuple[int, int]:
-    """Return ``(added, removed)`` line counts from ``old`` to ``new``."""
+def _diff_summary(old: bytes, new: bytes) -> dict[str, Any]:
+    """Describe what a restore changed. Line counts are exact up to ``_MAX_DIFF_LINES``; beyond that they are ``None``.
 
-    old_lines = old.decode("utf-8", errors="replace").splitlines()
-    new_lines = new.decode("utf-8", errors="replace").splitlines()
-    added = removed = 0
-    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("replace", "delete"):
-            removed += i2 - i1
-        if tag in ("replace", "insert"):
-            added += j2 - j1
-    return added, removed
+    The statistics are advisory and never fail the restore that they describe.
+    """
+
+    summary: dict[str, Any] = {"added": None, "removed": None, "bytes_before": len(old), "bytes_after": len(new)}
+    if old == new:
+        summary["added"] = summary["removed"] = 0
+        return summary
+    try:
+        old_lines = old.decode("utf-8", errors="replace").splitlines()
+        new_lines = new.decode("utf-8", errors="replace").splitlines()
+        if len(old_lines) > _MAX_DIFF_LINES or len(new_lines) > _MAX_DIFF_LINES:
+            return summary
+        added = removed = 0
+        matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag in ("replace", "delete"):
+                removed += i2 - i1
+            if tag in ("replace", "insert"):
+                added += j2 - j1
+    except Exception as exc:  # the diff is advisory; the restore has already been written
+        _LOG.warning("restore diff statistics unavailable: %s", exc)
+        return summary
+    summary["added"] = added
+    summary["removed"] = removed
+    return summary

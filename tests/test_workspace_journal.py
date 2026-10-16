@@ -146,7 +146,8 @@ def test_restore_is_undoable(repo: Path, workspace: Workspace, db: CoordinationD
     snapshot_row = next(entry for entry in journal.history("story.txt") if entry.version_id == snapshot)
     assert snapshot_row.attribution == "restore"
     assert journal.read_version(snapshot) == b"v2 text\nsecond line\n"
-    assert result["diff"] == {"added": 1, "removed": 2}
+    assert result["diff"]["added"] == 1
+    assert result["diff"]["removed"] == 2
 
     journal.restore("story.txt", snapshot)
 
@@ -176,7 +177,8 @@ def test_restore_deleted_file_from_last_version_and_from_head(
 
     assert tracked.read_text(encoding="utf-8") == "committed\n"
     assert by_head["restored_version"] == "HEAD"
-    assert by_head["diff"] == {"added": 1, "removed": 0}
+    assert by_head["diff"]["added"] == 1
+    assert by_head["diff"]["removed"] == 0
 
 
 def test_restore_rejects_path_outside_workspace(
@@ -917,7 +919,12 @@ def _fake_git_failure(stderr: str) -> Any:
     ],
 )
 def test_head_restore_of_a_caller_mistake_is_a_value_error(
-    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+    repo: Path,
+    workspace: Workspace,
+    db: CoordinationDB,
+    storage_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
 ) -> None:
     journal = _journal(workspace, db, storage_root)
     monkeypatch.setattr(journal_module.subprocess, "run", _fake_git_failure(stderr))
@@ -935,7 +942,12 @@ def test_head_restore_of_a_caller_mistake_is_a_value_error(
     ],
 )
 def test_head_restore_of_a_damaged_git_object_is_a_journal_fault(
-    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+    repo: Path,
+    workspace: Workspace,
+    db: CoordinationDB,
+    storage_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
 ) -> None:
     journal = _journal(workspace, db, storage_root)
     monkeypatch.setattr(journal_module.subprocess, "run", _fake_git_failure(stderr))
@@ -964,3 +976,75 @@ def test_head_read_runs_git_in_the_c_locale(
     assert env is not None
     assert env["LC_ALL"] == "C"
     assert env["LANGUAGE"] == "C"
+
+
+def test_restore_of_large_repetitive_files_is_fast(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "big.txt"
+    old_text = "same line\n" * 10_000
+    target.write_text(old_text, encoding="utf-8")
+    saved = journal.record("big.txt", now=T0)
+    assert saved is not None
+    target.write_text("same line\n" * 9_999 + "other line\n", encoding="utf-8")
+
+    started = time.perf_counter()
+    result = journal.restore("big.txt", saved.version_id)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert target.read_text(encoding="utf-8") == old_text
+    assert result["diff"]["added"] is None
+    assert result["diff"]["removed"] is None
+    assert result["diff"]["bytes_after"] == len(old_text.encode("utf-8"))
+
+
+def test_restore_of_identical_content_reports_no_changes(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "same.txt"
+    target.write_text("steady\n", encoding="utf-8")
+    saved = journal.record("same.txt", now=T0)
+    assert saved is not None
+
+    result = journal.restore("same.txt", saved.version_id)
+
+    assert result["diff"]["added"] == 0
+    assert result["diff"]["removed"] == 0
+
+
+def test_restore_never_fails_because_the_diff_step_failed(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "stats.txt"
+    target.write_text("one\n", encoding="utf-8")
+    saved = journal.record("stats.txt", now=T0)
+    assert saved is not None
+    target.write_text("two\n", encoding="utf-8")
+
+    def broken_matcher(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("diff engine broke")
+
+    monkeypatch.setattr(journal_module.difflib, "SequenceMatcher", broken_matcher)
+    result = journal.restore("stats.txt", saved.version_id)
+
+    assert target.read_text(encoding="utf-8") == "one\n"
+    assert result["diff"]["added"] is None
+
+
+def test_restore_refuses_target_over_per_file_limit_and_writes_nothing(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root, JournalLimits(max_file_bytes=64))
+    (repo / "big.txt").write_text("x" * 200, encoding="utf-8")
+    _git(repo, "add", "big.txt")
+    _git(repo, "commit", "-q", "-m", "big file")
+    (repo / "big.txt").write_text("small\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="per-file journal limit"):
+        journal.restore("big.txt", "HEAD")
+
+    assert (repo / "big.txt").read_text(encoding="utf-8") == "small\n"
