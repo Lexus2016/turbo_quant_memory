@@ -32,8 +32,10 @@ def _result_payload(result: Any) -> dict[str, Any]:
 async def _collect_server_contract() -> dict[str, Any]:
     # Disable the singleton daemon so this subprocess does not become a proxy
     # to some unrelated daemon already running on the developer's machine
-    # (which would return that daemon's server_info, not ours).
-    env = {**os.environ, "TQMEMORY_DAEMON_DISABLE": "1"}
+    # (which would return that daemon's server_info, not ours). Workspace
+    # coordination is off too: this server uses the real storage root, and the
+    # contract checks here must not leave a coordination database behind there.
+    env = {**os.environ, "TQMEMORY_DAEMON_DISABLE": "1", "TQMEMORY_WORKSPACE_DISABLE": "1"}
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "turbo_memory_mcp", "serve"],
