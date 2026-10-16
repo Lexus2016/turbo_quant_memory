@@ -17,6 +17,31 @@ if TYPE_CHECKING:
     from .workspace.models import Workspace
 
 
+_SQLITE_MAX_INT = 2**63 - 1
+
+
+def _positive_sqlite_int(text: str) -> int:
+    """Parse an id or limit that SQLite can store; anything else is an argument error (exit 2)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be an integer, not {text!r}") from None
+    if not 1 <= value <= _SQLITE_MAX_INT:
+        raise argparse.ArgumentTypeError(f"must be between 1 and {_SQLITE_MAX_INT}, not {text!r}")
+    return value
+
+
+def _version_argument(text: str) -> int | str:
+    if text == "HEAD":
+        return text
+    try:
+        return _positive_sqlite_int(text)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"must be HEAD or a version id between 1 and {_SQLITE_MAX_INT}, not {text!r}"
+        ) from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="turbo-memory-mcp",
@@ -203,7 +228,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     files_log_parser.add_argument("path", metavar="PATH", help="File path, relative to the current directory.")
     files_log_parser.add_argument(
-        "--limit", type=int, default=20, help="Maximum number of versions to list (default 20)."
+        "--limit",
+        type=_positive_sqlite_int,
+        default=20,
+        help="Maximum number of versions to list (default 20).",
     )
     files_log_parser.set_defaults(handler=_handle_files_log)
 
@@ -217,7 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     files_restore_parser.add_argument("path", metavar="PATH", help="File path, relative to the current directory.")
     files_restore_parser.add_argument(
-        "version", metavar="VERSION", help="A version id from 'files log', or HEAD for the committed content."
+        "version",
+        metavar="VERSION",
+        type=_version_argument,
+        help="A version id from 'files log', or HEAD for the committed content.",
     )
     files_restore_parser.set_defaults(handler=_handle_files_restore)
 
@@ -761,14 +792,15 @@ def _workspace_journal() -> Iterator[tuple[Workspace, Journal]]:
 
 
 def _files_action(action: Callable[[Workspace, Journal], int]) -> int:
-    """Run a ``files`` action; every expected failure becomes one stderr line and exit 2."""
-    from .workspace.db import CoordinationUnavailable
+    """Run a ``files`` action; any failure becomes one stderr line and exit 2, never a traceback.
 
+    KeyboardInterrupt and SystemExit are not Exception subclasses and pass through unchanged.
+    """
     try:
         with _workspace_journal() as (workspace, journal):
             return action(workspace, journal)
-    except (ValueError, OSError, CoordinationUnavailable) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"error: {exc or type(exc).__name__}", file=sys.stderr)
         return 2
 
 
@@ -796,14 +828,7 @@ def _handle_files_restore(args: argparse.Namespace) -> int:
 
     def run(workspace: Workspace, journal: Journal) -> int:
         rel = to_relative(workspace, Path.cwd() / args.path)
-        if args.version == "HEAD":
-            result = journal.restore(rel, "HEAD")
-        else:
-            try:
-                version_id = int(args.version)
-            except ValueError:
-                raise ValueError(f"version must be a version id or HEAD, not {args.version!r}") from None
-            result = journal.restore(rel, version_id)
+        result = journal.restore(rel, args.version)
         previous = result["previous_version_id"]
         if previous is None:
             print(f"restored {rel} to {args.version} (no previous content to save)")

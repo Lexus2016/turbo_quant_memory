@@ -178,11 +178,12 @@ def test_files_restore_rejects_malformed_version_exit_2(
 ) -> None:
     _seed(in_repo, storage_root, "story.txt", [b"v1\n"])
 
-    exit_code = main(["files", "restore", "story.txt", "banana"])
+    with pytest.raises(SystemExit) as raised:
+        main(["files", "restore", "story.txt", "banana"])
     captured = capsys.readouterr()
 
-    assert exit_code == 2
-    assert "version must be a version id or HEAD" in captured.err
+    assert raised.value.code == 2
+    assert "must be HEAD or a version id" in captured.err
     assert "Traceback" not in captured.err
 
 
@@ -217,3 +218,38 @@ def test_disabled_feature_exits_2_without_traceback(
     assert exit_code == 2
     assert "TQMEMORY_WORKSPACE_DISABLE" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_unresolvable_project_root_exits_2_without_traceback(
+    in_repo: Path, storage_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TQMEMORY_PROJECT_ROOT", "~no_such_user_for_tqmemory")
+
+    exit_code = main(["files", "log", "tracked.txt"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "Traceback" not in err
+    assert err.startswith("error: ")
+    assert len(err.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["files", "restore", "tracked.txt", "9223372036854775808"],
+        ["files", "restore", "tracked.txt", "0"],
+        ["files", "log", "tracked.txt", "--limit", "9223372036854775808"],
+        ["files", "log", "tracked.txt", "--limit", "0"],
+    ],
+)
+def test_out_of_range_integers_exit_2_at_parse_time(
+    in_repo: Path, storage_root: Path, argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(argv)
+    err = capsys.readouterr().err
+
+    assert raised.value.code == 2
+    assert "9223372036854775807" in err
+    assert "Traceback" not in err
