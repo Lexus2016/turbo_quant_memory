@@ -139,8 +139,22 @@ _WORKSPACE_INSTRUCTIONS = (
     " When several agents share one working tree: call workspace_status at session start, "
     "announce_work when starting a feature and finish_work when done; read the `workspace` field "
     "whenever a response carries it and re-read any file another session changed before writing it; "
-    "file_history and restore_file recover overwritten files."
+    "file_history and restore_file recover overwritten files. Call workspace_status before editing a file "
+    "another session may have touched, and before every commit while other sessions are live. While other "
+    "sessions are live, never run destructive git commands (checkout -- ., reset --hard, stash, clean, branch "
+    "switch) without the human's explicit confirmation."
 )
+
+
+HOOK_OUTPUT_KEY = "hookSpecificOutput"
+_TEXT_DIGEST_MORE = "[workspace] call workspace_status for details"
+
+
+def _text_digest(digest: Mapping[str, Any]) -> str:
+    """Pending workspace lines appended to a plain-text tool result."""
+
+    lines = [f"[workspace] {line}" for line in digest.get("new", [])]
+    return "\n\n" + "\n".join([*lines, _TEXT_DIGEST_MORE])
 
 
 def _describe_workspace(workspace: WorkspaceRuntime | None) -> dict[str, Any]:
@@ -344,17 +358,20 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         workspace.touch()
 
     def _decorate(result: Any) -> Any:
-        """Presence on every memory call; the digest is attached to dict results only. Fails open to the result."""
+        """Presence on every memory call. Pending lines go into dict results as a field and into text results as
+        trailing lines. Fails open to the result unchanged."""
         if workspace is None:
             return result
         try:
             _begin_workspace_call()
-            if not isinstance(result, dict):
-                return result
             digest = workspace.digest()
             if digest is None:
                 return result
-            return {**result, "workspace": digest}
+            if isinstance(result, str):
+                return result + _text_digest(digest)
+            if isinstance(result, dict) and HOOK_OUTPUT_KEY not in result:
+                return {**result, "workspace": digest}
+            return result
         except Exception:
             return result
 

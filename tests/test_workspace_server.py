@@ -513,3 +513,54 @@ def test_failed_session_lookup_never_claims_the_writer_ended(
     assert "ended" not in version["writer_hint"]
     assert "codex" not in version["writer_hint"]
     assert "announced area" in version["writer_hint"]
+
+
+def test_text_result_carries_pending_workspace_lines(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("recent_context", {"format": "text"})])
+
+    text = result.content[0].text
+    assert "[workspace] " in text
+    assert "codex" in text
+    assert text.rstrip().endswith("[workspace] call workspace_status for details")
+
+
+def test_text_result_without_pending_events_is_unchanged(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("recent_context", {"format": "text"})])
+
+    assert "[workspace]" not in result.content[0].text
+
+
+def test_hook_payload_stays_bare_with_pending_events(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("recent_context", {"format": "hook"})])
+
+    assert set(_payload(result)) == {"hookSpecificOutput"}
+
+
+def test_server_instructions_carry_the_coordination_rules(env: dict[str, str]) -> None:
+    text = build_server(make_local_dispatcher(default_environ=env)).instructions or ""
+
+    assert "workspace_status" in text
+    assert "before editing a file another session may have touched" in text
+    assert "before every commit" in text
+    assert "checkout -- ." in text
+    assert "reset --hard" in text
+    assert "explicit confirmation" in text
