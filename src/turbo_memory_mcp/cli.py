@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
+
+if TYPE_CHECKING:
+    from .workspace.journal import Journal
+    from .workspace.models import Workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -178,6 +185,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report planned writes without touching disk.",
     )
     skill_install_parser.set_defaults(handler=_handle_skill_install)
+
+    files_parser = subparsers.add_parser(
+        "files",
+        help="Inspect and restore journaled versions of workspace files.",
+        description=(
+            "Inspect and restore journaled versions of files in the current git "
+            "workspace. Runs directly against the coordination database; no daemon "
+            "or running session is needed."
+        ),
+    )
+    files_subparsers = files_parser.add_subparsers(dest="files_command", metavar="action")
+    files_log_parser = files_subparsers.add_parser(
+        "log",
+        help="List recorded versions of a file, newest first.",
+        description="List recorded versions of a file in the current workspace, newest first.",
+    )
+    files_log_parser.add_argument("path", metavar="PATH", help="File path, relative to the current directory.")
+    files_log_parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum number of versions to list (default 20)."
+    )
+    files_log_parser.set_defaults(handler=_handle_files_log)
+
+    files_restore_parser = files_subparsers.add_parser(
+        "restore",
+        help="Restore a file to a recorded version or to its committed content.",
+        description=(
+            "Restore a file to a recorded version (an id from 'files log') or to HEAD. "
+            "The overwritten content is saved as a new version, so the restore can be undone."
+        ),
+    )
+    files_restore_parser.add_argument("path", metavar="PATH", help="File path, relative to the current directory.")
+    files_restore_parser.add_argument(
+        "version", metavar="VERSION", help="A version id from 'files log', or HEAD for the committed content."
+    )
+    files_restore_parser.set_defaults(handler=_handle_files_restore)
 
     return parser
 
@@ -686,6 +728,90 @@ def _handle_skill_install(args: argparse.Namespace) -> int:
         print(f"\n{failures} target(s) failed.", file=sys.stderr)
         return 1
     return 0
+
+
+@contextmanager
+def _workspace_journal() -> Iterator[tuple[Workspace, Journal]]:
+    """Open the coordination db and journal for the cwd's workspace; close the db on exit.
+
+    No runtime, session row or daemon is involved. Raises ``ValueError`` when the feature is
+    disabled or the workspace may not be journaled, and ``CoordinationUnavailable`` or
+    ``OSError`` when the database cannot be opened.
+    """
+    from .store import resolve_storage_root
+    from .workspace.db import CoordinationDB
+    from .workspace.journal import Journal, JournalLimits
+    from .workspace.paths import ENV_WORKSPACE_DISABLE, blobs_dir, coord_db_path, is_disabled, resolve_workspace
+
+    env = os.environ
+    if is_disabled(env):
+        raise ValueError(f"workspace coordination is disabled by {ENV_WORKSPACE_DISABLE}")
+    workspace = resolve_workspace(Path.cwd(), env)
+    if workspace.journal_refusal is not None:
+        raise ValueError(f"file history is unavailable in this directory: {workspace.journal_refusal}")
+    storage_root = resolve_storage_root(env)
+    limits = JournalLimits.from_environ(env)
+    db = CoordinationDB.open(coord_db_path(storage_root, workspace.project_id))
+    try:
+        journal = Journal(workspace, db, blobs_dir(storage_root, workspace.project_id), limits)
+        journal.rebuild_index_if_empty()
+        yield workspace, journal
+    finally:
+        db.close()
+
+
+def _files_action(action: Callable[[Workspace, Journal], int]) -> int:
+    """Run a ``files`` action; every expected failure becomes one stderr line and exit 2."""
+    from .workspace.db import CoordinationUnavailable
+
+    try:
+        with _workspace_journal() as (workspace, journal):
+            return action(workspace, journal)
+    except (ValueError, OSError, CoordinationUnavailable) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _handle_files_log(args: argparse.Namespace) -> int:
+    from .workspace.paths import to_relative
+
+    def run(workspace: Workspace, journal: Journal) -> int:
+        from datetime import UTC, datetime
+
+        rel = to_relative(workspace, Path.cwd() / args.path)
+        versions = journal.history(rel, limit=args.limit)
+        if not versions:
+            print(f"no versions recorded for {rel}")
+            return 0
+        for version in versions:
+            when = datetime.fromtimestamp(version.observed_at, tz=UTC).isoformat(timespec="seconds")
+            print(f"{version.version_id}  {when}  {version.kind}  {version.size} B  {version.attribution}")
+        return 0
+
+    return _files_action(run)
+
+
+def _handle_files_restore(args: argparse.Namespace) -> int:
+    from .workspace.paths import to_relative
+
+    def run(workspace: Workspace, journal: Journal) -> int:
+        rel = to_relative(workspace, Path.cwd() / args.path)
+        if args.version == "HEAD":
+            result = journal.restore(rel, "HEAD")
+        else:
+            try:
+                version_id = int(args.version)
+            except ValueError:
+                raise ValueError(f"version must be a version id or HEAD, not {args.version!r}") from None
+            result = journal.restore(rel, version_id)
+        previous = result["previous_version_id"]
+        if previous is None:
+            print(f"restored {rel} to {args.version} (no previous content to save)")
+        else:
+            print(f"restored {rel} to {args.version} (previous content saved as version {previous})")
+        return 0
+
+    return _files_action(run)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
