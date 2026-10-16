@@ -18,27 +18,7 @@ from turbo_memory_mcp.server import build_current_project_payload
 from turbo_memory_mcp.store import resolve_storage_root
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TOOL_NAMES = [
-    "health",
-    "server_info",
-    "list_scopes",
-    "self_test",
-    "remember_note",
-    "promote_note",
-    "deprecate_note",
-    "semantic_search",
-    "hydrate",
-    "index_paths",
-    "lint_knowledge_base",
-    "link_entities",
-    "unlink_entities",
-    "get_related_entities",
-    "set_secret",
-    "get_secret",
-    "list_secrets",
-    "delete_secret",
-    "recent_context",
-]
+EXPECTED_TOOL_NAMES = list(CURRENT_TOOL_NAMES)
 
 
 def _result_payload(result: Any) -> dict[str, Any]:
@@ -143,7 +123,7 @@ def test_self_test_summarises_namespace_contract() -> None:
     install_contract = build_install_contract()
 
     assert payload["status"] == "ok"
-    assert payload["tool_count"] == 19
+    assert payload["tool_count"] == len(CURRENT_TOOL_NAMES)
     assert payload["tool_names"] == EXPECTED_TOOL_NAMES
     assert payload["runtime_command"] == "turbo-memory-mcp serve"
     assert payload["package_name"] == "turbo-quant-memory"

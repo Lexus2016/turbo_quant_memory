@@ -10,7 +10,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.types import CallToolResult, TextContent
 
@@ -85,6 +85,11 @@ from .store import (
     resolve_storage_root,
 )
 from .telemetry import build_usage_snapshot, record_hydration_usage, record_semantic_search_usage
+from .workspace.journal import Journal
+from .workspace.models import VersionRecord
+from .workspace.paths import to_relative
+from .workspace.runtime import WorkspaceRuntime
+from .workspace.status import iso_time
 
 _cached_bootstrap: BootstrapResult | None = None
 _auto_migration_result: str | None = None
@@ -130,7 +135,89 @@ _PROJECT_IDENTITY_ENV_KEYS: tuple[str, ...] = (
 )
 
 
-def build_server(dispatcher: Dispatcher) -> MCPServer:
+WORKSPACE_DISABLED_REASON = "TQMEMORY_WORKSPACE_DISABLE is set"
+_WORKSPACE_INSTRUCTIONS = (
+    " When several agents share one working tree: call workspace_status at session start, "
+    "announce_work when starting a feature and finish_work when done; read the `workspace` field "
+    "whenever a response carries it and re-read any file another session changed before writing it; "
+    "file_history and restore_file recover overwritten files."
+)
+
+
+def _describe_workspace(workspace: WorkspaceRuntime | None) -> dict[str, Any]:
+    """The ``workspace`` block of health and server_info; fails open to a degraded block."""
+
+    if workspace is None:
+        return _fallback_workspace_block(
+            enabled=False, state="disabled", reason=WORKSPACE_DISABLED_REASON
+        )
+    try:
+        return workspace.describe()
+    except Exception as exc:
+        return _fallback_workspace_block(
+            enabled=True, state="degraded", reason=str(exc) or type(exc).__name__
+        )
+
+
+def _fallback_workspace_block(*, enabled: bool, state: str, reason: str) -> dict[str, Any]:
+    """Same keys as WorkspaceRuntime.describe(), for when no runtime can describe itself."""
+
+    return {
+        "enabled": enabled,
+        "state": state,
+        "reason": reason,
+        "workspace": None,
+        "db_path": None,
+        "live_sessions": None,
+        "journal": {"state": "off", "reason": None, "owner_session": None, "over_cap": False},
+        "coverage": None,
+    }
+
+
+def _workspace_journal(workspace: WorkspaceRuntime) -> tuple[Journal | None, str]:
+    journal = workspace.journal
+    if journal is not None:
+        return journal, ""
+    reason = workspace.workspace.journal_refusal or workspace.degraded_reason or "change journal is not running"
+    return None, reason
+
+
+def _version_view(record: VersionRecord) -> dict[str, Any]:
+    return {
+        "version_id": record.version_id,
+        "kind": record.kind,
+        "size": record.size,
+        "observed_at": iso_time(record.observed_at),
+        "attribution": record.attribution,
+        "session_id": record.session_id,
+    }
+
+
+def _file_history(workspace: WorkspaceRuntime, path: str, limit: int) -> dict[str, Any]:
+    journal, reason = _workspace_journal(workspace)
+    if journal is None:
+        return {"status": "unavailable", "reason": reason}
+    rel = to_relative(workspace.workspace, path.replace("\\", "/"))
+    records = journal.history(rel, limit)
+    return {"status": "ok", "path": rel, "versions": [_version_view(record) for record in records]}
+
+
+def _restore_file(workspace: WorkspaceRuntime, path: str, version: str) -> dict[str, Any]:
+    target: int | Literal["HEAD"]
+    if version == "HEAD":
+        target = "HEAD"
+    elif version.isdecimal():
+        target = int(version)
+    else:
+        return {"status": "error", "reason": "version must be a version id or HEAD"}
+    journal, reason = _workspace_journal(workspace)
+    if journal is None:
+        return {"status": "unavailable", "reason": reason}
+    rel = to_relative(workspace.workspace, path.replace("\\", "/"))
+    return journal.restore(rel, target)
+
+
+def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = None) -> MCPServer:
     mcp = MCPServer(
         SERVER_ID,
         instructions=(
@@ -143,27 +230,80 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
             "To exclude directories or files from indexing, create a .tqmemoryignore file "
             "in the project root with glob patterns (one per line, # for comments). "
             "Example patterns: 'workspace-*' skips dirs matching the glob, "
-            "'data/reports/*.md' skips specific paths."
+            "'data/reports/*.md' skips specific paths." + _WORKSPACE_INSTRUCTIONS
         ),
         json_response=True,
         log_level="ERROR",
     )
 
+    def _begin_workspace_call() -> None:
+        """Record the caller's client name once and refresh this session's activity. Never raises."""
+        if workspace is None:
+            return
+        try:
+            client = mcp.get_context().request_context.session.client_params.clientInfo
+            name, version = client.name, client.version
+        except (LookupError, AttributeError):
+            name, version = None, None
+        try:
+            workspace.note_client(name, version)
+            workspace.touch()
+        except Exception:
+            return
+
+    def _decorate(result: Any) -> Any:
+        """Attach the workspace digest to a memory tool's dict result. Fails open to the result unchanged."""
+        if workspace is None or not isinstance(result, dict):
+            return result
+        try:
+            _begin_workspace_call()
+            digest = workspace.digest()
+            if digest is None:
+                return result
+            return {**result, "workspace": digest}
+        except Exception:
+            return result
+
+    def _memory_call(tool: str, kwargs: Mapping[str, Any]) -> Any:
+        return _decorate(dispatcher(tool, kwargs))
+
+    def _with_workspace_block(result: Any) -> Any:
+        """health and server_info carry the workspace description; a digest, if any, is merged into it."""
+        if not isinstance(result, dict):
+            return result
+        block = _describe_workspace(workspace)
+        digest = result.get("workspace")
+        if isinstance(digest, dict):
+            block = {**block, **digest}
+        return {**result, "workspace": block}
+
+    def _workspace_call(action: Callable[[WorkspaceRuntime], dict[str, Any]]) -> dict[str, Any]:
+        """Run a workspace tool directly against the runtime. Never touches the memory dispatcher or its lock."""
+        if workspace is None:
+            return {"status": "disabled", "reason": WORKSPACE_DISABLED_REASON}
+        _begin_workspace_call()
+        try:
+            return action(workspace)
+        except ValueError as exc:
+            return {"status": "error", "reason": str(exc)}
+        except Exception as exc:
+            return {"status": "degraded", "reason": str(exc) or type(exc).__name__}
+
     @mcp.tool()
     def health() -> dict[str, Any]:
-        return dispatcher("health", {})
+        return _with_workspace_block(_memory_call("health", {}))
 
     @mcp.tool()
     def server_info() -> dict[str, Any]:
-        return dispatcher("server_info", {})
+        return _with_workspace_block(_memory_call("server_info", {}))
 
     @mcp.tool()
     def list_scopes() -> dict[str, Any]:
-        return dispatcher("list_scopes", {})
+        return _memory_call("list_scopes", {})
 
     @mcp.tool()
     def self_test() -> dict[str, Any]:
-        return dispatcher("self_test", {})
+        return _memory_call("self_test", {})
 
     @mcp.tool()
     def remember_note(
@@ -197,7 +337,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         ...) when it relates to a file, issue, or prior note — the response echoes
         the note's uri and hints this when the note still has no relations.
         """
-        return dispatcher(
+        return _memory_call(
             "remember_note",
             {
                 "title": title,
@@ -213,7 +353,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
 
     @mcp.tool()
     def promote_note(note_id: str) -> dict[str, Any]:
-        return dispatcher("promote_note", {"note_id": note_id})
+        return _memory_call("promote_note", {"note_id": note_id})
 
     @mcp.tool()
     def deprecate_note(
@@ -223,7 +363,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         replacement_scope: str | None = None,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        return dispatcher(
+        return _memory_call(
             "deprecate_note",
             {
                 "note_id": note_id,
@@ -258,7 +398,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         are asking "what did we decide/learn about X", pass
         ``source_filter="notes"``.
         """
-        return dispatcher(
+        return _memory_call(
             "semantic_search",
             {
                 "query": query,
@@ -275,7 +415,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         scope: str,
         mode: str = "default",
     ) -> dict[str, Any]:
-        return dispatcher(
+        return _memory_call(
             "hydrate",
             {"item_id": item_id, "scope": scope, "mode": mode},
         )
@@ -293,14 +433,14 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         ``workspace-*`` skips any directory matching the glob;
         ``data/reports/*.md`` skips files matching a path pattern.
         """
-        return dispatcher("index_paths", {"paths": paths, "mode": mode})
+        return _memory_call("index_paths", {"paths": paths, "mode": mode})
 
     @mcp.tool()
     def lint_knowledge_base(
         paths: list[str] | None = None,
         max_issues: int = 200,
     ) -> dict[str, Any]:
-        return dispatcher(
+        return _memory_call(
             "lint_knowledge_base",
             {"paths": paths, "max_issues": max_issues},
         )
@@ -319,7 +459,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
           - File: file://<relative_path> (relative to project root)
           - External: e.g. issue://BUG-404, task://TASK-101
         """
-        return dispatcher(
+        return _memory_call(
             "link_entities",
             {
                 "source_uri": source_uri,
@@ -341,7 +481,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         source_uri / target_uri use the same URI forms as link_entities:
         note://<note_id>, file://<relative/path>, issue://KEY, https://...
         """
-        return dispatcher(
+        return _memory_call(
             "unlink_entities",
             {
                 "source_uri": source_uri,
@@ -363,7 +503,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         issue://KEY, task://KEY, or https://... — the same URI forms link_entities
         accepts. Returns nothing for an entity that has no links yet.
         """
-        return dispatcher(
+        return _memory_call(
             "get_related_entities",
             {
                 "uri": uri,
@@ -383,7 +523,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         ``~/.turbo-quant-memory/projects/<project_id>/secrets/vault.tqv``
         and stay on this machine.
         """
-        return dispatcher("set_secret", {"name": name, "value": value})
+        return _memory_call("set_secret", {"name": name, "value": value})
 
     @mcp.tool()
     def get_secret(name: str) -> dict[str, Any]:
@@ -394,17 +534,17 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         no such name exists, or ``"error"`` with ``setup_hint`` when no
         master key is configured yet.
         """
-        return dispatcher("get_secret", {"name": name})
+        return _memory_call("get_secret", {"name": name})
 
     @mcp.tool()
     def list_secrets() -> dict[str, Any]:
         """List secret names in the active project. Never returns values."""
-        return dispatcher("list_secrets", {})
+        return _memory_call("list_secrets", {})
 
     @mcp.tool()
     def delete_secret(name: str) -> dict[str, Any]:
         """Delete a project secret by exact name."""
-        return dispatcher("delete_secret", {"name": name})
+        return _memory_call("delete_secret", {"name": name})
 
     # Annotated[CallToolResult, dict]: the output schema stays the plain dict
     # schema, while format="text" can return bare text content. A `dict | str`
@@ -434,7 +574,7 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
         SessionStart mcp_tool hook: Claude Code shows the model only an
         mcp_tool hook's JSON additionalContext, never its plain text.
         """
-        result = dispatcher(
+        result = _memory_call(
             "recent_context",
             {"scope": scope, "limit": limit, "tier_filter": tier_filter, "format": format},
         )
@@ -444,6 +584,51 @@ def build_server(dispatcher: Dispatcher) -> MCPServer:
                 structuredContent={"status": "ok", "mode": "recent_context", "format": "text", "text": result},
             )
         return result
+
+    @mcp.tool()
+    def announce_work(
+        feature: str,
+        areas: list[str] | None = None,
+        details: str | None = None,
+    ) -> dict[str, Any]:
+        """Tell the other agents in this working tree what you are changing.
+
+        feature: short name of the work. areas: workspace-relative files or directories
+        (globs allowed). Returns the peers whose announced areas overlap yours and recent
+        changes inside them. Inferred writers are guesses from announced areas, never facts.
+        """
+        return _workspace_call(lambda ws: ws.announce_work(feature, areas, details))
+
+    @mcp.tool()
+    def finish_work() -> dict[str, Any]:
+        """Clear the work this session announced with announce_work."""
+        return _workspace_call(lambda ws: ws.finish_work())
+
+    @mcp.tool()
+    def workspace_status() -> dict[str, Any]:
+        """Overview of the sessions sharing this working tree: peers, overlaps and recent file changes.
+
+        Call it at session start. Inferred writers are guesses from announced areas, never facts.
+        """
+        return _workspace_call(lambda ws: ws.status())
+
+    @mcp.tool()
+    def file_history(path: str, limit: int = 20) -> dict[str, Any]:
+        """Journaled versions of one file in this working tree, newest first.
+
+        Versions are snapshots taken while several sessions share the tree. Use restore_file
+        with a version id to bring one back; the overwritten content is kept as a new version.
+        """
+        return _workspace_call(lambda ws: _file_history(ws, path, limit))
+
+    @mcp.tool()
+    def restore_file(path: str, version: str) -> dict[str, Any]:
+        """Write a journaled version of one file back into the working tree.
+
+        version: a version id from file_history, or "HEAD" for the committed content.
+        The content being overwritten is kept as a new version, so the restore can be undone.
+        """
+        return _workspace_call(lambda ws: _restore_file(ws, path, version))
 
     return mcp
 
@@ -1134,34 +1319,49 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
         ready_event=ready,
     )
     listener.start()
+    workspace: WorkspaceRuntime | None = None
     try:
+        workspace = WorkspaceRuntime.start()
         _gate_primary_ready(ready)
-        build_server(dispatcher).run(transport="stdio")
+        build_server(dispatcher, workspace=workspace).run(transport="stdio")
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
         listener.stop()
         release_daemon_lock(endpoint)
+        _shutdown_workspace(workspace)
 
 
 def _run_proxy(bootstrap: BootstrapResult) -> None:
     client = bootstrap.client
     assert client is not None
     runtime = ProxyRuntime(client)
+    workspace: WorkspaceRuntime | None = None
     try:
-        build_server(runtime).run(transport="stdio")
+        workspace = WorkspaceRuntime.start()
+        build_server(runtime, workspace=workspace).run(transport="stdio")
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
         runtime.shutdown()
+        _shutdown_workspace(workspace)
 
 
 def _run_standalone() -> None:
     dispatcher = make_local_dispatcher()
+    workspace: WorkspaceRuntime | None = None
     try:
-        build_server(dispatcher).run(transport="stdio")
+        workspace = WorkspaceRuntime.start()
+        build_server(dispatcher, workspace=workspace).run(transport="stdio")
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
+    finally:
+        _shutdown_workspace(workspace)
+
+
+def _shutdown_workspace(workspace: WorkspaceRuntime | None) -> None:
+    if workspace is not None:
+        workspace.shutdown()
 
 
 # ---------------------------------------------------------------------------

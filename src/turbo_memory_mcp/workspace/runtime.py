@@ -204,6 +204,31 @@ class WorkspaceRuntime:
             "over_cap": bool(journal is not None and journal.over_cap),
         }
 
+    def describe(self) -> dict[str, Any]:
+        """Coordination state for health and server_info. Reads rows only; never raises."""
+
+        state = "degraded" if self.degraded_reason else "ok"
+        live: int | None
+        try:
+            live = len(self.live_sessions())
+        except Exception:
+            live = None
+        db_path: str | None
+        try:
+            db_path = str(coord_db_path(resolve_storage_root(), self.workspace.project_id))
+        except Exception:
+            db_path = None
+        return {
+            "enabled": True,
+            "state": state,
+            "reason": self.degraded_reason,
+            "workspace": self.workspace.root_key,
+            "db_path": db_path,
+            "live_sessions": live,
+            "journal": self.journal_state(),
+            "coverage": status_views.COVERAGE_TEXT,
+        }
+
     def live_sessions(self) -> list[SessionRow]:
         """Sessions of this workspace as last pruned by ``tick``, including this one."""
 

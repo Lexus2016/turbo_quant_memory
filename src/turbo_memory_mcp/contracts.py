@@ -30,7 +30,8 @@ PHASE_6_TOOL_NAMES = (*PHASE_5_TOOL_NAMES, "lint_knowledge_base")
 PHASE_7_TOOL_NAMES = (*PHASE_6_TOOL_NAMES, "link_entities", "unlink_entities", "get_related_entities")
 PHASE_9_TOOL_NAMES = (*PHASE_7_TOOL_NAMES, "set_secret", "get_secret", "list_secrets", "delete_secret")
 PHASE_10_TOOL_NAMES = (*PHASE_9_TOOL_NAMES, "recent_context")
-CURRENT_TOOL_NAMES = PHASE_10_TOOL_NAMES
+PHASE_11_TOOL_NAMES = (*PHASE_10_TOOL_NAMES, "announce_work", "finish_work", "workspace_status", "file_history", "restore_file")
+CURRENT_TOOL_NAMES = PHASE_11_TOOL_NAMES
 
 
 
@@ -590,6 +591,7 @@ __all__ = [
     "PHASE_7_TOOL_NAMES",
     "PHASE_9_TOOL_NAMES",
     "PHASE_10_TOOL_NAMES",
+    "PHASE_11_TOOL_NAMES",
     "PRODUCT_NAME",
     "QUERY_MODES",
     "RECENT_CONTEXT_FORMATS",

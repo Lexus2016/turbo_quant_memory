@@ -19,6 +19,12 @@ from turbo_memory_mcp import server
 from turbo_memory_mcp.daemon import BootstrapResult
 
 
+@pytest.fixture(autouse=True)
+def _no_workspace_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run modes start a workspace session; keep these entry-point tests from registering one for real."""
+    monkeypatch.setattr(server.WorkspaceRuntime, "start", classmethod(lambda cls, *a, **k: None))
+
+
 class _FakeServer:
     """Stand-in for build_server(...) whose .run() raises a chosen error."""
 
@@ -121,7 +127,7 @@ def test_run_standalone_swallows_broken_pipe(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         server,
         "build_server",
-        lambda dispatcher: _FakeServer(BaseExceptionGroup("t", [BrokenPipeError()])),
+        lambda dispatcher, **kwargs: _FakeServer(BaseExceptionGroup("t", [BrokenPipeError()])),
     )
     # Must return cleanly, not raise.
     server._run_standalone()
@@ -130,7 +136,7 @@ def test_run_standalone_swallows_broken_pipe(monkeypatch: pytest.MonkeyPatch) ->
 def test_run_standalone_reraises_real_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "make_local_dispatcher", lambda *a, **k: object())
     monkeypatch.setattr(
-        server, "build_server", lambda dispatcher: _FakeServer(RuntimeError("boom"))
+        server, "build_server", lambda dispatcher, **kwargs: _FakeServer(RuntimeError("boom"))
     )
     with pytest.raises(RuntimeError, match="boom"):
         server._run_standalone()
@@ -150,7 +156,7 @@ def _patch_proxy(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> list[st
             calls.append("shutdown")
 
     monkeypatch.setattr(server, "ProxyRuntime", _FakeRuntime)
-    monkeypatch.setattr(server, "build_server", lambda runtime: _FakeServer(exc))
+    monkeypatch.setattr(server, "build_server", lambda runtime, **kwargs: _FakeServer(exc))
     return calls
 
 
@@ -196,7 +202,7 @@ def _patch_primary(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> list[
     monkeypatch.setattr(
         server, "release_daemon_lock", lambda endpoint: events.append("release")
     )
-    monkeypatch.setattr(server, "build_server", lambda dispatcher: _FakeServer(exc))
+    monkeypatch.setattr(server, "build_server", lambda dispatcher, **kwargs: _FakeServer(exc))
     return events
 
 
