@@ -2,7 +2,8 @@
 
 Several tqmemory processes open the same SQLite file in WAL mode. Within one process a
 single ``CoordinationDB`` is shared by threads, so every statement runs under ``lock``.
-A corrupt file is quarantined and replaced by a fresh database instead of failing every call.
+A corrupt file is quarantined and replaced by a fresh database instead of failing every call;
+healing is serialized across processes by an OS lock on a side file.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -19,9 +21,22 @@ from typing import Any
 
 from turbo_memory_mcp.workspace.models import EventRow, LeaseRow, SessionRow
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 _SCHEMA_VERSION = "1"
+_QUARANTINE_MARK = ".corrupt-"
 _SIDE_SUFFIXES = ("", "-wal", "-shm")
 _CORRUPTION_CODES = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
+_PRIMARY_RESULT_MASK = 0xFF
+_WAL_ATTEMPTS = 3
+_WAL_RETRY_SECONDS = 0.05
+_MOVE_ATTEMPTS = 5
+_MOVE_RETRY_SECONDS = 0.1
+_HEAL_LOCK_TIMEOUT_SECONDS = 5.0
+_LOCK_POLL_SECONDS = 0.05
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -56,11 +71,16 @@ class _Corrupt(Exception):
 
 
 class CoordinationDB:
-    """Thread-safe handle to the coordination database; open it with :meth:`open`."""
+    """Thread-safe handle to the coordination database; open it with :meth:`open`.
+
+    ``try_acquire_lease``'s ``owner_alive`` callback must not re-enter this CoordinationDB,
+    because ``lock`` is not reentrant.
+    """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         self.lock = threading.Lock()
+        self._closed = False
 
     @classmethod
     def open(cls, path: Path, *, busy_timeout_ms: int = 250) -> CoordinationDB:
@@ -74,16 +94,17 @@ class CoordinationDB:
             pass
         except sqlite3.Error as exc:
             raise CoordinationUnavailable(f"cannot open coordination database: {exc}") from exc
-
-        _quarantine(path)
-        try:
-            return cls(_open_connection(path, busy_timeout_ms))
-        except (_Corrupt, sqlite3.Error) as exc:
-            raise CoordinationUnavailable(f"cannot create coordination database: {exc}") from exc
+        return _heal(path, busy_timeout_ms)
 
     def close(self) -> None:
         with self.lock:
-            self.conn.close()
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self.conn.close()
+            except sqlite3.Error as exc:
+                raise CoordinationUnavailable(f"cannot close coordination database: {exc}") from exc
 
     @contextmanager
     def _use(self) -> Iterator[sqlite3.Connection]:
@@ -130,6 +151,7 @@ class CoordinationDB:
     def delete_session(self, session_id: str) -> None:
         with self._use() as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM cursors WHERE session_id = ?", (session_id,))
 
     def list_sessions(self, workspace: str) -> list[SessionRow]:
         with self._use() as conn:
@@ -315,12 +337,13 @@ def _open_connection(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
         try:
             result = conn.execute("PRAGMA quick_check").fetchall()
         except sqlite3.DatabaseError as exc:
-            if getattr(exc, "sqlite_errorcode", None) in _CORRUPTION_CODES:
+            if _is_corruption(exc):
                 raise _Corrupt(str(exc)) from exc
             raise
         if [tuple(row) for row in result] != [("ok",)]:
             raise _Corrupt("quick_check reported damage")
-        conn.execute("PRAGMA journal_mode = WAL")
+        _check_schema_version(conn)
+        _enable_wal(conn)
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(_SCHEMA)
         conn.execute(
@@ -333,34 +356,158 @@ def _open_connection(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
     return conn
 
 
-def _quarantine(path: Path) -> None:
-    """Move a damaged database (and its WAL/SHM side files) aside, then drop older quarantined copies."""
+def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
+    # Extended result codes carry the primary code in the low byte (SQLITE_CORRUPT_INDEX 779 = 11 | 3 << 8).
+    code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(code, int) and (code & _PRIMARY_RESULT_MASK) in _CORRUPTION_CODES
 
-    stamp = int(time.time())
-    target = f"{path.name}.corrupt-{stamp}"
-    for suffix in _SIDE_SUFFIXES:
+
+def _check_schema_version(conn: sqlite3.Connection) -> None:
+    # Checked before the schema is applied, so a database written by another format is never modified.
+    has_meta = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone()
+    if has_meta is None:
+        return
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row is not None and row[0] != _SCHEMA_VERSION:
+        raise CoordinationUnavailable(f"coordination database has unsupported schema version {row[0]!r}")
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    for attempt in range(_WAL_ATTEMPTS):
+        mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+        if str(mode).lower() == "wal":
+            return
+        if attempt < _WAL_ATTEMPTS - 1:
+            time.sleep(_WAL_RETRY_SECONDS)
+    # Still not WAL: the rollback journal keeps the data correct, so the database is used as it is.
+
+
+def _heal(path: Path, busy_timeout_ms: int) -> CoordinationDB:
+    """Quarantine a corrupt database under the cross-process heal lock and return a healthy handle.
+
+    Every attempt re-opens and re-checks first, so a database another process already healed is kept.
+    """
+
+    with _heal_lock(path):
+        for attempt in range(1, _MOVE_ATTEMPTS + 1):
+            try:
+                return CoordinationDB(_open_connection(path, busy_timeout_ms))
+            except _Corrupt:
+                pass
+            except sqlite3.Error as exc:
+                raise CoordinationUnavailable(f"cannot create coordination database: {exc}") from exc
+            try:
+                _move_aside(path)
+            except OSError as exc:
+                if attempt == _MOVE_ATTEMPTS:
+                    raise CoordinationUnavailable(f"cannot quarantine damaged coordination database: {exc}") from exc
+                time.sleep(_MOVE_RETRY_SECONDS)
+    raise CoordinationUnavailable("coordination database could not be healed")  # pragma: no cover
+
+
+@contextmanager
+def _heal_lock(path: Path) -> Iterator[None]:
+    """Serialize healing across processes with an OS lock on ``coord.sqlite.heal-lock``."""
+
+    try:
+        fd = os.open(path.with_name(f"{path.name}.heal-lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as exc:
+        raise CoordinationUnavailable(f"cannot open coordination heal lock: {exc}") from exc
+    try:
+        _lock_fd(fd)
+        try:
+            yield
+        finally:
+            _unlock_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def _lock_fd(fd: int) -> None:
+    deadline = time.monotonic() + _HEAL_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            if sys.platform == "win32":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if time.monotonic() >= deadline:
+                raise CoordinationUnavailable("timed out waiting for the coordination heal lock") from exc
+            time.sleep(_LOCK_POLL_SECONDS)
+
+
+def _unlock_fd(fd: int) -> None:
+    try:
+        if sys.platform == "win32":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass  # closing the descriptor releases the lock anyway
+
+
+def _move_aside(path: Path) -> None:
+    """Move the damaged database and its side files under one fresh quarantine stem."""
+
+    stem = _fresh_quarantine_stem(path)
+    try:
+        os.replace(path, path.with_name(stem))
+    except FileNotFoundError:
+        pass
+    for suffix in _SIDE_SUFFIXES[1:]:
         source = path.with_name(path.name + suffix)
         try:
-            os.replace(source, path.with_name(target + suffix))
+            os.replace(source, path.with_name(stem + suffix))
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise CoordinationUnavailable(f"cannot quarantine damaged coordination database: {exc}") from exc
+            # A stale WAL must never sit beside the fresh database, so it is dropped when it cannot be moved.
+            try:
+                os.unlink(source)
+            except FileNotFoundError:
+                continue
+            except OSError as unlink_exc:
+                raise CoordinationUnavailable(f"cannot remove stale {source.name}: {unlink_exc}") from exc
     _prune_quarantine(path)
 
 
+def _fresh_quarantine_stem(path: Path) -> str:
+    stamp = time.time_ns()
+    while True:
+        stem = f"{path.name}{_QUARANTINE_MARK}{stamp}"
+        if not any(path.with_name(stem + suffix).exists() for suffix in _SIDE_SUFFIXES):
+            return stem
+        stamp += 1
+
+
 def _prune_quarantine(path: Path) -> None:
-    quarantined: dict[Path, int] = {}
-    for candidate in path.parent.glob(f"{path.name}.corrupt-*"):
-        digits = candidate.name.removeprefix(f"{path.name}.corrupt-").split("-", 1)[0]
-        if digits.isdigit():
-            quarantined[candidate] = int(digits)
-    if not quarantined:
-        return
-    newest = max(quarantined.values())
-    for candidate, stamp in quarantined.items():
-        if stamp < newest:
+    """Keep only the newest quarantine group; best-effort, never fails ``open``."""
+
+    prefix = f"{path.name}{_QUARANTINE_MARK}"
+    try:
+        entries = list(path.parent.glob(f"{prefix}*"))
+        groups = {_quarantine_group(entry.name) for entry in entries}
+        numeric = [group for group in groups if group.removeprefix(prefix).isdigit()]
+        keep = max(numeric, key=lambda group: int(group.removeprefix(prefix))) if numeric else None
+        for entry in entries:
+            if _quarantine_group(entry.name) == keep:
+                continue
             try:
-                candidate.unlink()
+                entry.unlink()
             except OSError:
                 pass
+    except OSError:
+        pass
+
+
+def _quarantine_group(name: str) -> str:
+    """Return the stem shared by a quarantined database and its ``-wal``/``-shm`` side files."""
+
+    for suffix in ("-wal", "-shm"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
