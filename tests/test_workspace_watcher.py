@@ -385,7 +385,8 @@ def test_watcher_stop_is_bounded_and_idempotent(
 
         started = time.monotonic()
         watcher.stop()
-        assert time.monotonic() - started < 5.0
+        # Two joins at 0.2 s each; the default 2 s joins would take about 4 s, so this bound fails without the patch.
+        assert time.monotonic() - started < 1.5
         watcher.stop()
 
         threads = [thread for thread in threading.enumerate() if thread.name == WATCHER_THREAD_NAME]
