@@ -60,6 +60,7 @@ class JournalFault(CoordinationUnavailable):
     bad request.
     """
 
+
 _BINARY_SCAN_BYTES = 8192
 _DAY_SECONDS = 86400.0
 _RECENT_SECONDS = _DAY_SECONDS
