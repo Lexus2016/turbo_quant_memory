@@ -238,6 +238,51 @@ def test_sidecar_blocked_for_move_and_unlink_is_retried_until_healed(
     assert any(path.read_bytes() == _GARBAGE for path in _quarantined(db_path))
 
 
+def test_presence_probe_failure_is_retried_then_healed(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(_GARBAGE)
+    real_exists = Path.exists
+    failures = {"left": 2}
+    sleeps: list[float] = []
+
+    def flaky_exists(self: Path) -> bool:
+        if self == db_path and failures["left"] > 0:
+            failures["left"] -= 1
+            raise PermissionError("stat refused")
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", flaky_exists)
+    monkeypatch.setattr(db_module.time, "sleep", sleeps.append)
+
+    db = CoordinationDB.open(db_path)
+    try:
+        assert db.list_sessions(WORKSPACE) == []
+    finally:
+        db.close()
+    assert failures["left"] == 0
+    assert sleeps == [db_module._MOVE_RETRY_SECONDS]
+    assert len(_quarantined(db_path)) == 1
+
+
+def test_permanent_probe_failure_exhausts_into_coordination_unavailable(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(_GARBAGE)
+
+    real_exists = Path.exists
+
+    def refused(self: Path) -> bool:
+        # Every path named like the database (main file, sidecars, quarantine stems) fails to stat.
+        if self.name.startswith(db_path.name):
+            raise PermissionError("stat refused")
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", refused)
+    with pytest.raises(CoordinationUnavailable):
+        CoordinationDB.open(db_path)
+
+
 def test_healthy_database_held_open_by_another_connection_is_never_quarantined(db_path: Path) -> None:
     first = CoordinationDB.open(db_path)
     first.insert_session(_session("A"))
