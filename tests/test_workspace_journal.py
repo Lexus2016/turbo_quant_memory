@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -256,7 +258,9 @@ def test_index_rebuilt_from_log_after_db_loss(repo: Path, workspace: Workspace, 
         assert len(rebuilt.history("log.txt")) == 2
         assert rebuilt.rebuild_index_if_empty() == 0
         assert older is not None
-        rebuilt.restore("log.txt", older.version_id)
+        oldest_rebuilt = rebuilt.history("log.txt")[-1]
+        assert oldest_rebuilt.sha256 == older.sha256
+        rebuilt.restore("log.txt", oldest_rebuilt.version_id)
         assert target.read_text(encoding="utf-8") == "first\n"
     finally:
         fresh_db.close()
@@ -365,3 +369,116 @@ def test_limits_from_environ_reads_and_validates():
         JournalLimits.from_environ({"TQMEMORY_JOURNAL_RETENTION_DAYS": "0"})
     with pytest.raises(ValueError, match="TQMEMORY_JOURNAL_MAX_BYTES"):
         JournalLimits.from_environ({"TQMEMORY_JOURNAL_MAX_BYTES": "lots"})
+
+
+def _blob_file(storage_root: Path, workspace: Workspace, digest: str) -> Path:
+    return blobs_dir(storage_root, workspace.project_id) / digest[:2] / f"{digest}.z"
+
+
+def test_restore_head_refuses_committed_directory_and_writes_nothing(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "a.txt").write_text("a\n", encoding="utf-8")
+    _git(repo, "add", "docs")
+    _git(repo, "commit", "-q", "-m", "add docs")
+    shutil.rmtree(repo / "docs")
+
+    with pytest.raises(ValueError, match="committed file"):
+        journal.restore("docs", "HEAD")
+
+    assert not (repo / "docs").exists()
+
+
+def test_evict_rolls_back_cleanly_when_log_rewrite_fails(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    limits = JournalLimits(max_file_bytes=1_048_576, max_total_bytes=268_435_456, retention_days=14)
+    journal = _journal(workspace, db, storage_root, limits)
+    (repo / "old.txt").write_text(_incompressible("old "), encoding="utf-8")
+    expired = journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "new.txt").write_text(_incompressible("new "), encoding="utf-8")
+    kept = journal.record("new.txt", now=T0)
+    assert expired is not None and kept is not None
+    real_replace = os.replace
+
+    def failing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if Path(dst).name == "journal.log":
+            raise OSError("disk trouble")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError, match="disk trouble"):
+        journal.evict(now=T0)
+    monkeypatch.undo()
+
+    assert [entry.version_id for entry in journal.history("old.txt")] == [expired.version_id]
+    assert journal.read_version(expired.version_id) == _incompressible("old ").encode("utf-8")
+    assert journal.read_version(kept.version_id) == _incompressible("new ").encode("utf-8")
+
+
+def test_evict_tolerates_blob_unlink_failure_and_sweeps_later(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("expired body\n", encoding="utf-8")
+    expired = journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "new.txt").write_text("kept body\n", encoding="utf-8")
+    kept = journal.record("new.txt", now=T0)
+    assert expired is not None and expired.sha256 is not None and kept is not None
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.suffix == ".z":
+            raise PermissionError("blob is open in another process")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    assert journal.evict(now=T0) == 1
+    monkeypatch.undo()
+
+    orphan = _blob_file(storage_root, workspace, expired.sha256)
+    assert orphan.is_file()
+    assert journal.read_version(kept.version_id) == b"kept body\n"
+    assert journal.evict(now=T0) == 0
+    assert not orphan.exists()
+    assert journal.read_version(kept.version_id) == b"kept body\n"
+
+
+def test_evict_keeps_only_surviving_log_lines(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "a.txt").write_text("expired\n", encoding="utf-8")
+    journal.record("a.txt", now=T0 - 20 * DAY)
+    (repo / "b.txt").write_text("kept\n", encoding="utf-8")
+    journal.record("b.txt", now=T0)
+    with _log_path(storage_root, workspace).open("a", encoding="utf-8") as handle:
+        handle.write('{"torn": \n')
+
+    journal.evict(now=T0)
+
+    entries = [json.loads(line) for line in _log_path(storage_root, workspace).read_text(encoding="utf-8").splitlines()]
+    assert [entry["path"] for entry in entries] == ["b.txt"]
+
+
+def test_evict_on_empty_index_keeps_blobs_and_log_for_rebuild(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "keep.txt").write_text("only copy\n", encoding="utf-8")
+    saved = journal.record("keep.txt", now=T0)
+    assert saved is not None and saved.sha256 is not None
+    db.close()
+    db_file = coord_db_path(storage_root, workspace.project_id)
+    for suffix in ("", "-wal", "-shm"):
+        Path(f"{db_file}{suffix}").unlink(missing_ok=True)
+
+    fresh_db = CoordinationDB.open(db_file)
+    try:
+        rebuilt = _journal(workspace, fresh_db, storage_root)
+        assert rebuilt.evict(now=T0 + 365 * DAY) == 0
+        assert _blob_file(storage_root, workspace, saved.sha256).is_file()
+        assert rebuilt.rebuild_index_if_empty() == 1
+        assert rebuilt.read_version(rebuilt.history("keep.txt")[0].version_id) == b"only copy\n"
+    finally:
+        fresh_db.close()

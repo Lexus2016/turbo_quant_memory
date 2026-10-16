@@ -246,8 +246,8 @@ class Journal:
         """Drop versions past the retention age, then the oldest unprotected content until under the size cap.
 
         The newest content version of every path changed in the last 24 hours is never dropped for size.
-        Unreferenced blob files are deleted and their ``journal.log`` lines removed. Returns the number of
-        versions removed.
+        Expired rows and their ``journal.log`` lines are removed in one transaction; blobs that neither the
+        index nor the log still refers to are swept afterwards. Returns the number of versions removed.
         """
 
         observed_now = _now(now)
@@ -259,6 +259,9 @@ class Journal:
                     "SELECT version_id, workspace, path, kind, sha256, observed_at FROM versions ORDER BY version_id"
                 ).fetchall()
             ]
+            if not rows:
+                # An empty index means the log and blobs are the only copy of the history; leave them for a rebuild.
+                return 0
             expired = {row.version_id for row in rows if row.observed_at < cutoff}
             live = [row for row in rows if row.version_id not in expired]
             protected = _protected_versions(live, observed_now)
@@ -277,15 +280,12 @@ class Journal:
                     del refs[row.sha256]
                     total -= sizes.pop(row.sha256)
             self.over_cap = total > cap
-            if not expired:
-                return 0
-            conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
-            referenced = {
-                row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")
-            }
-            self._sweep_blobs(referenced)
-            self._drop_log_lines([row for row in rows if row.version_id in expired])
-            return len(expired)
+            if expired:
+                conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
+                # Rewritten before commit: if this fails, the rollback leaves rows and blobs exactly as they were.
+                self._rewrite_log([row for row in rows if row.version_id not in expired])
+        self._sweep_unreferenced_blobs()
+        return len(expired)
 
     def rebuild_index_if_empty(self) -> int:
         """Re-insert versions from ``journal.log`` when the index is empty; return how many were inserted.
@@ -376,9 +376,21 @@ class Journal:
             raise ValueError(f"version {version_id} is a deletion and cannot be restored")
 
     def _head_content(self, rel: str) -> bytes:
+        spec = f"HEAD:{rel}"
         try:
+            kind = subprocess.run(
+                ["git", "cat-file", "-t", spec],
+                cwd=self.workspace.root,
+                check=False,
+                capture_output=True,
+                timeout=_GIT_TIMEOUT_SECONDS,
+            )
+            if kind.returncode != 0:
+                raise ValueError(f"{rel} is not in HEAD")
+            if kind.stdout.strip() != b"blob":
+                raise ValueError(f"{rel} is not a committed file in HEAD")
             result = subprocess.run(
-                ["git", "show", f"HEAD:{rel}"],
+                ["git", "show", spec],
                 cwd=self.workspace.root,
                 check=False,
                 capture_output=True,
@@ -387,7 +399,7 @@ class Journal:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ValueError(f"cannot read HEAD for {rel}: {exc}") from None
         if result.returncode != 0:
-            raise ValueError(f"{rel} is not in HEAD")
+            raise ValueError(f"cannot read {rel} from HEAD")
         return result.stdout
 
     def _read_blob(self, digest: str, version_id: int) -> bytes:
@@ -407,34 +419,51 @@ class Journal:
         except FileNotFoundError:
             return 0
 
-    def _sweep_blobs(self, referenced: set[str]) -> None:
+    def _sweep_unreferenced_blobs(self) -> None:
+        """Delete blobs that neither the index nor ``journal.log`` refers to.
+
+        Runs in its own write transaction so the reference set is read under the same cross-process lock
+        every record holds. A blob that cannot be unlinked (for example, open elsewhere on Windows) is left
+        for a later sweep rather than failing the eviction.
+        """
+
         if not self._blobs_root.is_dir():
             return
-        for shard in self._blobs_root.iterdir():
-            if not shard.is_dir():
-                continue
-            for entry in shard.iterdir():
-                if entry.suffix == _BLOB_SUFFIX and entry.stem in referenced:
+        with _transaction(self._db) as conn:
+            referenced = {
+                row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")
+            }
+            if self._log_path.is_file():
+                referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
+            for shard in self._blobs_root.iterdir():
+                if not shard.is_dir():
                     continue
-                if entry.suffix in (_BLOB_SUFFIX, _TEMP_SUFFIX):
-                    entry.unlink(missing_ok=True)
+                for entry in list(shard.iterdir()):
+                    if entry.suffix == _BLOB_SUFFIX and entry.stem in referenced:
+                        continue
+                    if entry.suffix not in (_BLOB_SUFFIX, _TEMP_SUFFIX):
+                        continue
+                    try:
+                        entry.unlink()
+                    except OSError:
+                        continue
 
-    def _drop_log_lines(self, expired: list[_EvictRow]) -> None:
-        # Only lines of evicted versions are removed. Lines the index no longer knows about are kept,
-        # so an evict run against a lost database cannot destroy the only copy of the history.
+    def _rewrite_log(self, surviving: list[_EvictRow]) -> None:
+        """Keep only the log lines that match a surviving version; torn or foreign lines are dropped."""
+
         if not self._log_path.is_file():
             return
-        doomed = Counter(_log_key_of_row(row) for row in expired)
+        keep = Counter(_log_key_of_row(row) for row in surviving)
         kept: list[str] = []
-        dropped = False
+        changed = False
         for line in self._log_path.read_text(encoding="utf-8").splitlines(keepends=True):
             entry = _parse_log_line(line)
-            if entry is not None and doomed[_log_key_of_entry(entry)] > 0:
-                doomed[_log_key_of_entry(entry)] -= 1
-                dropped = True
-                continue
-            kept.append(line)
-        if dropped:
+            if entry is not None and keep[_log_key_of_entry(entry)] > 0:
+                keep[_log_key_of_entry(entry)] -= 1
+                kept.append(line)
+            else:
+                changed = True
+        if changed:
             _atomic_write(self._log_path, "".join(kept).encode("utf-8"))
 
     def _insert(
@@ -475,7 +504,6 @@ class Journal:
             attribution=attribution,
             session_id=session_id,
         )
-        _append_log(self._log_path, workspace, record)
         detail: dict[str, Any] = {"attribution": attribution, "session_id": session_id, "version_id": version_id}
         if feature is not None:
             detail["feature"] = feature
@@ -490,6 +518,8 @@ class Journal:
                 observed_at,
             ),
         )
+        # Logged last: a failed event insert must not leave a log line for a rolled-back row.
+        _append_log(self._log_path, workspace, record)
         return record
 
 
