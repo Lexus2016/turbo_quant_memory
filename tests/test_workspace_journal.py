@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -873,3 +874,27 @@ def test_restore_refuses_destination_that_never_settles(
     monkeypatch.undo()
 
     assert target.read_text(encoding="utf-8") == f"edit {counter['n']}\n"
+
+
+def test_evicted_blob_is_swept_and_empty_index_still_sweeps_orphans(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("expired body\n", encoding="utf-8")
+    saved = journal.record("old.txt", now=T0 - 20 * DAY)
+    assert saved is not None and saved.sha256 is not None
+    blob = _blob_file(storage_root, workspace, saved.sha256)
+    assert blob.is_file()
+
+    assert journal.evict(now=T0) == 1
+    assert not blob.exists()
+
+    # The index is now empty. An orphan left behind by a failed unlink or a crash must still be swept.
+    blobs_root = blobs_dir(storage_root, workspace.project_id)
+    orphan_digest = hashlib.sha256(b"orphan body").hexdigest()
+    journal_module._write_blob(blobs_root, orphan_digest, b"orphan body")
+    orphan = _blob_file(storage_root, workspace, orphan_digest)
+    assert orphan.is_file()
+
+    assert journal.evict(now=T0) == 0
+    assert not orphan.exists()

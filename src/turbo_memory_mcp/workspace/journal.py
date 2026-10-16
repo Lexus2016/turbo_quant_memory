@@ -314,12 +314,15 @@ class Journal:
         """Drop versions past the retention age, then the oldest unprotected content until under the size cap.
 
         The newest content version of every path changed in the last 24 hours is never dropped for size.
-        The deletion commits first; then the log is regenerated from the index and unreferenced blobs are swept.
-        Returns the number of versions removed.
+        The deletion commits first; then the log is regenerated from the index (when the index was not empty
+        at entry) and unreferenced blobs are swept. The sweep runs even when the index is empty, so orphans
+        left by an earlier failed unlink are retried. Returns the number of versions removed.
         """
 
         observed_now = _now(now)
         cutoff = observed_now - self._limits.retention_days * _DAY_SECONDS
+        expired: set[int] = set()
+        self.over_cap = False
         with _transaction(self._db) as conn:
             rows = [
                 _EvictRow(*row)
@@ -327,30 +330,30 @@ class Journal:
                     "SELECT version_id, workspace, path, kind, sha256, observed_at FROM versions ORDER BY version_id"
                 ).fetchall()
             ]
-            if not rows:
-                # An empty index means the log and blobs are the only copy of the history; leave them for a rebuild.
-                return 0
-            expired = {row.version_id for row in rows if row.observed_at < cutoff}
-            live = [row for row in rows if row.version_id not in expired]
-            protected = _protected_versions(live, observed_now)
-            refs = Counter(row.sha256 for row in live if row.kind == "content" and row.sha256)
-            sizes = {digest: self._blob_size(digest) for digest in refs}
-            total = sum(sizes.values())
-            cap = self._limits.max_total_bytes
-            for row in sorted(live, key=lambda item: (item.observed_at, item.version_id)):
-                if total <= cap:
-                    break
-                if row.kind != "content" or row.sha256 is None or row.version_id in protected:
-                    continue
-                expired.add(row.version_id)
-                refs[row.sha256] -= 1
-                if refs[row.sha256] == 0:
-                    del refs[row.sha256]
-                    total -= sizes.pop(row.sha256)
-            self.over_cap = total > cap
-            if expired:
-                conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
-        self._maintain_after_commit()
+            if rows:
+                expired = {row.version_id for row in rows if row.observed_at < cutoff}
+                live = [row for row in rows if row.version_id not in expired]
+                protected = _protected_versions(live, observed_now)
+                refs = Counter(row.sha256 for row in live if row.kind == "content" and row.sha256)
+                sizes = {digest: self._blob_size(digest) for digest in refs}
+                total = sum(sizes.values())
+                cap = self._limits.max_total_bytes
+                for row in sorted(live, key=lambda item: (item.observed_at, item.version_id)):
+                    if total <= cap:
+                        break
+                    if row.kind != "content" or row.sha256 is None or row.version_id in protected:
+                        continue
+                    expired.add(row.version_id)
+                    refs[row.sha256] -= 1
+                    if refs[row.sha256] == 0:
+                        del refs[row.sha256]
+                        total -= sizes.pop(row.sha256)
+                self.over_cap = total > cap
+                if expired:
+                    conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
+        # An empty index at entry may mean the database was lost, and then the log is the only copy of the
+        # history: it is left as it is, and the blobs it refers to are kept.
+        self._maintain_after_commit(regenerate=bool(rows))
         return len(expired)
 
     def rebuild_index_if_empty(self) -> int:
@@ -504,21 +507,22 @@ class Journal:
         except FileNotFoundError:
             return 0
 
-    def _maintain_after_commit(self) -> None:
-        """Regenerate the log from the index, then sweep unreferenced blobs, in one write transaction.
+    def _maintain_after_commit(self, *, regenerate: bool) -> None:
+        """Regenerate the log from the index (when asked), then sweep blobs nothing refers to.
 
-        While the index is alive it is authoritative, so the log is regenerated from its rows instead of being
-        filtered. A write that committed meanwhile is included; its own append may land after this and duplicate
-        a line, which rebuild dedupes.
+        Both steps run in one write transaction, so no record interleaves. Live references are read after the
+        regeneration: the index rows plus the log as it now stands. A write that commits meanwhile is included;
+        its own append may land later and duplicate a line, which rebuild dedupes.
         """
 
         with _transaction(self._db) as conn:
+            if regenerate:
+                self._regenerate_log(conn)
             referenced = {
                 row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")
             }
             if self._log_path.is_file():
                 referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
-            self._regenerate_log(conn)
             self._sweep_unreferenced_blobs(referenced)
 
     def _sweep_unreferenced_blobs(self, referenced: set[str]) -> None:
