@@ -371,16 +371,24 @@ def _session_row(row: tuple[Any, ...]) -> SessionRow:
         started_at=row[6],
         last_activity_at=row[7],
         feature=row[8],
-        areas=tuple(_decode_list(row[9], "session areas")),
+        areas=_lenient_areas(row[9]),
         details=row[10],
     )
 
 
-def _decode_list(text: str, what: str) -> list[Any]:
-    value = _decode_json(text, what)
+def _lenient_areas(text: str) -> tuple[str, ...]:
+    """Decode a stored ``areas`` value; anything undecodable or not a list reads as no areas.
+
+    The session row itself still counts, so one damaged row never hides presence or blocks pruning.
+    """
+
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError, RecursionError):
+        return ()
     if not isinstance(value, list):
-        raise CoordinationUnavailable(f"malformed {what} in coordination database")
-    return value
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 def _decode_object(text: str, what: str) -> dict[str, Any]:

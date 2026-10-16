@@ -518,8 +518,9 @@ def test_malformed_session_row_degrades_instead_of_raising(
     with runtime.db.lock:
         runtime.db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = ?", (runtime.session_id,))
 
-    assert runtime.live_sessions() == []
-    assert runtime.degraded_reason
+    sessions = {row.session_id: row.areas for row in runtime.live_sessions()}
+    assert sessions == {runtime.session_id: ()}
+    assert runtime.degraded_reason is None
     runtime.tick()
     runtime.touch()
 
@@ -590,7 +591,7 @@ def test_shutdown_ends_the_session_despite_a_malformed_peer_row(
     assert ended == [(leaving.session_id, {"client": "codex", "feature": None})]
 
 
-def test_shutdown_ends_the_session_with_empty_detail_when_its_own_row_is_damaged(
+def test_shutdown_ends_the_session_when_its_own_areas_are_damaged(
     repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
 ) -> None:
     leaving = WorkspaceRuntime.start(cwd=repo, environ=env)
@@ -606,7 +607,7 @@ def test_shutdown_ends_the_session_with_empty_detail_when_its_own_row_is_damaged
     assert observer.db is not None
     assert _raw_session_count(observer.db, leaving.session_id) == 0
     ended = [(e.session_id, e.detail) for e in _ended_events(observer.db, observer.workspace.root_key)]
-    assert ended == [(leaving.session_id, {})]
+    assert ended == [(leaving.session_id, {"client": "unknown", "feature": None})]
 
 
 def test_timed_out_shutdown_retries_cleanup_on_the_next_call(
@@ -696,3 +697,40 @@ def test_tick_lock_is_released_even_when_closing_the_database_fails(
     assert runtime.degraded_reason == "close broke"
     assert runtime._tick_lock.acquire(blocking=False)
     runtime._tick_lock.release()
+
+
+def test_malformed_areas_row_does_not_block_pruning_of_a_dead_peer(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    assert runtime.db is not None
+    root_key = runtime.workspace.root_key
+    dead = _ghost(root_key)
+    runtime.db.insert_session(dead)
+    # Alive: pid is this process, and no start time is stored, so the row stays live.
+    damaged = SessionRow(
+        session_id="damaged00001",
+        workspace=root_key,
+        client_name="codex",
+        client_version="1.0",
+        pid=os.getpid(),
+        proc_start=None,
+        started_at=time.time(),
+        last_activity_at=time.time(),
+        feature=None,
+        areas=(),
+        details=None,
+    )
+    runtime.db.insert_session(damaged)
+    with runtime.db.lock:
+        runtime.db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = ?", (damaged.session_id,))
+
+    runtime.tick()
+
+    assert runtime.degraded_reason is None
+    sessions = {row.session_id: row.areas for row in runtime.live_sessions()}
+    assert dead.session_id not in sessions
+    assert sessions[damaged.session_id] == ()
+    assert sessions[runtime.session_id] == ()
