@@ -74,6 +74,38 @@ class CoordinationUnavailable(Exception):
     """The coordination database cannot be used; callers must fail open."""
 
 
+class CoordinationLockBusy(CoordinationUnavailable):
+    """The database lock stayed busy until the deadline of the enclosing ``lock_deadline`` block."""
+
+
+_LOCK_SCOPE = threading.local()
+
+
+@contextmanager
+def lock_deadline(deadline: float) -> Iterator[None]:
+    """Bound every database lock this thread acquires inside the block by an absolute ``time.monotonic`` deadline.
+
+    Once the deadline has passed, a lock that is still busy raises ``CoordinationLockBusy`` at once instead of
+    waiting. Used by shutdown, so a stuck writer can never hold the process open.
+    """
+
+    previous = getattr(_LOCK_SCOPE, "deadline", None)
+    _LOCK_SCOPE.deadline = deadline
+    try:
+        yield
+    finally:
+        _LOCK_SCOPE.deadline = previous
+
+
+def _acquire_lock(lock: threading.Lock) -> None:
+    deadline: float | None = getattr(_LOCK_SCOPE, "deadline", None)
+    if deadline is None:
+        lock.acquire()
+        return
+    if not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+        raise CoordinationLockBusy("coordination database is busy")
+
+
 class _Corrupt(Exception):
     """Internal signal: the file on disk is not a healthy SQLite database."""
 
@@ -107,7 +139,8 @@ class CoordinationDB:
             return cls(_quarantine_and_recreate(path, busy_timeout_ms))
 
     def close(self) -> None:
-        with self.lock:
+        _acquire_lock(self.lock)
+        try:
             if self._closed:
                 return
             self._closed = True
@@ -115,14 +148,19 @@ class CoordinationDB:
                 self.conn.close()
             except sqlite3.Error as exc:
                 raise CoordinationUnavailable(f"cannot close coordination database: {exc}") from exc
+        finally:
+            self.lock.release()
 
     @contextmanager
     def _use(self) -> Iterator[sqlite3.Connection]:
-        with self.lock:
+        _acquire_lock(self.lock)
+        try:
             try:
                 yield self.conn
             except sqlite3.Error as exc:
                 raise CoordinationUnavailable(str(exc)) from exc
+        finally:
+            self.lock.release()
 
     # Sessions -----------------------------------------------------------------
 

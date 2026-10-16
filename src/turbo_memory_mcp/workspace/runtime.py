@@ -26,7 +26,7 @@ from watchdog.observers import Observer
 from turbo_memory_mcp.store import resolve_storage_root
 from turbo_memory_mcp.workspace import models
 from turbo_memory_mcp.workspace import status as status_views
-from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
+from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationLockBusy, CoordinationUnavailable, lock_deadline
 from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
 from turbo_memory_mcp.workspace.liveness import is_process_alive, process_start_time
 from turbo_memory_mcp.workspace.models import EventRow, SessionRow, Workspace
@@ -54,6 +54,9 @@ _UNAVAILABLE_REASON: Final = "workspace coordination is not available"
 DIGEST_PAGE_SIZE: Final = 200
 DIGEST_SCAN_LIMIT: Final = 5000
 DIGEST_MORE_HINT: Final = "call workspace_status for details"
+# Shutdown's database work (lease release, session end, close) shares one deadline of this length.
+_SHUTDOWN_DB_WAIT_S: Final = 2.0
+_CLOSE_THREAD_NAME: Final = "tqmemory-workspace-close"
 # The lease owner runs the journal's retention and size eviction at most this often.
 EVICT_INTERVAL_S: Final = 3600.0
 # After a failed watcher start, the session waits this long before the next attempt (no lease, no baseline).
@@ -437,11 +440,13 @@ class WorkspaceRuntime:
             self._degrade(CoordinationUnavailable("shutdown timed out waiting for an active tick"))
             return
         try:
-            try:
-                self._release_watch()
-                self._end_own_session()
-            finally:
-                self._close_db()
+            # Every database lock taken below is bounded; a lock held by a stuck writer is skipped, not waited on.
+            with lock_deadline(time.monotonic() + _SHUTDOWN_DB_WAIT_S):
+                try:
+                    self._release_watch()
+                    self._end_own_session()
+                finally:
+                    self._close_db()
         finally:
             self._tick_lock.release()
         # Only now is cleanup finished, so only now may a later call be a no-op.
@@ -764,8 +769,19 @@ class WorkspaceRuntime:
             return
         try:
             db.close()
+        except CoordinationLockBusy as exc:
+            # The lock holder finishes on its own; a daemon thread closes the connection once the lock is free.
+            self._log_failure(exc)
+            threading.Thread(target=_close_when_free, args=(db,), name=_CLOSE_THREAD_NAME, daemon=True).start()
         except Exception as exc:
             self._degrade(exc)
+
+
+def _close_when_free(db: CoordinationDB) -> None:
+    try:
+        db.close()
+    except Exception:
+        logger.debug("deferred coordination close failed", exc_info=True)
 
 
 def _over_cap_key(root_key: str) -> str:

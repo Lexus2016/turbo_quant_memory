@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from watchdog.events import DirDeletedEvent
+from watchdog.events import DirDeletedEvent, DirMovedEvent
 from watchdog.observers.api import BaseObserver
 from watchdog.observers.polling import PollingObserver
 
@@ -685,3 +685,85 @@ def test_start_never_runs_the_baseline_on_the_caller(
     finally:
         release.set()
         ticker.join(10)
+
+
+def test_shutdown_returns_when_a_flush_holds_the_db_lock(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "_SHUTDOWN_DB_WAIT_S", 0.3)
+    _, second = _pair(runtimes, repo, env)
+    assert second.db is not None
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_db_lock() -> None:
+        # Stands in for an abandoned flush helper stuck inside journal.record.
+        assert second.db is not None
+        with second.db.lock:
+            held.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=hold_db_lock, daemon=True)
+    holder.start()
+    try:
+        assert held.wait(5)
+        started = time.monotonic()
+        second.shutdown()
+        elapsed = time.monotonic() - started
+        assert elapsed < 2.0
+    finally:
+        release.set()
+        holder.join(10)
+
+
+def test_emitter_stopped_under_a_live_observer_is_unhealthy(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    created: list[BaseObserver] = []
+
+    def tracked() -> BaseObserver:
+        observer = _polling()
+        created.append(observer)
+        return observer
+
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env, factory=tracked)
+    second.tick()
+    first.tick()
+    assert second.journal_state()["state"] == "watching"
+
+    observer = created[0]
+    for emitter in observer.emitters:
+        emitter.stop()
+        emitter.join(5.0)
+    assert observer.is_alive()  # the observer keeps running; only its emitter died
+
+    second.tick()
+
+    state = second.journal_state()
+    assert state["state"] == "unavailable"
+    assert "emitter" in str(state["reason"])
+    assert _lease(second) is None
+    assert second.watcher is None
+
+    second.tick()
+    assert len(created) == 1
+
+
+def test_moved_out_directory_is_enumerated_even_when_recreated(
+    repo: Path, tmp_path: Path, standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB]
+) -> None:
+    watcher, journal, _db = standalone
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("a\n", encoding="utf-8")
+    journal.record("docs/a.md")
+    outside = tmp_path / "outside" / "docs"
+    outside.parent.mkdir()
+    shutil.move(str(docs), str(outside))
+    docs.mkdir()  # the path exists again, empty
+
+    watcher_module._Handler(watcher).on_any_event(DirMovedEvent(str(docs), str(outside)))
+    watcher.flush_now()
+
+    assert journal.history("docs/a.md", limit=1)[0].kind == "deletion"

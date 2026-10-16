@@ -150,6 +150,10 @@ class WorkspaceWatcher:
             observer, thread = self._observer, self._thread
         if observer is None or not observer.is_alive():
             return "file observer thread stopped"
+        # The observer thread can outlive its emitters; without a live emitter no event will arrive.
+        emitters = observer.emitters
+        if not emitters or any(not emitter.is_alive() for emitter in emitters):
+            return "file observer emitter stopped"
         if thread is None or not thread.is_alive():
             return "watcher flush thread stopped"
         if not self._workspace.root.is_dir():
@@ -237,7 +241,8 @@ class WorkspaceWatcher:
         if self._content_under is None:
             return
         rel = to_relative(self._workspace, absolute)
-        if rel == "." or _inside_git_dir(rel) or (self._workspace.root / rel).exists():
+        # Always enumerate: a directory that was moved away and recreated still lost its journaled files.
+        if rel == "." or _inside_git_dir(rel):
             return
         for child in self._content_under(rel):
             if (self._workspace.root / child).exists():
