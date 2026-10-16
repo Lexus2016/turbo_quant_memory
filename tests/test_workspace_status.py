@@ -42,6 +42,14 @@ def repo(tmp_path: Path) -> Path:
     (path / "src").mkdir(parents=True)
     (path / "src" / "retrieval.py").write_text("x = 1\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+    # Commit the fixture so the watcher's git baseline sees a clean tree, as in a real checkout.
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
     return path
 
 
@@ -295,7 +303,7 @@ def test_status_lists_other_sessions_and_coverage_text(
 
     assert [session["feature"] for session in status["sessions"]] == ["docs"]
     assert status["coverage"] == COVERAGE_TEXT
-    assert status["journal"] == {"state": "off", "reason": None}
+    assert status["journal"]["state"] == "off"
 
 
 def test_status_reports_recent_change_with_inferred_writer(
