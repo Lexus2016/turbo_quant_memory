@@ -5,6 +5,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -138,40 +139,103 @@ def test_unusable_location_raises_coordination_unavailable(tmp_path: Path) -> No
         CoordinationDB.open(blocker / "coord.sqlite")
 
 
-def test_heal_keeps_database_another_process_healed_after_our_check(
+def test_opener_arriving_mid_heal_waits_and_keeps_the_healed_database(
     db_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Process B saw corruption, process A healed the file before B took the heal lock: B must keep A's db."""
+    """Healer A has moved the corrupt main file aside; opener B must block on the heal lock, not connect."""
 
     db_path.parent.mkdir(parents=True)
     db_path.write_bytes(_GARBAGE)
-    real_open = db_module._open_connection
-    checks: list[bool] = []
+    real_replace = os.replace
+    observed: dict[str, Any] = {}
+    openers: list[threading.Thread] = []
 
-    def open_with_interleaving(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
-        if not checks:
-            checks.append(True)
+    def open_from_another_thread() -> None:
+        try:
+            db = CoordinationDB.open(db_path)
             try:
-                return real_open(path, busy_timeout_ms)
-            except db_module._Corrupt:
-                # B has decided "corrupt"; A now heals the file before B reaches the heal lock.
-                path.unlink()
-                CoordinationDB.open(path).close()
-                raise
-        return real_open(path, busy_timeout_ms)
+                observed["sessions"] = db.list_sessions(WORKSPACE)
+            finally:
+                db.close()
+        except BaseException as exc:  # reported to the test thread below
+            observed["error"] = exc
 
-    def must_not_move(path: Path) -> None:
-        pytest.fail("a database healed by another process must not be quarantined")
+    def replace_then_race(src: Any, dst: Any) -> None:
+        real_replace(src, dst)
+        if Path(src) == db_path and not openers:
+            thread = threading.Thread(target=open_from_another_thread)
+            openers.append(thread)
+            thread.start()
+            time.sleep(0.3)
+            observed["blocked_mid_heal"] = thread.is_alive()
 
-    monkeypatch.setattr(db_module, "_open_connection", open_with_interleaving)
-    monkeypatch.setattr(db_module, "_move_aside", must_not_move)
+    monkeypatch.setattr(db_module.os, "replace", replace_then_race)
+    CoordinationDB.open(db_path).close()
+    openers[0].join(timeout=10)
 
+    assert observed.get("blocked_mid_heal") is True
+    assert "error" not in observed
+    assert observed["sessions"] == []
+    quarantined = _quarantined(db_path)
+    assert quarantined
+    assert all(path.read_bytes() == _GARBAGE for path in quarantined)
+
+
+def test_fresh_database_is_created_when_the_fifth_move_attempt_succeeds(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(_GARBAGE)
+    real_replace = os.replace
+    failures = {"left": 4}
+
+    def blocked_four_times(src: Any, dst: Any) -> None:
+        if Path(src) == db_path and failures["left"] > 0:
+            failures["left"] -= 1
+            raise PermissionError("sharing violation")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(db_module.os, "replace", blocked_four_times)
     db = CoordinationDB.open(db_path)
     try:
         assert db.list_sessions(WORKSPACE) == []
     finally:
         db.close()
-    assert _quarantined(db_path) == []
+    assert failures["left"] == 0
+    assert len(_quarantined(db_path)) == 1
+
+
+def test_sidecar_blocked_for_move_and_unlink_is_retried_until_healed(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(_GARBAGE)
+    wal = db_path.with_name("coord.sqlite-wal")
+    wal.write_bytes(b"stale wal")
+    real_replace = os.replace
+    real_unlink = os.unlink
+    blocked = {"replace": 2, "unlink": 1}
+
+    def blocked_wal_replace(src: Any, dst: Any) -> None:
+        if str(src).endswith("-wal") and blocked["replace"] > 0:
+            blocked["replace"] -= 1
+            raise PermissionError("sharing violation")
+        real_replace(src, dst)
+
+    def blocked_wal_unlink(path: Any) -> None:
+        if str(path).endswith("-wal") and blocked["unlink"] > 0:
+            blocked["unlink"] -= 1
+            raise PermissionError("sharing violation")
+        real_unlink(path)
+
+    monkeypatch.setattr(db_module.os, "replace", blocked_wal_replace)
+    monkeypatch.setattr(db_module.os, "unlink", blocked_wal_unlink)
+    # Called directly: SQLite discards an invalid WAL during its own open, so the heal must see it first.
+    db_module._quarantine_and_recreate(db_path, 250).close()
+
+    assert blocked == {"replace": 0, "unlink": 0}
+    assert not wal.exists() or wal.read_bytes() != b"stale wal"
+    assert any(path.read_bytes() == _GARBAGE for path in _quarantined(db_path))
 
 
 def test_healthy_database_held_open_by_another_connection_is_never_quarantined(db_path: Path) -> None:

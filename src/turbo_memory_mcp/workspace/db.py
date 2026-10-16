@@ -88,13 +88,15 @@ class CoordinationDB:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise CoordinationUnavailable(f"cannot create coordination directory: {exc}") from exc
-        try:
-            return cls(_open_connection(path, busy_timeout_ms))
-        except _Corrupt:
-            pass
-        except sqlite3.Error as exc:
-            raise CoordinationUnavailable(f"cannot open coordination database: {exc}") from exc
-        return _heal(path, busy_timeout_ms)
+        # Every open takes the heal lock, so no process connects to a file another process is moving aside.
+        with _heal_lock(path):
+            try:
+                return cls(_open_connection(path, busy_timeout_ms))
+            except _Corrupt:
+                pass
+            except sqlite3.Error as exc:
+                raise CoordinationUnavailable(f"cannot open coordination database: {exc}") from exc
+            return cls(_quarantine_and_recreate(path, busy_timeout_ms))
 
     def close(self) -> None:
         with self.lock:
@@ -382,27 +384,50 @@ def _enable_wal(conn: sqlite3.Connection) -> None:
     # Still not WAL: the rollback journal keeps the data correct, so the database is used as it is.
 
 
-def _heal(path: Path, busy_timeout_ms: int) -> CoordinationDB:
-    """Quarantine a corrupt database under the cross-process heal lock and return a healthy handle.
+def _quarantine_and_recreate(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
+    """Move the damaged database and its side files aside, then create a fresh one. Runs under the heal lock.
 
-    Every attempt re-opens and re-checks first, so a database another process already healed is kept.
+    Each attempt moves every file still at the database path; a sidecar that cannot be moved is unlinked,
+    and anything still present afterwards is retried after a short pause.
     """
 
-    with _heal_lock(path):
-        for attempt in range(1, _MOVE_ATTEMPTS + 1):
-            try:
-                return CoordinationDB(_open_connection(path, busy_timeout_ms))
-            except _Corrupt:
-                pass
-            except sqlite3.Error as exc:
-                raise CoordinationUnavailable(f"cannot create coordination database: {exc}") from exc
-            try:
-                _move_aside(path)
-            except OSError as exc:
-                if attempt == _MOVE_ATTEMPTS:
-                    raise CoordinationUnavailable(f"cannot quarantine damaged coordination database: {exc}") from exc
-                time.sleep(_MOVE_RETRY_SECONDS)
-    raise CoordinationUnavailable("coordination database could not be healed")  # pragma: no cover
+    stem = _fresh_quarantine_stem(path)
+    for attempt in range(_MOVE_ATTEMPTS):
+        _clear_db_files(path, stem)
+        if not _db_files_present(path):
+            break
+        if attempt + 1 < _MOVE_ATTEMPTS:
+            time.sleep(_MOVE_RETRY_SECONDS)
+    else:
+        raise CoordinationUnavailable("damaged coordination database could not be moved aside")
+    try:
+        conn = _open_connection(path, busy_timeout_ms)
+    except (_Corrupt, sqlite3.Error) as exc:
+        raise CoordinationUnavailable(f"cannot create coordination database: {exc}") from exc
+    _prune_quarantine(path)
+    return conn
+
+
+def _clear_db_files(path: Path, stem: str) -> None:
+    """One best-effort pass over the files still at the database path; failures are left for the next attempt."""
+
+    for suffix in _SIDE_SUFFIXES:
+        source = path.with_name(path.name + suffix)
+        if not source.exists():
+            continue
+        try:
+            os.replace(source, path.with_name(stem + suffix))
+        except OSError:
+            if suffix:
+                # A sidecar that cannot be moved is removed, so a fresh database never sits beside a stale WAL.
+                try:
+                    os.unlink(source)
+                except OSError:
+                    pass
+
+
+def _db_files_present(path: Path) -> bool:
+    return any(path.with_name(path.name + suffix).exists() for suffix in _SIDE_SUFFIXES)
 
 
 @contextmanager
@@ -448,31 +473,6 @@ def _unlock_fd(fd: int) -> None:
             fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
         pass  # closing the descriptor releases the lock anyway
-
-
-def _move_aside(path: Path) -> None:
-    """Move the damaged database and its side files under one fresh quarantine stem."""
-
-    stem = _fresh_quarantine_stem(path)
-    try:
-        os.replace(path, path.with_name(stem))
-    except FileNotFoundError:
-        pass
-    for suffix in _SIDE_SUFFIXES[1:]:
-        source = path.with_name(path.name + suffix)
-        try:
-            os.replace(source, path.with_name(stem + suffix))
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            # A stale WAL must never sit beside the fresh database, so it is dropped when it cannot be moved.
-            try:
-                os.unlink(source)
-            except FileNotFoundError:
-                continue
-            except OSError as unlink_exc:
-                raise CoordinationUnavailable(f"cannot remove stale {source.name}: {unlink_exc}") from exc
-    _prune_quarantine(path)
 
 
 def _fresh_quarantine_stem(path: Path) -> str:
