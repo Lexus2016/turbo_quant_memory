@@ -78,13 +78,14 @@ def infer_attribution(path: str, sessions: Sequence[SessionRow]) -> tuple[str, s
 def writer_hint(attribution: str, session: SessionRow | None, feature: str | None = None) -> str:
     """Human-readable attribution. An inferred writer is described as an announced area, never as the author.
 
-    ``feature`` is the feature recorded with the event when there is one; otherwise the session's current
-    feature is named. An empty feature drops the parenthetical.
+    ``feature`` is the feature recorded with the event when the event carries one (an empty recorded
+    feature stays empty); None means the event recorded none, so the session's current feature is named.
+    An empty feature drops the parenthetical.
     """
 
     if attribution == "inferred" and session is not None:
         text = f"inside {session.client_name}'s announced area"
-        named = feature or session.feature
+        named = feature if feature is not None else session.feature
         return f"{text} ({named})" if named else text
     if attribution == "restore":
         return "restored by an agent"
@@ -132,8 +133,9 @@ def collect_changes(
     """Newest-first file-change events under ``areas`` (all paths when None), read page by page.
 
     ``fetch(upper_id, before_id)`` returns up to ``page_size`` change events with
-    ``before_id > event_id`` and ``event_id <= upper_id``, newest first. Collection stops at ``limit``
-    matches, at the first event older than ``since``, or after ``scan_limit`` scanned events.
+    ``before_id > event_id`` and ``event_id <= upper_id``, newest first. Events are ordered by id, not by
+    timestamp, so a stale event does not end the scan: it is skipped, and the scan continues. Collection
+    stops at ``limit`` matches, or after ``scan_limit`` scanned events.
     """
 
     matches: list[EventRow] = []
@@ -146,7 +148,7 @@ def collect_changes(
         scanned += len(page)
         for event in page:
             if event.created_at < since:
-                return matches
+                continue
             if event.path is not None and (areas is None or any(area_matches(event.path, a) for a in areas)):
                 matches.append(event)
                 if len(matches) >= limit:

@@ -180,6 +180,31 @@ def test_collect_changes_ignores_events_older_than_window() -> None:
     assert matches == []
 
 
+def test_collect_changes_skips_stale_event_with_higher_id() -> None:
+    # Clock adjustment: the newest id carries an old timestamp, an older id carries a recent one.
+    stale_newer = _change(2, "src/a.py", created_at=5.0)
+    recent_older = _change(1, "src/b.py", created_at=100.0)
+    pages = [[stale_newer, recent_older], []]
+
+    def fetch(_upper: int, _before: int) -> list[EventRow]:
+        return pages.pop(0)
+
+    matches = collect_changes(fetch, upper_id=2, since=10.0, areas=None, page_size=2)
+
+    assert [event.path for event in matches] == ["src/b.py"]
+
+
+def test_writer_hint_keeps_recorded_empty_feature_and_falls_back_only_when_absent() -> None:
+    session = _row("c1", "codex", "now", ("src",))
+    recorded_empty = _change(1, "src/a.py", {"attribution": "inferred", "session_id": "c1", "feature": ""})
+    absent = _change(2, "src/a.py", {"attribution": "inferred", "session_id": "c1"})
+
+    views = change_views([recorded_empty, absent], {"c1": session})
+
+    assert views[0]["writer_hint"] == "inside codex's announced area"
+    assert views[1]["writer_hint"] == "inside codex's announced area (now)"
+
+
 # Runtime --------------------------------------------------------------------
 
 
@@ -430,3 +455,18 @@ def test_status_omits_changes_older_than_window(
     )
 
     assert runtime.status()["recent_changes"] == []
+
+
+def test_status_finds_recent_change_behind_stale_event_with_higher_id(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    assert runtime.db is not None
+    root = runtime.workspace.root_key
+    runtime.db.append_event(root, models.FILE_CHANGED, now=time.time(), path="src/recent.py", detail={})
+    stale = time.time() - STATUS_RECENT_WINDOW_S - 60
+    runtime.db.append_event(root, models.FILE_CHANGED, now=stale, path="src/old.py", detail={})
+
+    paths = [change["path"] for change in runtime.status()["recent_changes"]]
+
+    assert paths == ["src/recent.py"]
