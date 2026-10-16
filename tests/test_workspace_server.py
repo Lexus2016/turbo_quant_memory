@@ -487,3 +487,29 @@ def test_fallback_journal_block_has_the_runtime_journal_keys(
     fallback = _fallback_workspace_block(enabled=True, state="degraded", reason="x")
 
     assert set(fallback["journal"]) == set(runtime.describe()["journal"])
+
+
+def test_failed_session_lookup_never_claims_the_writer_ended(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    peer.announce_work("auth refresh", ["src"])
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    journal = runtime.journal
+    assert journal is not None
+    journal.record("src/a.py", attribution="inferred", session_id=peer.session_id, feature="auth refresh")
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    assert runtime.db is not None
+    with patch.object(runtime.db, "list_sessions", side_effect=RuntimeError("session table unreadable")):
+        [result] = _session_calls(server, [("file_history", {"path": "src/a.py"})])
+
+    payload = _payload(result)
+    assert payload["status"] == "ok"
+    [version] = payload["versions"]
+    assert "ended" not in version["writer_hint"]
+    assert "codex" not in version["writer_hint"]
+    assert "announced area" in version["writer_hint"]

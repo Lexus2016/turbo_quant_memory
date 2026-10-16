@@ -479,7 +479,10 @@ class Journal:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise JournalFault(f"cannot read HEAD for {rel}: {exc}") from None
         if result.returncode != 0:
-            raise ValueError(f"{rel} is not a committed file in HEAD")
+            if _is_caller_head_error(result.stderr):
+                raise ValueError(f"{rel} is not a committed file in HEAD")
+            # Corrupt or unreadable objects, I/O trouble and a missing git are the workspace's fault, not the caller's.
+            raise JournalFault(f"cannot read HEAD for {rel}: {_git_message(result.stderr)}")
         return result.stdout
 
     @contextmanager
@@ -646,6 +649,29 @@ class Journal:
 
 
 # Module helpers -----------------------------------------------------------------
+
+
+# git's messages for a request that cannot name a blob: the path is not in HEAD, the name is not an object, or
+# the object is a tree (a directory or submodule). Anything else from cat-file is a damaged or unreadable repository.
+_CALLER_HEAD_MARKERS = (
+    "does not exist in",
+    "not a valid object name",
+    "bad file",
+    "not a blob",
+    "unknown revision",
+    "ambiguous argument",
+    "needed a single revision",
+)
+
+
+def _is_caller_head_error(stderr: bytes) -> bool:
+    text = stderr.decode("utf-8", errors="replace").lower()
+    return any(marker in text for marker in _CALLER_HEAD_MARKERS)
+
+
+def _git_message(stderr: bytes) -> str:
+    text = stderr.decode("utf-8", errors="replace").strip()
+    return text or "git cat-file failed"
 
 
 def _id_high_water(conn: sqlite3.Connection) -> int:

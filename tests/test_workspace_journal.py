@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -898,3 +899,46 @@ def test_evicted_blob_is_swept_and_empty_index_still_sweeps_orphans(
 
     assert journal.evict(now=T0) == 0
     assert not orphan.exists()
+
+
+def _fake_git_failure(stderr: str) -> Any:
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(args, 128, stdout=b"", stderr=stderr.encode("utf-8"))
+
+    return _run
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "fatal: path 'tracked.txt' does not exist in 'HEAD'\n",
+        "fatal: Not a valid object name HEAD:tracked.txt\n",
+        "fatal: git cat-file HEAD:docs: bad file\n",
+    ],
+)
+def test_head_restore_of_a_caller_mistake_is_a_value_error(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    journal = _journal(workspace, db, storage_root)
+    monkeypatch.setattr(journal_module.subprocess, "run", _fake_git_failure(stderr))
+
+    with pytest.raises(ValueError):
+        journal.restore("tracked.txt", "HEAD")
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "error: inflate: data stream error (incorrect header check)\nfatal: unable to read blob\n",
+        "fatal: loose object 1234 (stored in .git/objects/12/34) is corrupt\n",
+        "fatal: unable to read 1234abcd\n",
+    ],
+)
+def test_head_restore_of_a_damaged_git_object_is_a_journal_fault(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    journal = _journal(workspace, db, storage_root)
+    monkeypatch.setattr(journal_module.subprocess, "run", _fake_git_failure(stderr))
+
+    with pytest.raises(JournalFault, match="HEAD"):
+        journal.restore("tracked.txt", "HEAD")

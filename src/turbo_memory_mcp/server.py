@@ -234,13 +234,35 @@ def _change_details(workspace: WorkspaceRuntime, version_ids: set[int]) -> dict[
     return found
 
 
-def _writer_hint(record: VersionRecord, sessions: Mapping[str, SessionRow], detail: Mapping[str, Any] | None) -> str:
-    """A hint about who may have written a version. Inferred writers are never stated as fact."""
+def _session_rows(workspace: WorkspaceRuntime) -> dict[str, SessionRow] | None:
+    """Live session rows by id, or None when the table could not be read. A failed read is never "no sessions"."""
+
+    db = workspace.db
+    if db is None:
+        return None
+    try:
+        return {row.session_id: row for row in db.list_sessions(workspace.workspace.root_key)}
+    except Exception:
+        return None
+
+
+def _writer_hint(
+    record: VersionRecord,
+    sessions: Mapping[str, SessionRow] | None,
+    detail: Mapping[str, Any] | None,
+) -> str:
+    """A hint about who may have written a version. Inferred writers are never stated as fact, and a failed lookup
+    never asserts that a session ended."""
 
     recorded = detail.get("feature") if detail is not None else None
     feature = recorded if isinstance(recorded, str) else None
+    if record.attribution != "inferred":
+        return writer_hint(record.attribution, None, feature)
+    if sessions is None:
+        uncertain = "inside another session's announced area"
+        return f"{uncertain} ({feature})" if feature is not None else uncertain
     session = sessions.get(record.session_id) if record.session_id is not None else None
-    if record.attribution == "inferred" and session is None and feature is not None:
+    if session is None and feature is not None:
         return f"inside an announced area ({feature}); that session has ended"
     return writer_hint(record.attribution, session, feature)
 
@@ -264,7 +286,7 @@ def _file_history(workspace: WorkspaceRuntime, path: str, limit: int) -> dict[st
     rel = to_relative(workspace.workspace, path.replace("\\", "/"))
     records = journal.history(rel, limit)
     details = _change_details(workspace, {record.version_id for record in records})
-    sessions = {row.session_id: row for row in workspace.live_sessions()}
+    sessions = _session_rows(workspace)
     return {
         "status": "ok",
         "path": rel,
