@@ -12,7 +12,16 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from turbo_memory_mcp.workspace.models import FILE_CHANGED, FILE_DELETED, EventRow, SessionRow
+from turbo_memory_mcp.workspace.models import (
+    FILE_CHANGED,
+    FILE_DELETED,
+    SESSION_ENDED,
+    SESSION_STARTED,
+    WORK_ANNOUNCED,
+    WORK_FINISHED,
+    EventRow,
+    SessionRow,
+)
 
 STATUS_RECENT_WINDOW_S: Final = 7200.0
 CHANGE_KINDS: Final = (FILE_CHANGED, FILE_DELETED)
@@ -20,6 +29,9 @@ CHANGE_PAGE_SIZE: Final = 200
 # Hard bound on events scanned for one response, so a noisy workspace cannot make a read unbounded.
 CHANGE_SCAN_LIMIT: Final = 5000
 RECENT_CHANGES_LIMIT: Final = 20
+DIGEST_MAX_LINES: Final = 3
+DIGEST_SESSION_KINDS: Final = (SESSION_STARTED, SESSION_ENDED, WORK_ANNOUNCED, WORK_FINISHED)
+_DIGEST_ANON: Final = "another session"
 _GLOB_CHARS: Final = "*?["
 _WHOLE_TREE: Final = "."
 
@@ -178,6 +190,78 @@ def change_views(events: Iterable[EventRow], sessions_by_id: Mapping[str, Sessio
             }
         )
     return views
+
+
+def build_digest(
+    events: Sequence[EventRow],
+    me: SessionRow,
+    sessions: Mapping[str, SessionRow],
+    max_lines: int = DIGEST_MAX_LINES,
+) -> list[str]:
+    """Compact status lines about other sessions and file changes relevant to ``me``, newest first.
+
+    ``events`` are in ascending id order, as the event log returns them. Each relevant session event
+    gets its own line. All relevant file events collapse into one line, placed at the newest one, that
+    counts distinct paths. With more than ``max_lines`` lines, the last kept line becomes
+    ``"+k more updates"`` and covers the lines that were dropped.
+    """
+
+    lines: list[str] = []
+    paths: list[str] = []
+    file_line_at: int | None = None
+    for event in reversed(events):
+        if event.kind in DIGEST_SESSION_KINDS:
+            if event.session_id == me.session_id:
+                continue
+            lines.append(_session_digest_line(event, sessions))
+        elif event.kind in CHANGE_KINDS:
+            if not _change_is_relevant(event, me):
+                continue
+            if event.path not in paths:
+                paths.append(event.path or "")
+            if file_line_at is None:
+                file_line_at = len(lines)
+                lines.append("")
+    if file_line_at is not None:
+        lines[file_line_at] = _files_digest_line(paths)
+    if len(lines) <= max_lines:
+        return lines
+    kept = lines[: max_lines - 1]
+    kept.append(f"+{len(lines) - (max_lines - 1)} more updates")
+    return kept
+
+
+def _change_is_relevant(event: EventRow, me: SessionRow) -> bool:
+    if event.path is None:
+        return False
+    if event.detail.get("attribution") == "inferred" and event.detail.get("session_id") == me.session_id:
+        return False
+    return not me.areas or any(area_matches(event.path, area) for area in me.areas)
+
+
+def _files_digest_line(paths: Sequence[str]) -> str:
+    shown = ", ".join(paths[:3])
+    return f"{len(paths)} files changed: {shown}" + (" …" if len(paths) > 3 else "")
+
+
+def _session_digest_line(event: EventRow, sessions: Mapping[str, SessionRow]) -> str:
+    row = sessions.get(event.session_id) if event.session_id is not None else None
+    recorded_client = event.detail.get("client")
+    if row is not None:
+        who = row.client_name
+    elif isinstance(recorded_client, str) and recorded_client:
+        who = recorded_client
+    else:
+        who = _DIGEST_ANON
+    if event.kind == SESSION_STARTED:
+        return f"{who} joined"
+    if event.kind == SESSION_ENDED:
+        return f"{who} left"
+    if event.kind == WORK_ANNOUNCED:
+        feature = event.detail.get("feature")
+        named = feature if isinstance(feature, str) and feature else "work"
+        return f"{who} announced {named}"
+    return f"{who} finished work"
 
 
 def iso_time(stamp: float) -> str:

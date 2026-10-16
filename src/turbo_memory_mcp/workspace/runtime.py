@@ -43,6 +43,10 @@ _WARN_REPEAT_S: Final = 600.0
 _SESSION_ID_CHARS: Final = 12
 _UNRESOLVED_REFUSAL: Final = "workspace could not be resolved"
 _UNAVAILABLE_REASON: Final = "workspace coordination is not available"
+# Digest reads events in pages of this size and at most DIGEST_SCAN_LIMIT per call; the rest waits for the next call.
+DIGEST_PAGE_SIZE: Final = 200
+DIGEST_SCAN_LIMIT: Final = 5000
+DIGEST_MORE_HINT: Final = "call workspace_status for details"
 
 
 class WorkspaceRuntime:
@@ -65,6 +69,10 @@ class WorkspaceRuntime:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._closed = False
+        # Sessions live at the last tick; digest() reads this snapshot instead of probing processes.
+        self._presence: tuple[SessionRow, ...] = ()
+        # Serializes the check-then-set of this session's cursor, so it never moves backwards.
+        self._cursor_lock = threading.Lock()
         self._warn_lock = threading.Lock()
         self._warned_at: dict[str, float] = {}
 
@@ -138,6 +146,7 @@ class WorkspaceRuntime:
                         live.append(row)
                         continue
                     db.end_session(root_key, row.session_id, now=stamp, detail=_end_detail(row))
+                self._presence = tuple(live)
                 db.prune_events(stamp - EVENT_RETENTION_S)
                 self._on_tick(live)
             except Exception as exc:
@@ -249,11 +258,44 @@ class WorkspaceRuntime:
                 "coverage": status_views.COVERAGE_TEXT,
             }
             # Last step: a response that failed to build must not move the cursor past unseen events.
-            db.set_cursor(self.session_id, watermark)
+            self._advance_cursor(db, watermark)
         except Exception as exc:
             self._degrade(exc)
             return self._unavailable()
         return response
+
+    def digest(self) -> dict[str, Any] | None:
+        """New lines about other sessions and file changes since this session's last read, or None.
+
+        Runs on every memory tool response, so it never probes processes: whether others are live comes
+        from the presence snapshot that ``tick`` keeps. Alone, the cursor moves to the newest event without
+        reading the backlog, so a peer that joins later sees only its own arrival. Shares the cursor with
+        ``status``. Never raises.
+        """
+
+        db = self.db
+        if db is None:
+            return None
+        root_key = self.workspace.root_key
+        try:
+            cursor = db.get_cursor(self.session_id)
+            if cursor is None or not self._has_live_peers():
+                self._advance_cursor(db, db.max_event_id(root_key))
+                return None
+            me = db.get_session(self.session_id)
+            if me is None:
+                self._advance_cursor(db, db.max_event_id(root_key))
+                return None
+            events, newest = self._read_events_after(db, root_key, cursor)
+            self._advance_cursor(db, newest)
+            sessions = {row.session_id: row for row in self._presence}
+            lines = status_views.build_digest(events, me, sessions)
+        except Exception as exc:
+            self._log_failure(exc)
+            return None
+        if not lines:
+            return None
+        return {"new": lines, "more": DIGEST_MORE_HINT}
 
     def shutdown(self) -> None:
         """Stop the ticker, remove this session and close the database. Safe to call repeatedly.
@@ -357,6 +399,33 @@ class WorkspaceRuntime:
             self._degrade(exc)
             return {}
         return {} if row is None else _end_detail(row)
+
+    def _has_live_peers(self) -> bool:
+        return any(row.session_id != self.session_id for row in self._presence)
+
+    def _read_events_after(self, db: CoordinationDB, root_key: str, cursor: int) -> tuple[list[EventRow], int]:
+        """Events after ``cursor`` in pages, up to DIGEST_SCAN_LIMIT, and the highest id read (``cursor`` if none)."""
+
+        events: list[EventRow] = []
+        after = cursor
+        while len(events) < DIGEST_SCAN_LIMIT:
+            requested = min(DIGEST_PAGE_SIZE, DIGEST_SCAN_LIMIT - len(events))
+            page = db.events_after(root_key, after, limit=requested)
+            events.extend(page)
+            if not page:
+                break
+            after = page[-1].event_id
+            if len(page) < requested:
+                break
+        return events, after
+
+    def _advance_cursor(self, db: CoordinationDB, target: int) -> None:
+        """Move this session's event cursor forward to ``target``; a lower or equal target changes nothing."""
+
+        with self._cursor_lock:
+            current = db.get_cursor(self.session_id)
+            if current is None or target > current:
+                db.set_cursor(self.session_id, target)
 
     def _on_tick(self, live_sessions: list[SessionRow]) -> None:
         """Hook run after each tick with the sessions still alive. Runs under the tick lock, so it must not call tick."""
