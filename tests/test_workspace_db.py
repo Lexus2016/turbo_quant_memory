@@ -242,7 +242,7 @@ def test_presence_probe_failure_is_retried_then_healed(db_path: Path, monkeypatc
     db_path.parent.mkdir(parents=True)
     db_path.write_bytes(_GARBAGE)
     real_exists = Path.exists
-    failures = {"left": 2}
+    failures = {"left": 1}
     sleeps: list[float] = []
 
     def flaky_exists(self: Path) -> bool:
@@ -260,8 +260,36 @@ def test_presence_probe_failure_is_retried_then_healed(db_path: Path, monkeypatc
     finally:
         db.close()
     assert failures["left"] == 0
+    # The failed probe ended attempt 1; the heal completed on attempt 2 after exactly one pause.
     assert sleeps == [db_module._MOVE_RETRY_SECONDS]
     assert len(_quarantined(db_path)) == 1
+
+
+def test_unverifiable_quarantine_name_fails_before_anything_moves(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(_GARBAGE)
+    real_exists = Path.exists
+
+    def refuse_quarantine_names(self: Path) -> bool:
+        if ".corrupt-" in self.name:
+            raise PermissionError("stat refused")
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", refuse_quarantine_names)
+    with pytest.raises(CoordinationUnavailable):
+        CoordinationDB.open(db_path)
+
+    monkeypatch.setattr(Path, "exists", real_exists)
+    assert db_path.read_bytes() == _GARBAGE
+    assert _quarantined(db_path) == []
+    fd = os.open(db_path.with_name(f"{db_path.name}.heal-lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        db_module._lock_fd(fd)
+        db_module._unlock_fd(fd)
+    finally:
+        os.close(fd)
 
 
 def test_permanent_probe_failure_exhausts_into_coordination_unavailable(

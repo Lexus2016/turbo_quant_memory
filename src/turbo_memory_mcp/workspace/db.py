@@ -394,8 +394,12 @@ def _quarantine_and_recreate(path: Path, busy_timeout_ms: int) -> sqlite3.Connec
 
     stem = _fresh_quarantine_stem(path)
     for attempt in range(_MOVE_ATTEMPTS):
-        _clear_db_files(path, stem)
-        if not _db_files_present(path):
+        try:
+            _clear_db_files(path, stem)
+            pending = _db_files_present(path)
+        except OSError:
+            pending = True  # a failing probe ends this attempt; the next one re-checks from the start
+        if not pending:
             break
         if attempt + 1 < _MOVE_ATTEMPTS:
             time.sleep(_MOVE_RETRY_SECONDS)
@@ -414,7 +418,7 @@ def _clear_db_files(path: Path, stem: str) -> None:
 
     for suffix in _SIDE_SUFFIXES:
         source = path.with_name(path.name + suffix)
-        if not _maybe_present(source):
+        if not source.exists():
             continue
         try:
             os.replace(source, path.with_name(stem + suffix))
@@ -428,16 +432,7 @@ def _clear_db_files(path: Path, stem: str) -> None:
 
 
 def _db_files_present(path: Path) -> bool:
-    return any(_maybe_present(path.with_name(path.name + suffix)) for suffix in _SIDE_SUFFIXES)
-
-
-def _maybe_present(path: Path) -> bool:
-    """Presence probe that treats a failing stat as "present", so the bounded retry decides, never the caller."""
-
-    try:
-        return path.exists()
-    except OSError:
-        return True
+    return any(path.with_name(path.name + suffix).exists() for suffix in _SIDE_SUFFIXES)
 
 
 @contextmanager
@@ -493,14 +488,19 @@ def _unlock_fd(fd: int) -> None:
 
 
 def _fresh_quarantine_stem(path: Path) -> str:
-    # Bounded: uncertain probes count as taken, so a permanently failing stat must not loop forever.
+    """Return a quarantine stem verified unused. A stem whose probes fail is treated as taken; never returns unverified."""
+
     stamp = time.time_ns()
     for _ in range(_STEM_ATTEMPTS):
         stem = f"{path.name}{_QUARANTINE_MARK}{stamp}"
-        if not any(_maybe_present(path.with_name(stem + suffix)) for suffix in _SIDE_SUFFIXES):
-            break
+        try:
+            taken = any(path.with_name(stem + suffix).exists() for suffix in _SIDE_SUFFIXES)
+        except OSError:
+            taken = True
+        if not taken:
+            return stem
         stamp += 1
-    return stem
+    raise CoordinationUnavailable("no verifiable quarantine name for the damaged coordination database")
 
 
 def _prune_quarantine(path: Path) -> None:
