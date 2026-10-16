@@ -94,15 +94,33 @@ def test_project_id_same_for_root_and_subdir_override_without_remote(tmp_path: P
     assert from_subdir.project_id == from_root.project_id
 
 
-def test_trailing_space_in_directory_name_is_preserved(tmp_path: Path) -> None:
-    repo = tmp_path / "work repo "
-    repo.mkdir()
-    _git(repo, "init", "-q")
+def _fake_git_stdout(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
 
-    workspace = resolve_workspace(repo, _env(tmp_path))
+    monkeypatch.setattr(paths.subprocess, "run", fake_run)
 
-    assert workspace.root == repo.resolve()
-    assert workspace.root.name == "work repo "
+
+def test_trailing_space_in_toplevel_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Mocked git output: Windows cannot create a directory name ending in a space.
+    _fake_git_stdout(monkeypatch, "/work/repo \n")
+
+    toplevel = paths._git_toplevel(tmp_path)
+
+    assert toplevel is not None
+    assert toplevel.name == "repo "
+
+
+def test_only_one_line_terminator_is_stripped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_git_stdout(monkeypatch, "/repo\n\n")
+    toplevel = paths._git_toplevel(tmp_path)
+    assert toplevel is not None
+    assert toplevel.name == "repo\n"
+
+    _fake_git_stdout(monkeypatch, "/work/repo \r\n")
+    toplevel = paths._git_toplevel(tmp_path)
+    assert toplevel is not None
+    assert toplevel.name == "repo "
 
 
 def test_non_git_root_refuses_journal(tmp_path: Path) -> None:
@@ -154,11 +172,26 @@ def test_to_relative_rejects_outside_paths(tmp_path: Path) -> None:
 def test_to_relative_accepts_symlinked_root(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
     link = tmp_path / "link"
-    link.symlink_to(repo, target_is_directory=True)
+    try:
+        link.symlink_to(repo, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported")
     workspace = Workspace(root=link, root_key=link.as_posix(), project_id="p", is_git=True, journal_refusal=None)
 
     assert to_relative(workspace, repo / "src" / "a.py") == "src/a.py"
     assert to_relative(workspace, "src/a.py") == "src/a.py"
+
+
+def test_to_relative_normalizes_resolution_errors(tmp_path: Path) -> None:
+    loop = tmp_path / "loop"
+    try:
+        loop.symlink_to(loop, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported")
+    workspace = Workspace(root=loop, root_key=loop.as_posix(), project_id="p", is_git=True, journal_refusal=None)
+
+    with pytest.raises(ValueError, match="path outside workspace"):
+        to_relative(workspace, "src/a.py")
 
 
 def test_disable_switch() -> None:
@@ -177,7 +210,7 @@ def test_storage_paths(tmp_path: Path) -> None:
     assert blobs_dir(home, "p1").parts[-2:] == ("workspace", "blobs")
 
 
-@pytest.mark.parametrize("project_id", ["../x", "/abs", "a/b", ".."])
+@pytest.mark.parametrize("project_id", ["../x", "/abs", "a/b", "..", "C:escape", "a:b"])
 def test_storage_paths_reject_unsafe_project_id(tmp_path: Path, project_id: str) -> None:
     with pytest.raises(ValueError):
         coord_db_path(tmp_path / "home", project_id)

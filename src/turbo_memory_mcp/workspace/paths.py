@@ -57,6 +57,9 @@ def resolve_workspace(
 
 
 def workspace_storage_dir(storage_root: Path, project_id: str) -> Path:
+    # A colon makes Windows treat the id as a drive-qualified path ("C:x"), which escapes storage_root.
+    if ":" in project_id:
+        raise ValueError(f"Unsafe project_id for filesystem path: {project_id!r}")
     safe_id = _ensure_safe_id(project_id, field="project_id")
     return storage_root / "projects" / safe_id / "workspace"
 
@@ -83,11 +86,12 @@ def to_relative(workspace: Workspace, path: str | Path) -> str:
     outside the root raises ``ValueError``.
     """
 
-    root = workspace.root.resolve()
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = root / candidate
     try:
+        # Strict: a looping or missing root is an unresolvable workspace and must fail closed.
+        root = workspace.root.resolve(strict=True)
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
         relative = candidate.resolve().relative_to(root)
     except (OSError, RuntimeError, ValueError):
         raise ValueError("path outside workspace") from None
@@ -106,8 +110,10 @@ def _git_toplevel(directory: Path) -> Path | None:
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
-    # Strip only the line terminator: a directory name may end in a real space.
-    top = result.stdout.rstrip("\r\n")
+    # Strip exactly one line terminator ("\n", then one "\r"): a directory name may end in a real space.
+    top = result.stdout
+    if top.endswith("\n"):
+        top = top.removesuffix("\n").removesuffix("\r")
     if result.returncode != 0 or not top:
         return None
     return Path(top).resolve()
