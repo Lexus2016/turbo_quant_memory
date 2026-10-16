@@ -56,6 +56,9 @@ DIGEST_SCAN_LIMIT: Final = 5000
 DIGEST_MORE_HINT: Final = "call workspace_status for details"
 # The lease owner runs the journal's retention and size eviction at most this often.
 EVICT_INTERVAL_S: Final = 3600.0
+# After a failed watcher start, the session waits this long before the next attempt (no lease, no baseline).
+WATCH_RETRY_S: Final = 60.0
+_OVER_CAP_META: Final = "journal.over_cap:"
 _JOURNAL_OFF: Final = "off"
 _JOURNAL_WATCHING: Final = "watching"
 _JOURNAL_UNAVAILABLE: Final = "unavailable"
@@ -83,10 +86,10 @@ class WorkspaceRuntime:
         self.journal: Journal | None = None
         self._observer_factory: Callable[[], BaseObserver] = observer_factory or Observer
         self._watcher: WorkspaceWatcher | None = None
-        self._journal_state = _JOURNAL_OFF
-        self._journal_reason: str | None = None
         self._journal_error: str | None = None
-        self._lease_owner: str | None = None
+        self._storage_root: Path | None = None
+        self._watch_error: str | None = None
+        self._watch_retry_at: float | None = None
         self._last_evict: float | None = None
         self._pid = os.getpid()
         self._proc_start: float | None = None
@@ -128,6 +131,7 @@ class WorkspaceRuntime:
         runtime = cls(workspace, session_id, observer_factory=observer_factory)
         try:
             storage_root = resolve_storage_root(environ)
+            runtime._storage_root = storage_root
             runtime.db = CoordinationDB.open(coord_db_path(storage_root, workspace.project_id))
             runtime._build_journal(storage_root, environ)
             runtime._register()
@@ -165,8 +169,14 @@ class WorkspaceRuntime:
             self._degrade(exc)
 
     def tick(self, now: float | None = None) -> None:
-        """Prune sessions of this workspace whose process has exited, then prune old events."""
+        """Prune dead sessions and old events, then run the watcher lease decisions.
 
+        The ticker calls this every ``TICK_INTERVAL_S``. Starting a session never runs the watcher: only a tick does.
+        """
+
+        self._tick(now, watch=True)
+
+    def _tick(self, now: float | None, *, watch: bool) -> None:
         with self._tick_lock:
             db = self.db
             if db is None:
@@ -181,7 +191,7 @@ class WorkspaceRuntime:
                         continue
                     db.end_session(root_key, row.session_id, now=stamp, detail=_end_detail(row))
                 db.prune_events(stamp - EVENT_RETENTION_S)
-                self._on_tick(live)
+                self._on_tick(live, watch=watch)
             except Exception as exc:
                 self._degrade(exc)
                 return
@@ -194,28 +204,65 @@ class WorkspaceRuntime:
         return self._watcher
 
     def journal_state(self) -> dict[str, Any]:
-        """Journal state for this workspace: ``watching``, ``off`` or ``unavailable``, with the reason and owner."""
+        """Workspace-level journal state, derived from the live lease, so every session reports the same owner.
+
+        ``watching`` when a live session holds the lease; ``unavailable`` when the workspace may not be journaled,
+        or when this session's watcher failed and it is backing off; ``off`` otherwise. ``over_cap`` is the flag the
+        lease owner published after its last eviction.
+        """
+
+        owner: str | None = None
+        if self.workspace.journal_refusal is not None or self.journal is None:
+            state = _JOURNAL_UNAVAILABLE
+            reason = self.workspace.journal_refusal or self._journal_error or _UNAVAILABLE_REASON
+        else:
+            owner = self._live_owner()
+            if owner is not None:
+                state, reason = _JOURNAL_WATCHING, None
+            elif self._in_backoff():
+                state, reason = _JOURNAL_UNAVAILABLE, self._watch_error
+            else:
+                state, reason = _JOURNAL_OFF, None
+        return {
+            "state": state,
+            "reason": reason,
+            "owner_session": owner,
+            "over_cap": self._over_cap(),
+            "this_session_owns": owner is not None and owner == self.session_id,
+        }
+
+    def run_journal_eviction(self) -> None:
+        """Evict journal versions past retention or over the size cap, then publish the over-cap flag.
+
+        The flag is written to the shared database, so every session reports the same value. Runs on the lease
+        owner (the ticker calls it at most once per ``EVICT_INTERVAL_S``); a failure is logged, never raised.
+        """
 
         journal = self.journal
-        return {
-            "state": self._journal_state,
-            "reason": self._journal_reason,
-            "owner_session": self._lease_owner,
-            "over_cap": bool(journal is not None and journal.over_cap),
-        }
+        db = self.db
+        if journal is None or db is None:
+            return
+        self._last_evict = time.monotonic()
+        try:
+            journal.evict()
+            db.set_meta(_over_cap_key(self.workspace.root_key), "1" if journal.over_cap else "0")
+        except Exception as exc:
+            self._log_failure(exc)
 
     def describe(self) -> dict[str, Any]:
         """Coordination state for health and server_info. Reads rows only; never raises."""
 
-        state = "degraded" if self.degraded_reason else "ok"
         live: int | None
         try:
             live = len(self.live_sessions())
         except Exception:
             live = None
+        # Read after the rows: a failed read sets degraded_reason, and the state must then say so.
+        state = "degraded" if self.degraded_reason else "ok"
         db_path: str | None
         try:
-            db_path = str(coord_db_path(resolve_storage_root(), self.workspace.project_id))
+            storage_root = self._storage_root if self._storage_root is not None else resolve_storage_root()
+            db_path = str(coord_db_path(storage_root, self.workspace.project_id))
         except Exception:
             db_path = None
         return {
@@ -433,7 +480,7 @@ class WorkspaceRuntime:
         )
         # The new session starts after every existing event, so it receives no backlog.
         db.set_cursor(self.session_id, db.max_event_id(root_key))
-        self.tick()
+        self._tick(None, watch=False)
 
     def _start_ticker(self) -> None:
         thread = threading.Thread(target=self._run_ticker, name=TICKER_THREAD_NAME, daemon=True)
@@ -536,27 +583,35 @@ class WorkspaceRuntime:
             return
         self.journal = journal
 
-    def _on_tick(self, live_sessions: list[SessionRow]) -> None:
-        """Hook run after each tick with the sessions still alive. Runs under the tick lock, so it must not call tick.
+    def _on_tick(self, live_sessions: list[SessionRow], *, watch: bool = True) -> None:
+        """Lease and watcher decisions, run after each tick with the sessions still alive. Must not call tick.
 
-        Decisions are made under the database lock inside the lease call; the watcher is started or stopped only
-        after that call has returned, because its flush thread takes the same lock.
+        ``watch=False`` (registration) only prunes. Decisions are made under the database lock inside the lease
+        call; the watcher is started or stopped only after that call has returned, because its flush thread takes
+        the same lock.
         """
 
         db = self.db
         journal = self.journal
-        refusal = self.workspace.journal_refusal
         if db is None:
             return
-        if refusal is not None or journal is None:
+        if self.workspace.journal_refusal is not None or journal is None:
             self._stop_watcher()
-            self._set_journal(_JOURNAL_UNAVAILABLE, refusal or self._journal_error or _UNAVAILABLE_REASON)
+            return
+        if not watch:
             return
         root_key = self.workspace.root_key
         if len(live_sessions) < 2:
             self._stop_watcher()
             db.release_lease(root_key, self.session_id)
-            self._set_journal(_JOURNAL_OFF, None)
+            return
+        if self._watcher is not None:
+            reason = self._watcher.unhealthy_reason()
+            if reason is not None:
+                self._fail_watch(reason)
+                return
+        if self._watcher is None and self._in_backoff():
+            # No lease and no baseline while backing off after a failed start.
             return
         # tick has already pruned dead rows, so membership in ``live_sessions`` is the liveness test. Probing the
         # process here would spawn a subprocess while the database lock is held.
@@ -571,35 +626,80 @@ class WorkspaceRuntime:
         )
         if not acquired:
             self._stop_watcher()
-            owner = db.lease_owner(root_key)
-            self._set_journal(_JOURNAL_OFF, None, owner=owner.session_id if owner is not None else None)
             return
         if self._watcher is None:
             try:
                 self._start_watcher(journal)
             except Exception as exc:
                 self._log_failure(exc)
-                db.release_lease(root_key, self.session_id)
-                self._set_journal(_JOURNAL_UNAVAILABLE, str(exc) or type(exc).__name__)
+                self._fail_watch(str(exc) or type(exc).__name__)
                 return
-        self._maybe_evict(journal)
-        self._set_journal(_JOURNAL_WATCHING, None, owner=self.session_id)
+        self._maybe_evict()
 
     def _start_watcher(self, journal: Journal) -> None:
+        db = self.db
+        if db is None:
+            raise CoordinationUnavailable("coordination database is not open")
+        root_key = self.workspace.root_key
         watcher = WorkspaceWatcher(
             self.workspace,
             journal,
             attribute=lambda path: status_views.infer_attribution(path, self.live_sessions()),
             observer_factory=self._observer_factory,
+            content_under=lambda prefix: db.content_paths_under(root_key, prefix),
         )
         watcher.start()
         self._watcher = watcher
+        self._watch_error = None
+        self._watch_retry_at = None
 
     def _stop_watcher(self) -> None:
         watcher = self._watcher
         self._watcher = None
         if watcher is not None:
             watcher.stop()
+
+    def _fail_watch(self, reason: str) -> None:
+        """Stop the watcher, give up the lease and back off before the next attempt."""
+
+        self._stop_watcher()
+        db = self.db
+        if db is not None:
+            try:
+                db.release_lease(self.workspace.root_key, self.session_id)
+            except Exception as exc:
+                self._log_failure(exc)
+        self._watch_error = reason
+        self._watch_retry_at = time.monotonic() + WATCH_RETRY_S
+
+    def _in_backoff(self) -> bool:
+        return self._watch_retry_at is not None and time.monotonic() < self._watch_retry_at
+
+    def _live_owner(self) -> str | None:
+        """The session id holding the lease, when that session is still live; None otherwise. Reads rows only."""
+
+        db = self.db
+        if db is None:
+            return None
+        try:
+            lease = db.lease_owner(self.workspace.root_key)
+            if lease is None:
+                return None
+            if any(row.session_id == lease.session_id for row in db.list_sessions(self.workspace.root_key)):
+                return lease.session_id
+        except Exception as exc:
+            self._log_failure(exc)
+        return None
+
+    def _over_cap(self) -> bool:
+        db = self.db
+        if db is None:
+            return False
+        try:
+            return db.get_meta(_over_cap_key(self.workspace.root_key)) == "1"
+        except Exception as exc:
+            self._log_failure(exc)
+            return False
 
     def _release_watch(self) -> None:
         """Stop the watcher and give up the lease; used on shutdown. Failures degrade without raising."""
@@ -612,22 +712,12 @@ class WorkspaceRuntime:
             db.release_lease(self.workspace.root_key, self.session_id)
         except Exception as exc:
             self._degrade(exc)
-        self._set_journal(_JOURNAL_OFF, None)
 
-    def _maybe_evict(self, journal: Journal) -> None:
+    def _maybe_evict(self) -> None:
         now = time.monotonic()
         if self._last_evict is not None and now - self._last_evict < EVICT_INTERVAL_S:
             return
-        self._last_evict = now
-        try:
-            journal.evict()
-        except Exception as exc:
-            self._log_failure(exc)
-
-    def _set_journal(self, state: str, reason: str | None, owner: str | None = None) -> None:
-        self._journal_state = state
-        self._journal_reason = reason
-        self._lease_owner = owner
+        self.run_journal_eviction()
 
     def _degrade(self, exc: Exception) -> None:
         self.degraded_reason = str(exc) or type(exc).__name__
@@ -676,6 +766,10 @@ class WorkspaceRuntime:
             db.close()
         except Exception as exc:
             self._degrade(exc)
+
+
+def _over_cap_key(root_key: str) -> str:
+    return f"{_OVER_CAP_META}{root_key}"
 
 
 def _end_detail(row: SessionRow) -> dict[str, object]:

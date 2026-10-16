@@ -395,7 +395,7 @@ def test_shutdown_waits_for_an_active_tick(
     entered = threading.Event()
     release = threading.Event()
 
-    def blocking_hook(_live: list[SessionRow]) -> None:
+    def blocking_hook(_live: list[SessionRow], **_kwargs: object) -> None:
         entered.set()
         release.wait(10.0)
 

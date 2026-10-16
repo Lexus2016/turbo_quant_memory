@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import random
+import shutil
+import string
 import subprocess
 import sys
 import threading
@@ -12,10 +15,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from watchdog.events import DirDeletedEvent
 from watchdog.observers.api import BaseObserver
 from watchdog.observers.polling import PollingObserver
 
+from turbo_memory_mcp.workspace import runtime as runtime_module
 from turbo_memory_mcp.workspace import watcher as watcher_module
+from turbo_memory_mcp.workspace.db import CoordinationDB
+from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
 from turbo_memory_mcp.workspace.models import LeaseRow, VersionRecord
 from turbo_memory_mcp.workspace.paths import resolve_workspace
 from turbo_memory_mcp.workspace.runtime import TICKER_THREAD_NAME, WorkspaceRuntime
@@ -26,6 +33,12 @@ GHOST_SESSION = "ghost00000001"
 
 def _polling() -> BaseObserver:
     return PollingObserver(timeout=0.1)
+
+
+def _quiet_polling() -> BaseObserver:
+    """An observer that reports nothing during a test; only explicitly queued paths are processed."""
+
+    return PollingObserver(timeout=60)
 
 
 def _live(name: str) -> list[threading.Thread]:
@@ -79,6 +92,27 @@ def runtimes() -> Iterator[list[WorkspaceRuntime]]:
     assert _live(WATCHER_THREAD_NAME) == []
 
 
+@pytest.fixture
+def standalone(
+    repo: Path, env: dict[str, str], tmp_path: Path
+) -> Iterator[tuple[WorkspaceWatcher, Journal, CoordinationDB]]:
+    """A watcher over a real journal without any runtime, for tests that drive the flush directly."""
+
+    workspace = resolve_workspace(repo, environ=env)
+    db = CoordinationDB.open(tmp_path / "coord.sqlite")
+    journal = Journal(workspace, db, tmp_path / "blobs", JournalLimits())
+    watcher = WorkspaceWatcher(
+        workspace,
+        journal,
+        attribute=lambda _path: ("unknown", None),
+        observer_factory=_quiet_polling,
+        content_under=lambda prefix: db.content_paths_under(workspace.root_key, prefix),
+    )
+    yield watcher, journal, db
+    watcher.stop()
+    db.close()
+
+
 def _start(
     runtimes: list[WorkspaceRuntime],
     cwd: Path,
@@ -94,16 +128,20 @@ def _start(
 def _pair(
     runtimes: list[WorkspaceRuntime], repo: Path, env: dict[str, str]
 ) -> tuple[WorkspaceRuntime, WorkspaceRuntime]:
-    """Two sessions in one tree; the second to register holds the lease and runs the watcher."""
+    """Two sessions in one tree. Ticks drive the lease: the second session to tick first takes it."""
 
     first = _start(runtimes, repo, env)
     second = _start(runtimes, repo, env)
+    second.tick()
+    first.tick()
     assert _owners(runtimes) == [second]
     return first, second
 
 
 def _owners(runtimes: list[WorkspaceRuntime]) -> list[WorkspaceRuntime]:
-    return [runtime for runtime in runtimes if runtime.journal_state()["state"] == "watching"]
+    """The sessions that run a watcher. Every session reports the lease owner's state, so this checks the watcher."""
+
+    return [runtime for runtime in runtimes if runtime.watcher is not None]
 
 
 def _lease(runtime: WorkspaceRuntime) -> LeaseRow | None:
@@ -218,6 +256,19 @@ def test_delete_and_rename_are_journaled(repo: Path, env: dict[str, str], runtim
     assert _history(second, "new.py")[0].kind == "content"
 
 
+def test_deleting_a_committed_file_is_journaled(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    _, second = _pair(runtimes, repo, env)
+    assert second.watcher is not None
+
+    (repo / "src" / "a.py").unlink()
+    second.watcher._enqueue([str(repo / "src" / "a.py")])
+    second.watcher.flush_now()
+
+    assert _history(second, "src/a.py")[0].kind == "deletion"
+
+
 def test_watcher_starts_with_second_session_and_stops_when_alone(
     repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
 ) -> None:
@@ -225,12 +276,13 @@ def test_watcher_starts_with_second_session_and_stops_when_alone(
     assert first.journal_state()["state"] == "off"
 
     second = _start(runtimes, repo, env)
-    first.tick()
     second.tick()
+    first.tick()
 
     assert [runtime.session_id for runtime in _owners(runtimes)] == [second.session_id]
-    assert first.journal_state()["state"] == "off"
+    assert first.journal_state()["state"] == "watching"
     assert first.journal_state()["owner_session"] == second.session_id
+    assert first.journal_state()["this_session_owns"] is False
 
     second.shutdown()
     first.tick()
@@ -251,16 +303,21 @@ def test_lease_taken_over_after_owner_death(repo: Path, env: dict[str, str], run
         time.time(),
         owner_alive=lambda _row: False,
     )
-    assert _lease(first) is not None
-    assert _lease(first).session_id == GHOST_SESSION  # type: ignore[union-attr]
+    lease = _lease(first)
+    assert lease is not None
+    assert lease.session_id == GHOST_SESSION
 
     first.tick()
 
     assert first.journal_state()["state"] == "watching"
-    assert _lease(first) is not None
-    assert _lease(first).session_id == first.session_id  # type: ignore[union-attr]
+    lease = _lease(first)
+    assert lease is not None
+    assert lease.session_id == first.session_id
+    # The lease holder is live, so the other session reports the holder as the owner, not "off".
     second.tick()
-    assert second.journal_state()["state"] == "off"
+    assert second.journal_state()["state"] == "watching"
+    assert second.journal_state()["owner_session"] == first.session_id
+    assert second.journal_state()["this_session_owns"] is False
     assert second.watcher is None
 
 
@@ -278,13 +335,36 @@ def test_burst_of_files_stays_within_limits(repo: Path, env: dict[str, str], run
 
     _settle(runtimes, burst_recorded, timeout=60.0)
 
+    second.run_journal_eviction()
     assert second.journal is not None
-    assert second.journal.evict() == 0
     assert second.journal.over_cap is True
+    assert first.journal_state()["over_cap"] is True
 
     digest = first.digest()
     assert digest is not None
     assert len([line for line in digest["new"] if "files changed" in line]) == 1
+
+
+def test_non_owner_reports_owner_and_shared_over_cap(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    env["TQMEMORY_JOURNAL_MAX_BYTES"] = "100"
+    first, second = _pair(runtimes, repo, env)
+    rng = random.Random(7)
+    for index in range(3):
+        # Blobs are compressed, so the content must resist compression for the size cap to bite.
+        text = "".join(rng.choice(string.ascii_letters) for _ in range(400))
+        (repo / f"note{index}.txt").write_text(text, encoding="utf-8")
+    _settle(runtimes, lambda: all(f"note{index}.txt" in _recorded_paths(second) for index in range(3)))
+
+    second.run_journal_eviction()
+
+    watching = first.journal_state()
+    assert watching["state"] == "watching"
+    assert watching["owner_session"] == second.session_id
+    assert watching["this_session_owns"] is False
+    assert watching["over_cap"] is True
+    assert second.journal_state()["this_session_owns"] is True
 
 
 def test_refused_workspace_never_watches(tmp_path: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]) -> None:
@@ -294,6 +374,8 @@ def test_refused_workspace_never_watches(tmp_path: Path, env: dict[str, str], ru
 
     first = _start(runtimes, plain, env)
     second = _start(runtimes, plain, env)
+    second.tick()
+    first.tick()
 
     for runtime in (first, second):
         state = runtime.journal_state()
@@ -335,8 +417,9 @@ def test_watchdog_start_failure_is_contained(repo: Path, env: dict[str, str], ru
     def broken() -> BaseObserver:
         raise OSError("inotify watch limit reached")
 
-    _start(runtimes, repo, env)
+    first = _start(runtimes, repo, env)
     second = _start(runtimes, repo, env, factory=broken)
+    second.tick()
 
     state = second.journal_state()
     assert state["state"] == "unavailable"
@@ -348,22 +431,102 @@ def test_watchdog_start_failure_is_contained(repo: Path, env: dict[str, str], ru
     assert second.status()["status"] == "ok"
     assert second.status()["journal"]["state"] == "unavailable"
     second.digest()
+    assert first.journal_state()["state"] == "off"
 
 
-class _BlockingJournal:
-    """Stands in for a journal whose first write never returns until released."""
+def test_failed_start_backs_off_before_the_next_attempt(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts: list[int] = []
+    original_start = WorkspaceWatcher.start
 
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
+    def counting_start(self: WorkspaceWatcher) -> None:
+        attempts.append(1)
+        original_start(self)
 
-    def record(self, rel_path: str, **kwargs: Any) -> None:
-        self.entered.set()
-        self.release.wait(30)
-        return None
+    monkeypatch.setattr(WorkspaceWatcher, "start", counting_start)
 
-    def record_deletion(self, rel_path: str, **kwargs: Any) -> None:
-        return None
+    def broken() -> BaseObserver:
+        raise OSError("inotify watch limit reached")
+
+    _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env, factory=broken)
+    second.tick()
+    second.tick()
+
+    assert len(attempts) == 1
+    assert second.journal_state()["state"] == "unavailable"
+    assert _lease(second) is None
+
+    # Once the backoff has elapsed, the next tick tries again.
+    third = _start(runtimes, repo, env, factory=broken)
+    monkeypatch.setattr(runtime_module, "WATCH_RETRY_S", 0.0)
+    third.tick()
+    third.tick()
+    assert len(attempts) == 3
+
+
+def test_dead_emitter_releases_lease_and_backs_off(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    created: list[BaseObserver] = []
+
+    def tracked() -> BaseObserver:
+        observer = _polling()
+        created.append(observer)
+        return observer
+
+    _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env, factory=tracked)
+    second.tick()
+    assert second.journal_state()["state"] == "watching"
+
+    created[0].stop()  # the observer thread dies under the running watcher
+    created[0].join(5.0)
+    second.tick()
+
+    state = second.journal_state()
+    assert state["state"] == "unavailable"
+    assert "observer" in str(state["reason"])
+    assert _lease(second) is None
+    assert second.watcher is None
+
+    second.tick()
+    assert len(created) == 1
+    assert second.journal_state()["state"] == "unavailable"
+
+
+class _StuckObserver(PollingObserver):
+    """An observer whose stop blocks until released, like an emitter that never finishes joining."""
+
+    def __init__(self, release: threading.Event) -> None:
+        super().__init__(timeout=0.1)
+        self._release = release
+
+    def stop(self) -> None:
+        self._release.wait(30)
+        super().stop()
+
+
+def test_stuck_observer_does_not_block_shutdown_or_lease_release(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    release = threading.Event()
+    try:
+        first = _start(runtimes, repo, env)
+        second = _start(runtimes, repo, env, factory=lambda: _StuckObserver(release))
+        second.tick()
+        first.tick()
+        assert second.watcher is not None
+
+        started = time.monotonic()
+        second.shutdown()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 4.0
+        assert _lease(first) is None
+    finally:
+        release.set()
 
 
 def test_watcher_stop_is_bounded_and_idempotent(
@@ -394,3 +557,131 @@ def test_watcher_stop_is_bounded_and_idempotent(
     finally:
         journal.release.set()
         watcher.stop()
+
+
+class _BlockingJournal:
+    """Stands in for a journal whose first write never returns until released."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def record(self, rel_path: str, **kwargs: Any) -> None:
+        self.entered.set()
+        self.release.wait(30)
+        return None
+
+    def record_deletion(self, rel_path: str, **kwargs: Any) -> None:
+        return None
+
+
+def test_stop_drains_events_queued_before_it(
+    repo: Path, standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB]
+) -> None:
+    watcher, journal, _db = standalone
+    doomed = repo / "doomed.txt"
+    doomed.write_text("bye\n", encoding="utf-8")
+    journal.record("doomed.txt")
+    watcher.start()
+
+    doomed.unlink()
+    watcher._enqueue([str(doomed)])
+    watcher.stop()
+
+    assert journal.history("doomed.txt", limit=1)[0].kind == "deletion"
+
+
+def test_git_calls_never_take_optional_locks(
+    repo: Path, standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    real_run = subprocess.run
+
+    def spy(args: Any, *args_rest: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append((list(args), kwargs))
+        return real_run(args, *args_rest, **kwargs)
+
+    monkeypatch.setattr(watcher_module.subprocess, "run", spy)
+    watcher, _journal, _db = standalone
+    watcher.start()
+    (repo / "fresh.txt").write_text("x\n", encoding="utf-8")
+    (repo / "gone.txt").write_text("y\n", encoding="utf-8")
+    watcher._enqueue([str(repo / "fresh.txt"), str(repo / "gone.txt")])
+    watcher.flush_now()
+    (repo / "gone.txt").unlink()
+    watcher._enqueue([str(repo / "gone.txt")])
+    watcher.flush_now()
+    watcher.stop()
+
+    git_calls = [(args, kwargs) for args, kwargs in calls if args and args[0] == "git"]
+    assert git_calls
+    for args, kwargs in git_calls:
+        assert args[1] == "--no-optional-locks", args
+        assert kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0"
+    assert any("status" in args for args, _ in git_calls)
+    assert any("check-ignore" in args for args, _ in git_calls)
+
+
+def test_transient_file_leaves_no_deletion_and_no_digest_line(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first, second = _pair(runtimes, repo, env)
+    assert second.watcher is not None
+
+    scratch = repo / "scratch.tmp"
+    scratch.write_text("temp\n", encoding="utf-8")
+    scratch.unlink()
+    second.watcher._enqueue([str(scratch)])
+    second.watcher.flush_now()
+
+    assert _history(second, "scratch.tmp") == []
+    digest = first.digest()
+    lines = digest["new"] if digest is not None else []
+    assert not any("scratch" in line or "files changed" in line for line in lines)
+
+
+def test_removed_directory_records_deletions_for_its_journaled_files(
+    repo: Path, standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB]
+) -> None:
+    watcher, journal, _db = standalone
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("a\n", encoding="utf-8")
+    (docs / "b.md").write_text("b\n", encoding="utf-8")
+    journal.record("docs/a.md")
+    journal.record("docs/b.md")
+    shutil.rmtree(docs)
+
+    watcher_module._Handler(watcher).on_any_event(DirDeletedEvent(str(docs)))
+    watcher.flush_now()
+
+    assert journal.history("docs/a.md", limit=1)[0].kind == "deletion"
+    assert journal.history("docs/b.md", limit=1)[0].kind == "deletion"
+
+
+def test_start_never_runs_the_baseline_on_the_caller(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_baseline(self: WorkspaceWatcher) -> None:
+        entered.set()
+        release.wait(30)
+
+    monkeypatch.setattr(WorkspaceWatcher, "_baseline", blocked_baseline)
+    ticker = threading.Thread(target=lambda: None, daemon=True)
+    try:
+        _start(runtimes, repo, env)
+        started = time.monotonic()
+        second = _start(runtimes, repo, env)
+        assert time.monotonic() - started < 2.0
+        assert not entered.is_set()
+
+        # The ticker's work (here, an explicit tick) is where the baseline runs.
+        ticker = threading.Thread(target=second.tick, daemon=True)
+        ticker.start()
+        assert entered.wait(10)
+    finally:
+        release.set()
+        ticker.join(10)

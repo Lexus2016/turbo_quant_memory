@@ -303,7 +303,13 @@ def test_status_lists_other_sessions_and_coverage_text(
 
     assert [session["feature"] for session in status["sessions"]] == ["docs"]
     assert status["coverage"] == COVERAGE_TEXT
-    assert status["journal"]["state"] == "off"
+    assert status["journal"] == {
+        "state": "off",
+        "reason": None,
+        "owner_session": None,
+        "over_cap": False,
+        "this_session_owns": False,
+    }
 
 
 def test_status_reports_recent_change_with_inferred_writer(

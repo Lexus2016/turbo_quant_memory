@@ -405,6 +405,33 @@ class CoordinationDB:
         with self._use() as conn:
             conn.execute("DELETE FROM leases WHERE workspace = ? AND session_id = ?", (workspace, session_id))
 
+    # Shared meta ---------------------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        with self._use() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._use() as conn:
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+    # Journal reads ------------------------------------------------------------
+
+    def content_paths_under(self, workspace: str, prefix: str) -> list[str]:
+        """Paths under ``prefix/`` in this workspace whose newest version is a content version."""
+
+        # Every string that starts with "prefix/" sorts before "prefix0", since "/" < "0".
+        with self._use() as conn:
+            rows = conn.execute(
+                "SELECT v.path FROM versions v WHERE v.workspace = ? AND v.path >= ? AND v.path < ? "
+                "AND v.kind = 'content' AND v.version_id = "
+                "(SELECT MAX(w.version_id) FROM versions w WHERE w.workspace = v.workspace AND w.path = v.path) "
+                "ORDER BY v.path",
+                (workspace, f"{prefix}/", f"{prefix}0"),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     @staticmethod
     def _lease_row(conn: sqlite3.Connection, workspace: str) -> LeaseRow | None:
         row = conn.execute(
