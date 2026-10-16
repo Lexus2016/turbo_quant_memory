@@ -26,7 +26,13 @@ from watchdog.observers import Observer
 from turbo_memory_mcp.store import resolve_storage_root
 from turbo_memory_mcp.workspace import models
 from turbo_memory_mcp.workspace import status as status_views
-from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationLockBusy, CoordinationUnavailable, lock_deadline
+from turbo_memory_mcp.workspace.db import (
+    CoordinationDB,
+    CoordinationLockBusy,
+    CoordinationUnavailable,
+    guarded_lock,
+    lock_deadline,
+)
 from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
 from turbo_memory_mcp.workspace.liveness import is_process_alive, process_start_time
 from turbo_memory_mcp.workspace.models import EventRow, SessionRow, Workspace
@@ -153,19 +159,18 @@ class WorkspaceRuntime:
 
         if not name:
             return
-        with self._client_lock:
-            db = self.db
-            if self._client_noted or db is None:
-                return
-            try:
-                with lock_deadline(time.monotonic() + _HOT_PATH_LOCK_S):
-                    db.update_session_client(self.session_id, name, version or "")
-            except CoordinationLockBusy:
-                return  # retried on the next response
-            except Exception as exc:
-                self._degrade(exc)
-                return
-            self._client_noted = True
+        try:
+            # One deadline covers the client lock and the database lock; a busy lock is retried on the next response.
+            with lock_deadline(time.monotonic() + _HOT_PATH_LOCK_S), guarded_lock(self._client_lock):
+                db = self.db
+                if self._client_noted or db is None:
+                    return
+                db.update_session_client(self.session_id, name, version or "")
+                self._client_noted = True
+        except CoordinationLockBusy:
+            return
+        except Exception as exc:
+            self._degrade(exc)
 
     def touch(self) -> None:
         """Refresh this session's last-activity timestamp."""
@@ -575,7 +580,7 @@ class WorkspaceRuntime:
     def _advance_cursor(self, db: CoordinationDB, target: int) -> None:
         """Move this session's event cursor forward to ``target``; a lower or equal target changes nothing."""
 
-        with self._cursor_lock:
+        with guarded_lock(self._cursor_lock):
             current = db.get_cursor(self.session_id)
             if current is None or target > current:
                 db.set_cursor(self.session_id, target)

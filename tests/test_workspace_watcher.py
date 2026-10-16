@@ -955,3 +955,61 @@ def test_version_keeps_the_feature_of_the_session_it_was_attributed_to(
     features = _event_features(second.db, "src/a.py")  # type: ignore[arg-type]
     assert features[0] == "feature-A"
     assert features[1] == "feature-B"
+
+
+def _timed(action: Callable[[], object]) -> tuple[object, float | None]:
+    """Run ``action`` on a helper thread; return its result and elapsed seconds, or None if it did not finish."""
+
+    box: list[object] = []
+    started = time.monotonic()
+    worker = threading.Thread(target=lambda: box.append(action()), daemon=True)
+    worker.start()
+    worker.join(1.0)
+    if worker.is_alive():
+        return None, None
+    return box[0], time.monotonic() - started
+
+
+def test_every_decoration_lock_shares_the_deadline(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first, second = _pair(runtimes, repo, env)
+    second.announce_work("docs", ["src"])
+    assert first.db is not None
+    held_cursor = threading.Event()
+    held_client = threading.Event()
+    release = threading.Event()
+
+    def hold(lock: threading.Lock, held: threading.Event) -> None:
+        with lock:
+            held.set()
+            release.wait(30)
+
+    holders = [
+        threading.Thread(target=hold, args=(first._cursor_lock, held_cursor), daemon=True),
+        threading.Thread(target=hold, args=(first._client_lock, held_client), daemon=True),
+    ]
+    for holder in holders:
+        holder.start()
+    try:
+        assert held_cursor.wait(5)
+        assert held_client.wait(5)
+        digest_result, digest_elapsed = _timed(first.digest)
+        note_result, note_elapsed = _timed(lambda: first.note_client("codex", "1.0"))
+        assert digest_elapsed is not None and digest_elapsed < 0.25
+        assert digest_result is None
+        assert note_elapsed is not None and note_elapsed < 0.25
+        assert note_result is None
+    finally:
+        release.set()
+        for holder in holders:
+            holder.join(10)
+
+    # Nothing was consumed: the update is delivered by the next calls.
+    first.note_client("codex", "1.0")
+    session = first.db.get_session(first.session_id)
+    assert session is not None
+    assert session.client_name == "codex"
+    digest = first.digest()
+    assert digest is not None
+    assert any("docs" in line for line in digest["new"])

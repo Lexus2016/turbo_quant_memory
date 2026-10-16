@@ -97,6 +97,17 @@ def lock_deadline(deadline: float) -> Iterator[None]:
         _LOCK_SCOPE.deadline = previous
 
 
+@contextmanager
+def guarded_lock(lock: threading.Lock) -> Iterator[None]:
+    """Hold ``lock`` for the block, honouring the enclosing ``lock_deadline`` (unbounded without one)."""
+
+    _acquire_lock(lock)
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 def _acquire_lock(lock: threading.Lock) -> None:
     deadline: float | None = getattr(_LOCK_SCOPE, "deadline", None)
     if deadline is None:
