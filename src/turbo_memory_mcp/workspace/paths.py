@@ -12,7 +12,12 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-from turbo_memory_mcp.identity import resolve_project_identity, resolve_project_root
+from turbo_memory_mcp.identity import (
+    ENV_PROJECT_ROOT,
+    _ensure_safe_id,
+    resolve_project_identity,
+    resolve_project_root,
+)
 from turbo_memory_mcp.workspace.models import Workspace
 
 ENV_WORKSPACE_DISABLE = "TQMEMORY_WORKSPACE_DISABLE"
@@ -29,21 +34,31 @@ def resolve_workspace(
     """Resolve the working tree that ``cwd`` belongs to and whether the journal may run in it."""
 
     env = os.environ if environ is None else environ
-    base = resolve_project_root(cwd, env)
+    if env.get(ENV_PROJECT_ROOT, "").strip():
+        base = resolve_project_root(cwd, env)
+    else:
+        # identity's git helper strips the toplevel output, which breaks directory names
+        # ending in a space, so the toplevel is read here directly from the start directory.
+        base = Path(cwd).expanduser().resolve() if cwd is not None else Path.cwd().resolve()
     toplevel = _git_toplevel(base)
     root = toplevel if toplevel is not None else base.resolve()
     is_git = toplevel is not None
+    # Identity comes from the tree root, not the caller's cwd, so every session in one
+    # working tree hashes the same path even when TQMEMORY_PROJECT_ROOT points at a subdirectory.
+    # TQMEMORY_PROJECT_ID stays in the environment and remains an explicit override.
+    identity_env = {key: value for key, value in env.items() if key != ENV_PROJECT_ROOT}
     return Workspace(
         root=root,
         root_key=root.as_posix(),
-        project_id=resolve_project_identity(cwd, env).project_id,
+        project_id=resolve_project_identity(root, identity_env).project_id,
         is_git=is_git,
         journal_refusal=_journal_refusal(root, is_git),
     )
 
 
 def workspace_storage_dir(storage_root: Path, project_id: str) -> Path:
-    return storage_root / "projects" / project_id / "workspace"
+    safe_id = _ensure_safe_id(project_id, field="project_id")
+    return storage_root / "projects" / safe_id / "workspace"
 
 
 def coord_db_path(storage_root: Path, project_id: str) -> Path:
@@ -68,12 +83,13 @@ def to_relative(workspace: Workspace, path: str | Path) -> str:
     outside the root raises ``ValueError``.
     """
 
+    root = workspace.root.resolve()
     candidate = Path(path)
     if not candidate.is_absolute():
-        candidate = workspace.root / candidate
+        candidate = root / candidate
     try:
-        relative = candidate.resolve().relative_to(workspace.root)
-    except ValueError:
+        relative = candidate.resolve().relative_to(root)
+    except (OSError, RuntimeError, ValueError):
         raise ValueError("path outside workspace") from None
     return relative.as_posix()
 
@@ -90,7 +106,8 @@ def _git_toplevel(directory: Path) -> Path | None:
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
-    top = result.stdout.strip()
+    # Strip only the line terminator: a directory name may end in a real space.
+    top = result.stdout.rstrip("\r\n")
     if result.returncode != 0 or not top:
         return None
     return Path(top).resolve()
