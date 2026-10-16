@@ -273,3 +273,217 @@ def test_file_history_and_restore_round_trip_through_the_journal(
     assert [row["version_id"] for row in versions][-1] == first.version_id
     assert _payload(restored)["status"] == "ok"
     assert target.read_text(encoding="utf-8") == "first\n"
+
+
+# Fix round 1: fail-open decoration, faithful statuses, writer hints.
+
+
+def test_touch_failure_leaves_memory_result_without_workspace_field(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    with patch.object(runtime, "touch", side_effect=RuntimeError("touch exploded")):
+        [result] = _session_calls(server, [("recent_context", {})])
+
+    assert not result.isError
+    assert "workspace" not in _payload(result)
+
+
+def test_text_results_still_refresh_presence(env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path) -> None:
+    runtime = _start(runtimes, repo, env)
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    with patch.object(runtime, "touch", wraps=runtime.touch) as touch:
+        [result] = _session_calls(server, [("recent_context", {"format": "text"})])
+
+    assert not result.isError
+    assert touch.called
+
+
+def test_run_primary_shuts_workspace_down_even_when_lock_release_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from turbo_memory_mcp import server
+    from turbo_memory_mcp.daemon import BootstrapResult
+
+    events: list[str] = []
+
+    class _FakeRuntime:
+        def shutdown(self) -> None:
+            events.append("workspace-shutdown")
+
+    class _FakeListener:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            events.append("listener-stop")
+
+    class _NoopServer:
+        def run(self, *, transport: str) -> None:
+            return None
+
+    def _release_fails(endpoint: object) -> None:
+        raise OSError("lock file vanished")
+
+    monkeypatch.setattr(server.WorkspaceRuntime, "start", classmethod(lambda cls, *a, **k: _FakeRuntime()))
+    monkeypatch.setattr(server, "DaemonListener", _FakeListener)
+    monkeypatch.setattr(server, "make_local_dispatcher", lambda *a, **k: lambda tool, kwargs: None)
+    monkeypatch.setattr(server, "_startup_auto_migrate", lambda: None)
+    monkeypatch.setattr(server, "_warn_about_pending_migrations", lambda: None)
+    monkeypatch.setattr(server, "release_daemon_lock", _release_fails)
+    monkeypatch.setattr(server, "build_server", lambda dispatcher, **k: _NoopServer())
+
+    with pytest.raises(OSError, match="lock file vanished"):
+        server._run_primary(BootstrapResult(role="primary", endpoint=object(), client=None))
+
+    assert events == ["listener-stop", "workspace-shutdown"]
+
+
+def test_missing_blob_reports_degraded_not_bad_request(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    target = repo / "notes.txt"
+    target.write_text("kept\n", encoding="utf-8")
+    journal = runtime.journal
+    assert journal is not None
+    saved = journal.record("notes.txt")
+    assert saved is not None
+    for blob in journal._blobs_root.rglob("*.z"):
+        blob.unlink()
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("restore_file", {"path": "notes.txt", "version": str(saved.version_id)})])
+
+    payload = _payload(result)
+    assert payload["status"] == "degraded"
+    assert "missing" in payload["reason"]
+
+
+def test_db_open_failure_reports_degraded(env: dict[str, str], repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from turbo_memory_mcp.workspace import runtime as runtime_module
+
+    def _open_fails(cls: object, path: object, **kwargs: object) -> None:
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(runtime_module.CoordinationDB, "open", classmethod(_open_fails))
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    try:
+        server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+        [result] = _session_calls(server, [("file_history", {"path": "notes.txt"})])
+    finally:
+        runtime.shutdown()
+
+    payload = _payload(result)
+    assert payload["status"] == "degraded"
+    assert "disk on fire" in payload["reason"]
+
+
+def test_journal_startup_failure_reports_its_recorded_reason(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    broken = {**env, "TQMEMORY_JOURNAL_MAX_BYTES": "lots"}
+    runtime = _start(runtimes, repo, broken)
+    server = build_server(make_local_dispatcher(default_environ=broken), workspace=runtime)
+
+    [history, restore] = _session_calls(
+        server,
+        [
+            ("file_history", {"path": "notes.txt"}),
+            ("restore_file", {"path": "notes.txt", "version": "1"}),
+        ],
+    )
+
+    for result in (history, restore):
+        payload = _payload(result)
+        assert payload["status"] == "unavailable"
+        assert "TQMEMORY_JOURNAL_MAX_BYTES" in payload["reason"]
+
+
+def test_file_history_names_the_announcing_session_as_a_hint_not_a_fact(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    peer.announce_work("auth refresh", ["src"])
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    journal = runtime.journal
+    assert journal is not None
+    journal.record(
+        "src/a.py",
+        attribution="inferred",
+        session_id=peer.session_id,
+        feature="auth refresh",
+    )
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("file_history", {"path": "src/a.py"})])
+
+    [version] = _payload(result)["versions"]
+    assert version["writer_hint"] == "inside codex's announced area (auth refresh)"
+
+
+def test_file_history_hint_after_writer_session_ends_names_no_one(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    peer.announce_work("auth refresh", ["src"])
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    journal = runtime.journal
+    assert journal is not None
+    journal.record("src/a.py", attribution="inferred", session_id=peer.session_id, feature="auth refresh")
+    peer.shutdown()
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("file_history", {"path": "src/a.py"})])
+
+    [version] = _payload(result)["versions"]
+    assert "codex" not in version["writer_hint"]
+    assert "auth refresh" in version["writer_hint"]
+
+
+def test_describe_reports_db_path_from_the_start_environment(
+    repo: Path, tmp_path: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    custom_home = tmp_path / "custom-home"
+    custom = {**env, "TQMEMORY_HOME": str(custom_home)}
+    runtime = _start(runtimes, repo, custom)
+
+    assert runtime.describe()["db_path"].startswith(str(custom_home))
+
+
+def test_describe_never_reports_ok_alongside_a_read_failure(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    assert runtime.db is not None
+
+    with patch.object(runtime.db, "list_sessions", side_effect=RuntimeError("read failed")):
+        block = runtime.describe()
+
+    assert block["state"] == "degraded"
+    assert block["reason"] == "read failed"
+
+
+def test_fallback_journal_block_has_the_runtime_journal_keys(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    from turbo_memory_mcp.server import _fallback_workspace_block
+
+    runtime = _start(runtimes, repo, env)
+
+    fallback = _fallback_workspace_block(enabled=True, state="degraded", reason="x")
+
+    assert set(fallback["journal"]) == set(runtime.describe()["journal"])

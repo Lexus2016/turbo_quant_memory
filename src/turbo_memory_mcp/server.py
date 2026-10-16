@@ -85,11 +85,10 @@ from .store import (
     resolve_storage_root,
 )
 from .telemetry import build_usage_snapshot, record_hydration_usage, record_semantic_search_usage
-from .workspace.journal import Journal
-from .workspace.models import VersionRecord
+from .workspace.models import FILE_CHANGED, FILE_DELETED, SessionRow, VersionRecord
 from .workspace.paths import to_relative
 from .workspace.runtime import WorkspaceRuntime
-from .workspace.status import iso_time
+from .workspace.status import iso_time, writer_hint
 
 _cached_bootstrap: BootstrapResult | None = None
 _auto_migration_result: str | None = None
@@ -169,20 +168,84 @@ def _fallback_workspace_block(*, enabled: bool, state: str, reason: str) -> dict
         "workspace": None,
         "db_path": None,
         "live_sessions": None,
-        "journal": {"state": "off", "reason": None, "owner_session": None, "over_cap": False},
+        "journal": {
+            "state": "off",
+            "reason": None,
+            "owner_session": None,
+            "over_cap": False,
+            "this_session_owns": False,
+        },
         "coverage": None,
     }
 
 
-def _workspace_journal(workspace: WorkspaceRuntime) -> tuple[Journal | None, str]:
-    journal = workspace.journal
-    if journal is not None:
-        return journal, ""
-    reason = workspace.workspace.journal_refusal or workspace.degraded_reason or "change journal is not running"
-    return None, reason
+_NOT_RUNNING_REASON = "change journal is not running"
+_HINT_PAGE_SIZE = 200
+_HINT_SCAN_LIMIT = 5000
 
 
-def _version_view(record: VersionRecord) -> dict[str, Any]:
+def _no_journal(workspace: WorkspaceRuntime) -> dict[str, Any]:
+    """Why the journal cannot serve a request: a failed database is degraded, a refused or stopped journal unavailable."""
+
+    if workspace.db is None:
+        return {"status": "degraded", "reason": workspace.degraded_reason or "coordination database is not open"}
+    reason = (
+        workspace.workspace.journal_refusal
+        or workspace.journal_state().get("reason")
+        or workspace.degraded_reason
+        or _NOT_RUNNING_REASON
+    )
+    return {"status": "unavailable", "reason": reason}
+
+
+def _change_details(workspace: WorkspaceRuntime, version_ids: set[int]) -> dict[int, dict[str, Any]]:
+    """Recorded event detail for the given versions, found by scanning the change events newest first.
+
+    Bounded by ``_HINT_SCAN_LIMIT``; a read failure yields no details, so hints fall back to what the version row says.
+    """
+
+    db = workspace.db
+    if db is None or not version_ids:
+        return {}
+    root_key = workspace.workspace.root_key
+    found: dict[int, dict[str, Any]] = {}
+    try:
+        upper = db.max_event_id(root_key)
+        before = upper + 1
+        scanned = 0
+        while len(found) < len(version_ids) and scanned < _HINT_SCAN_LIMIT:
+            page = db.events_window(
+                root_key,
+                (FILE_CHANGED, FILE_DELETED),
+                upper_id=upper,
+                before_id=before,
+                limit=_HINT_PAGE_SIZE,
+            )
+            if not page:
+                break
+            for event in page:
+                version_id = event.detail.get("version_id")
+                if isinstance(version_id, int) and version_id in version_ids:
+                    found[version_id] = event.detail
+            scanned += len(page)
+            before = page[-1].event_id
+    except Exception:
+        return found
+    return found
+
+
+def _writer_hint(record: VersionRecord, sessions: Mapping[str, SessionRow], detail: Mapping[str, Any] | None) -> str:
+    """A hint about who may have written a version. Inferred writers are never stated as fact."""
+
+    recorded = detail.get("feature") if detail is not None else None
+    feature = recorded if isinstance(recorded, str) else None
+    session = sessions.get(record.session_id) if record.session_id is not None else None
+    if record.attribution == "inferred" and session is None and feature is not None:
+        return f"inside an announced area ({feature}); that session has ended"
+    return writer_hint(record.attribution, session, feature)
+
+
+def _version_view(record: VersionRecord, hint: str) -> dict[str, Any]:
     return {
         "version_id": record.version_id,
         "kind": record.kind,
@@ -190,16 +253,26 @@ def _version_view(record: VersionRecord) -> dict[str, Any]:
         "observed_at": iso_time(record.observed_at),
         "attribution": record.attribution,
         "session_id": record.session_id,
+        "writer_hint": hint,
     }
 
 
 def _file_history(workspace: WorkspaceRuntime, path: str, limit: int) -> dict[str, Any]:
-    journal, reason = _workspace_journal(workspace)
+    journal = workspace.journal
     if journal is None:
-        return {"status": "unavailable", "reason": reason}
+        return _no_journal(workspace)
     rel = to_relative(workspace.workspace, path.replace("\\", "/"))
     records = journal.history(rel, limit)
-    return {"status": "ok", "path": rel, "versions": [_version_view(record) for record in records]}
+    details = _change_details(workspace, {record.version_id for record in records})
+    sessions = {row.session_id: row for row in workspace.live_sessions()}
+    return {
+        "status": "ok",
+        "path": rel,
+        "versions": [
+            _version_view(record, _writer_hint(record, sessions, details.get(record.version_id)))
+            for record in records
+        ],
+    }
 
 
 def _restore_file(workspace: WorkspaceRuntime, path: str, version: str) -> dict[str, Any]:
@@ -210,9 +283,9 @@ def _restore_file(workspace: WorkspaceRuntime, path: str, version: str) -> dict[
         target = int(version)
     else:
         return {"status": "error", "reason": "version must be a version id or HEAD"}
-    journal, reason = _workspace_journal(workspace)
+    journal = workspace.journal
     if journal is None:
-        return {"status": "unavailable", "reason": reason}
+        return _no_journal(workspace)
     rel = to_relative(workspace.workspace, path.replace("\\", "/"))
     return journal.restore(rel, target)
 
@@ -237,7 +310,7 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
     )
 
     def _begin_workspace_call() -> None:
-        """Record the caller's client name once and refresh this session's activity. Never raises."""
+        """Record the caller's client name once and refresh this session's activity. Raises on failure."""
         if workspace is None:
             return
         try:
@@ -245,18 +318,17 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
             name, version = client.name, client.version
         except (LookupError, AttributeError):
             name, version = None, None
-        try:
-            workspace.note_client(name, version)
-            workspace.touch()
-        except Exception:
-            return
+        workspace.note_client(name, version)
+        workspace.touch()
 
     def _decorate(result: Any) -> Any:
-        """Attach the workspace digest to a memory tool's dict result. Fails open to the result unchanged."""
-        if workspace is None or not isinstance(result, dict):
+        """Presence on every memory call; the digest is attached to dict results only. Fails open to the result."""
+        if workspace is None:
             return result
         try:
             _begin_workspace_call()
+            if not isinstance(result, dict):
+                return result
             digest = workspace.digest()
             if digest is None:
                 return result
@@ -281,8 +353,8 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         """Run a workspace tool directly against the runtime. Never touches the memory dispatcher or its lock."""
         if workspace is None:
             return {"status": "disabled", "reason": WORKSPACE_DISABLED_REASON}
-        _begin_workspace_call()
         try:
+            _begin_workspace_call()
             return action(workspace)
         except ValueError as exc:
             return {"status": "error", "reason": str(exc)}
@@ -1327,9 +1399,13 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
-        listener.stop()
-        release_daemon_lock(endpoint)
-        _shutdown_workspace(workspace)
+        try:
+            listener.stop()
+        finally:
+            try:
+                release_daemon_lock(endpoint)
+            finally:
+                _shutdown_workspace(workspace)
 
 
 def _run_proxy(bootstrap: BootstrapResult) -> None:
@@ -1343,8 +1419,10 @@ def _run_proxy(bootstrap: BootstrapResult) -> None:
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
-        runtime.shutdown()
-        _shutdown_workspace(workspace)
+        try:
+            runtime.shutdown()
+        finally:
+            _shutdown_workspace(workspace)
 
 
 def _run_standalone() -> None:
