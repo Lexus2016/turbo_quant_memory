@@ -162,7 +162,7 @@ def _parse_lstart(text: str) -> float | None:
     try:
         hour, minute, second = (int(field) for field in clock.split(":"))
         return float(calendar.timegm((int(year), month, int(day), hour, minute, second)))
-    except (ValueError, OverflowError):
+    except (ValueError, OverflowError, OSError):
         return None
 
 

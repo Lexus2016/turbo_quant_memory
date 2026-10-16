@@ -156,9 +156,54 @@ def test_macos_lookup_failure_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert liveness._macos_start_time(4242) is None
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
-def test_linux_start_time_is_seconds_since_boot() -> None:
-    start = liveness._linux_start_time(os.getpid())
-    assert start is not None
-    assert 0 <= start < 1e9
-    assert liveness._linux_start_time(os.getpid()) == start
+def _proc_stat_line(pid: int, comm: str, starttime_ticks: int) -> str:
+    # Fields 3..52 of /proc/<pid>/stat; field 22 (starttime) is the one under test.
+    rest = ["S"] + [str(n) for n in range(4, 53)]
+    rest[22 - 3] = str(starttime_ticks)
+    return f"{pid} ({comm}) " + " ".join(rest)
+
+
+def test_linux_start_time_converts_field_22_to_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Platform-independent: the /proc read and sysconf are faked, so this runs on every OS.
+    read_paths: list[str] = []
+    stat_text = _proc_stat_line(4321, "my (odd) name", 987654)
+
+    class FakePath:
+        def __init__(self, path: str) -> None:
+            read_paths.append(path)
+
+        def read_text(self, **_: object) -> str:
+            return stat_text
+
+    monkeypatch.setattr(liveness, "Path", FakePath)
+    monkeypatch.setattr(liveness.os, "sysconf", lambda name: 100 if name == "SC_CLK_TCK" else -1, raising=False)
+    assert liveness._linux_start_time(4321) == 9876.54
+    assert read_paths == ["/proc/4321/stat"]
+
+
+def test_linux_start_time_failures_are_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MissingPath:
+        def __init__(self, path: str) -> None:
+            pass
+
+        def read_text(self, **_: object) -> str:
+            raise FileNotFoundError("/proc/4321/stat")
+
+    monkeypatch.setattr(liveness, "Path", MissingPath)
+    assert liveness._linux_start_time(4321) is None
+
+    class TruncatedPath(MissingPath):
+        def read_text(self, **_: object) -> str:
+            return "4321 (short) S 1"
+
+    monkeypatch.setattr(liveness, "Path", TruncatedPath)
+    monkeypatch.setattr(liveness.os, "sysconf", lambda name: 100, raising=False)
+    assert liveness._linux_start_time(4321) is None
+
+
+def test_lstart_calendar_fault_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    def failing_timegm(_: object) -> int:
+        raise OSError("injected")
+
+    monkeypatch.setattr(liveness.calendar, "timegm", failing_timegm)
+    assert liveness._parse_lstart("Thu May 11 01:03:52 2017") is None
