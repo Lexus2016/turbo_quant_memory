@@ -57,13 +57,13 @@ _GONE_DIRECTORY_EVENTS: Final = frozenset({"deleted", "moved"})
 _GIT_DIR_NAME: Final = ".git"
 
 ContentUnder = Callable[[str], list[str]]
-Attribute = Callable[[str], tuple[str, str | None]]
+Attribute = Callable[[str], tuple[str, str | None, str | None]]
 
 
 class WorkspaceWatcher:
     """Journals the changed files of one workspace while it runs; see the module docstring.
 
-    ``attribute`` maps a workspace-relative path to ``(attribution, session_id)`` and runs on the flush
+    ``attribute`` maps a workspace-relative path to ``(attribution, session_id, feature)`` and runs on the flush
     thread without the database lock held. ``content_under`` lists the journaled content paths under a
     directory; without it, a removed directory records nothing. ``start`` and ``stop`` are idempotent.
     ``unhealthy_reason`` reports a dead observer or flush thread so the owner can release the lease.
@@ -106,13 +106,19 @@ class WorkspaceWatcher:
         with self._lifecycle_lock:
             if self._running:
                 return
-            self._baseline()
+            # The observer starts before the baseline, so a change made while git is read is queued, not lost.
             observer = self._observer_factory()
             try:
                 observer.schedule(_Handler(self), str(self._workspace.root), recursive=True)
                 observer.start()
             except Exception:
                 _run_bounded(lambda: _stop_and_join(observer), "observer stop after a failed start")
+                raise
+            try:
+                with self._flush_lock:
+                    self._baseline()
+            except Exception:
+                _run_bounded(lambda: _stop_and_join(observer), "observer stop after a failed baseline")
                 raise
             stop_event = threading.Event()
             thread = threading.Thread(target=self._run, args=(stop_event,), name=WATCHER_THREAD_NAME, daemon=True)
@@ -121,6 +127,8 @@ class WorkspaceWatcher:
             self._observer = observer
             self._thread = thread
             self._running = True
+            # Process what the observer queued while the baseline ran; duplicate content is deduplicated.
+            self._wake.set()
 
     def stop(self) -> None:
         """Stop the observer, join the flush thread and drain the queued paths; each step is bounded."""
@@ -230,15 +238,15 @@ class WorkspaceWatcher:
         if _has_symlinked_ancestor(self._workspace.root, rel):
             logger.info("workspace watcher skips %s: it is reached through a symlink", rel)
             return
-        attribution, session_id = self._attribute(rel)
+        attribution, session_id, feature = self._attribute(rel)
         kind: Literal["inferred", "unknown"] = "inferred" if attribution == "inferred" else "unknown"
         if (self._workspace.root / rel).is_file():
-            self._journal.record(rel, attribution=kind, session_id=session_id)
+            self._journal.record(rel, attribution=kind, session_id=session_id, feature=feature)
             return
         # A deletion is news only for a path the journal has content for, or one that a commit tracks.
         if not self._latest_is_content(rel) and rel not in head_tracked:
             return
-        self._journal.record_deletion(rel, attribution=kind, session_id=session_id)
+        self._journal.record_deletion(rel, attribution=kind, session_id=session_id, feature=feature)
 
     def _journal_gone_directory(self, absolute: str) -> None:
         if self._content_under is None:
@@ -259,9 +267,9 @@ class WorkspaceWatcher:
         if _has_symlinked_ancestor(self._workspace.root, child):
             logger.info("workspace watcher skips %s: it is reached through a symlink", child)
             return
-        attribution, session_id = self._attribute(child)
+        attribution, session_id, feature = self._attribute(child)
         kind: Literal["inferred", "unknown"] = "inferred" if attribution == "inferred" else "unknown"
-        self._journal.record_deletion(child, attribution=kind, session_id=session_id)
+        self._journal.record_deletion(child, attribution=kind, session_id=session_id, feature=feature)
 
     def _latest_is_content(self, rel: str) -> bool:
         versions = self._journal.history(rel, limit=1)

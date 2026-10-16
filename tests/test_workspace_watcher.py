@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import shutil
@@ -104,7 +105,7 @@ def standalone(
     watcher = WorkspaceWatcher(
         workspace,
         journal,
-        attribute=lambda _path: ("unknown", None),
+        attribute=lambda _path: ("unknown", None, None),
         observer_factory=_quiet_polling,
         content_under=lambda prefix: db.content_paths_under(workspace.root_key, prefix),
     )
@@ -537,7 +538,7 @@ def test_watcher_stop_is_bounded_and_idempotent(
     watcher = WorkspaceWatcher(
         resolve_workspace(repo, environ=env),
         journal,  # type: ignore[arg-type]
-        attribute=lambda _path: ("unknown", None),
+        attribute=lambda _path: ("unknown", None, None),
         debounce_s=0.05,
         observer_factory=_polling,
     )
@@ -856,3 +857,101 @@ def test_directory_replaced_by_symlink_is_not_journaled_through_the_link(
     watcher_module._Handler(watcher).on_any_event(DirMovedEvent(str(docs), str(moved)))
     watcher.flush_now()
     assert _latest_kind(db, workspace, "docs/b.md") == "content"
+
+
+def _event_features(db: CoordinationDB, path: str) -> list[str | None]:
+    """The ``feature`` recorded in the detail of each file-change event for ``path``, oldest first."""
+
+    with db.lock:
+        rows = db.conn.execute(
+            "SELECT detail FROM events WHERE kind = 'file_changed' AND path = ? ORDER BY event_id", (path,)
+        ).fetchall()
+    return [json.loads(row[0]).get("feature") for row in rows]
+
+
+def test_hot_path_never_waits_on_a_busy_database(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first, second = _pair(runtimes, repo, env)
+    second.announce_work("docs", ["src"])
+    assert first.db is not None
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_db_lock() -> None:
+        assert first.db is not None
+        with first.db.lock:
+            held.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=hold_db_lock, daemon=True)
+    holder.start()
+    try:
+        assert held.wait(5)
+        started = time.monotonic()
+        assert first.digest() is None
+        first.touch()
+        assert time.monotonic() - started < 0.25
+    finally:
+        release.set()
+        holder.join(10)
+
+    # Nothing was lost: the cursor did not move, so the next call delivers the pending line.
+    digest = first.digest()
+    assert digest is not None
+    assert any("docs" in line for line in digest["new"])
+
+
+def test_change_during_the_baseline_is_recorded(
+    repo: Path,
+    tmp_path: Path,
+    standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, journal, _db = standalone
+    original_baseline = WorkspaceWatcher._baseline
+
+    def baseline_then_change(self: WorkspaceWatcher) -> None:
+        original_baseline(self)
+        # The git snapshot is already taken; this write lands in the gap the observer must cover.
+        (repo / "late.txt").write_text("written during the baseline\n", encoding="utf-8")
+
+    monkeypatch.setattr(WorkspaceWatcher, "_baseline", baseline_then_change)
+    watcher = WorkspaceWatcher(
+        base._workspace,
+        journal,
+        attribute=lambda _path: ("unknown", None, None),
+        observer_factory=_polling,
+    )
+    try:
+        watcher.start()
+        deadline = time.monotonic() + 10.0
+        while not _history_kinds(journal, "late.txt") and time.monotonic() < deadline:
+            watcher.flush_now()
+            time.sleep(0.05)
+        assert _history_kinds(journal, "late.txt") == ["content"]
+    finally:
+        watcher.stop()
+
+
+def _history_kinds(journal: Journal, rel: str) -> list[str]:
+    return [version.kind for version in journal.history(rel, limit=100)]
+
+
+def test_version_keeps_the_feature_of_the_session_it_was_attributed_to(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    _, second = _pair(runtimes, repo, env)
+    assert second.db is not None
+    second.announce_work("feature-A", ["src"])
+
+    (repo / "src" / "a.py").write_text("x = 3  # for A\n", encoding="utf-8")
+    _settle(runtimes, lambda: len(_event_features(second.db, "src/a.py")) >= 1)  # type: ignore[arg-type]
+
+    second.announce_work("feature-B", ["src"])
+    (repo / "src" / "a.py").write_text("x = 4  # for B\n", encoding="utf-8")
+    _settle(runtimes, lambda: len(_event_features(second.db, "src/a.py")) >= 2)  # type: ignore[arg-type]
+
+    features = _event_features(second.db, "src/a.py")  # type: ignore[arg-type]
+    assert features[0] == "feature-A"
+    assert features[1] == "feature-B"

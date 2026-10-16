@@ -54,6 +54,8 @@ _UNAVAILABLE_REASON: Final = "workspace coordination is not available"
 DIGEST_PAGE_SIZE: Final = 200
 DIGEST_SCAN_LIMIT: Final = 5000
 DIGEST_MORE_HINT: Final = "call workspace_status for details"
+# Response decoration waits at most this long for the database; a busy database is skipped.
+_HOT_PATH_LOCK_S: Final = 0.05
 # Shutdown's database work (lease release, session end, close) shares one deadline of this length.
 _SHUTDOWN_DB_WAIT_S: Final = 2.0
 _CLOSE_THREAD_NAME: Final = "tqmemory-workspace-close"
@@ -156,7 +158,10 @@ class WorkspaceRuntime:
             if self._client_noted or db is None:
                 return
             try:
-                db.update_session_client(self.session_id, name, version or "")
+                with lock_deadline(time.monotonic() + _HOT_PATH_LOCK_S):
+                    db.update_session_client(self.session_id, name, version or "")
+            except CoordinationLockBusy:
+                return  # retried on the next response
             except Exception as exc:
                 self._degrade(exc)
                 return
@@ -169,7 +174,10 @@ class WorkspaceRuntime:
         if db is None:
             return
         try:
-            db.touch_session(self.session_id, time.time())
+            with lock_deadline(time.monotonic() + _HOT_PATH_LOCK_S):
+                db.touch_session(self.session_id, time.time())
+        except CoordinationLockBusy:
+            return  # the next response refreshes it
         except Exception as exc:
             self._degrade(exc)
 
@@ -406,16 +414,20 @@ class WorkspaceRuntime:
             return None
         root_key = self.workspace.root_key
         try:
-            cursor = db.get_cursor(self.session_id)
-            rows = db.list_sessions(root_key)
-            me = next((row for row in rows if row.session_id == self.session_id), None)
-            alone = not any(row.session_id != self.session_id for row in rows)
-            if cursor is None or me is None or alone:
-                self._advance_cursor(db, db.max_event_id(root_key))
-                return None
-            events, newest = self._read_events_after(db, root_key, cursor)
-            self._advance_cursor(db, newest)
-            lines = status_views.build_digest(events, me, {row.session_id: row for row in rows})
+            # Hot path: a busy database is skipped, and the cursor stays put so the next call delivers the lines.
+            with lock_deadline(time.monotonic() + _HOT_PATH_LOCK_S):
+                cursor = db.get_cursor(self.session_id)
+                rows = db.list_sessions(root_key)
+                me = next((row for row in rows if row.session_id == self.session_id), None)
+                alone = not any(row.session_id != self.session_id for row in rows)
+                if cursor is None or me is None or alone:
+                    self._advance_cursor(db, db.max_event_id(root_key))
+                    return None
+                events, newest = self._read_events_after(db, root_key, cursor)
+                self._advance_cursor(db, newest)
+                lines = status_views.build_digest(events, me, {row.session_id: row for row in rows})
+        except CoordinationLockBusy:
+            return None
         except Exception as exc:
             self._log_failure(exc)
             return None
@@ -545,6 +557,8 @@ class WorkspaceRuntime:
             requested = min(DIGEST_PAGE_SIZE, DIGEST_SCAN_LIMIT - len(events))
             try:
                 page = db.events_after(root_key, after, limit=requested)
+            except CoordinationLockBusy:
+                raise  # the caller keeps the cursor where it was
             except Exception as exc:
                 # Deliberate: the prefix already read is shown and the cursor advances past it. Returning None
                 # here would silently drop events that were read; the failed page is retried by the next call.
@@ -643,6 +657,14 @@ class WorkspaceRuntime:
                 return
         self._maybe_evict()
 
+    def _attribute_path(self, path: str) -> tuple[str, str | None, str | None]:
+        """Attribution of a changed path, with the inferred session's feature as it is now (read at record time)."""
+
+        sessions = self.live_sessions()
+        attribution, session_id = status_views.infer_attribution(path, sessions)
+        feature = next((row.feature for row in sessions if row.session_id == session_id), None)
+        return attribution, session_id, feature
+
     def _start_watcher(self, journal: Journal) -> None:
         db = self.db
         if db is None:
@@ -651,7 +673,7 @@ class WorkspaceRuntime:
         watcher = WorkspaceWatcher(
             self.workspace,
             journal,
-            attribute=lambda path: status_views.infer_attribution(path, self.live_sessions()),
+            attribute=self._attribute_path,
             observer_factory=self._observer_factory,
             content_under=lambda prefix: db.content_paths_under(root_key, prefix),
         )
