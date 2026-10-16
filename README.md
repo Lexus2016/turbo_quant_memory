@@ -118,7 +118,7 @@ Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a
 * **Human notes outrank agent notes.** Anything you explicitly asked to remember is flagged `human-explicit` and ranks above the agent's own observations at equal relevance.
 * **Encrypted secrets vault.** Project-scoped, AES-256-GCM, structurally unreachable from search. → [docs/secrets-vault.md](docs/secrets-vault.md)
 * **Runs on a small machine.** The default embedder is ONNX via fastembed — no PyTorch, ~0.22 GB model, comfortable on 2 GB of RAM.
-* **Several agents, one project — automatically.** Agents working in the same folder see each other's sessions, announced work and recent file changes, and files that change while they share a working tree are kept and can be restored. No setup.
+* **Several agents, one project — automatically.** Agents working in the same git working tree see each other's sessions, announced work and recent file changes; while two or more of them share the tree, changes to text files are recorded so they can be restored. No setup.
 
 Full technical detail → [docs/features.md](docs/features.md)
 
@@ -126,11 +126,11 @@ Full technical detail → [docs/features.md](docs/features.md)
 
 If you run more than one agent in the same working tree, tqmemory connects them automatically. There is nothing to configure.
 
-* **Agents see each other.** `workspace_status` lists the live sessions, what each one announced it is working on (`announce_work`, `finish_work`) and which files changed recently. Other tqmemory responses carry a short `workspace` note only when something new has happened.
-* **Changed files are versioned.** While two or more sessions share a git working tree, every change to a file is kept. `file_history` lists the versions and `restore_file` brings one back; the restore is itself undoable. The same is available from a terminal: `turbo-memory-mcp files log` and `turbo-memory-mcp files restore`.
-* **Limits.** Versions are kept only while two or more sessions share a git working tree, up to 1 MiB per file, 256 MiB per project and 14 days.
+* **Agents see each other.** `workspace_status` lists the live sessions, what each one announced it is working on (`announce_work`, `finish_work`) and which files changed recently. Other tqmemory responses carry a short `workspace` note only when something new has happened, and never for a lone session. `health` and `server_info` always include a workspace diagnostics block.
+* **Changes are recorded.** While two or more sessions share a git working tree, the watcher records new versions of text files it sees change (up to 1 MiB each, skipping anything matched by `.gitignore` or `.tqmemoryignore`). Several quick writes in a row can be merged into one version. `file_history` lists the versions and `restore_file` brings one back; the restore is itself undoable. The same is available from a terminal: `turbo-memory-mcp files log` and `turbo-memory-mcp files restore`.
+* **Limits.** Versions are recorded only while two or more sessions share a git working tree. The journal never runs outside a git working tree, in your home directory or at a filesystem root. Defaults: 1 MiB per file, a 256 MiB per-project size target and 14 days of retention. Recorded versions stay recoverable for 14 days; past that, or when the project is over its size target, the oldest are removed. The newest version of each file changed in the last 24 hours is never dropped for size. These defaults are set by `TQMEMORY_JOURNAL_MAX_FILE_BYTES`, `TQMEMORY_JOURNAL_MAX_BYTES` and `TQMEMORY_JOURNAL_RETENTION_DAYS`; the size limit is a target, not a hard maximum.
 
-This is partial protection, not a guarantee. It does not block writes: two agents can still overwrite each other's work, and tqmemory can only show it and help you recover. Agents that never call tqmemory see nothing. It works on one computer only. To turn it off, set `TQMEMORY_WORKSPACE_DISABLE=1`.
+This is partial protection, not a guarantee that every change is saved. It does not block writes: two agents can still overwrite each other's work, and tqmemory can only show it and help you recover. Agents that never call tqmemory see nothing. It works on one computer only. To turn it off, set `TQMEMORY_WORKSPACE_DISABLE=1`.
 
 ## The 24 MCP tools
 

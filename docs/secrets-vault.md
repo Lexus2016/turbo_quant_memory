@@ -6,7 +6,7 @@ Tired of pasting SSH keys, DB connection strings, or API tokens into every new c
 Agents kept asking you for the same prod-DB DSN, the same staging SSH host, the same bearer token, every session. Project memory wasn't the right home for those (anything indexed is at risk of leaking back into search results). So Phase 9 adds a separate, encrypted, **strictly project-scoped** vault next to your notes.
 
 ### What changes in your install
-* Four new MCP tools: `set_secret`, `get_secret`, `list_secrets`, `delete_secret`. Tool count grew `14 → 18` (now `19` with the v0.12.0 `recent_context` bootstrap tool).
+* Four new MCP tools: `set_secret`, `get_secret`, `list_secrets`, `delete_secret`. Tool count grew `14 → 18` (`recent_context` in v0.12.0 made it `19`; the five workspace tools in v0.31.0 make it `24`).
 * A one-time migration provisions an empty `secrets/` directory under each existing project on first `turbo-memory-mcp migrate --apply` after upgrade.
 
 ### What does NOT change (read this if you're nervous)

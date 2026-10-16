@@ -10,16 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Workspace coordination for several agents in one working tree.** Automatic,
   no setup, MCP only. Sessions see each other's live status, announced work
-  and recent file changes. Other tqmemory responses carry a short `workspace`
-  field only when something new happened, and nothing is shown to a lone
-  session.
+  and recent file changes. On ordinary tool responses a short `workspace`
+  field appears only when something new happened, and never for a lone
+  session; `health` and `server_info` always carry a workspace diagnostics
+  block.
 - **Five tools:** `announce_work`, `finish_work`, `workspace_status`,
   `file_history` and `restore_file`. Announcements are information only; they
   never block or order work.
 - **Version journal.** While two or more sessions share a git working tree,
-  changed files are stored content-addressed under tqmemory storage and can be
-  restored; a restore is itself undoable. Limits: 1 MiB per file, 256 MiB per
-  project, 14 days. `TQMEMORY_WORKSPACE_DISABLE=1` turns the feature off.
+  new versions of changed text files (up to 1 MiB, not ignored) are recorded
+  content-addressed under tqmemory storage and can be restored; a restore is
+  itself undoable. Defaults: 1 MiB per file, a 256 MiB per-project size target
+  (not a hard maximum) and 14 days retention, set by
+  `TQMEMORY_JOURNAL_MAX_FILE_BYTES`, `TQMEMORY_JOURNAL_MAX_BYTES` and
+  `TQMEMORY_JOURNAL_RETENTION_DAYS`. `TQMEMORY_WORKSPACE_DISABLE=1` turns the
+  feature off.
 - **`turbo-memory-mcp files log PATH` and `files restore PATH VERSION`** work
   from a terminal without the daemon.
 - **`watchdog` dependency** for the file watcher.

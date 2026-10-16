@@ -120,6 +120,12 @@ The server should reduce repeated token usage by:
 | `get_secret(name)` | fetch a project secret by exact name; value returned in dedicated `secret_value` field |
 | `list_secrets()` | list secret names in the active project; never returns values |
 | `delete_secret(name)` | delete a project secret by exact name |
+| `recent_context(...)` | query-free bootstrap: recent notes, including session handoffs |
+| `announce_work(feature, areas)` | record what this session is working on, with overlaps against other live sessions |
+| `finish_work()` | clear this session's announced work |
+| `workspace_status()` | live sessions, recent file changes and journal state for this working tree |
+| `file_history(path, limit)` | list recorded versions of a file |
+| `restore_file(path, version)` | restore a recorded version; the current content is saved first, so the restore is undoable |
 
 ## Data Model
 
@@ -246,7 +252,7 @@ Enforcement points:
 
 ## Planned Decomposition of `server.py` (deferred, consensus 2026-08-23)
 
-`server.py` (≈2.4k lines, 19 tool impls + dispatcher) stays a single module
+`server.py` (≈2.4k lines, 24 tool impls + dispatcher) stays a single module
 until a dedicated session performs the split below. Deferred deliberately:
 mechanical churn across ~50 test files right after the static-checks and
 calibration changes carries regression risk with no user-visible gain.
