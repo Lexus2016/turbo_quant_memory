@@ -501,3 +501,23 @@ def test_work_event_without_a_feature_falls_back_to_the_session_row(
 
     assert digest is not None
     assert "codex announced ranking" in digest["new"]
+
+
+# Fix round 3 ----------------------------------------------------------------
+
+
+def test_idle_finish_then_new_announce_keeps_the_finish_featureless(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    peer.finish_work()  # idle: records an explicit empty feature
+    peer.announce_work("ranking")  # the row now records feature "ranking"
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex finished work" in digest["new"]
+    assert "codex finished ranking" not in digest["new"]

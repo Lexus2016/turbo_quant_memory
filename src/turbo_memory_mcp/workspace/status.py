@@ -274,7 +274,8 @@ def _session_digest_line(
 ) -> str:
     """One session line. Client: this event's detail, then the batch identity map, then the session row.
 
-    Feature: this event's detail; a work event without one falls back to the session row's feature.
+    Feature: this event's detail when it has a "feature" key (an explicit None or "" stays empty); only a
+    work event lacking the key falls back to the session row's feature.
     """
 
     session_id = event.session_id
@@ -285,9 +286,11 @@ def _session_digest_line(
         or (_client_text(row.client_name) if row is not None else None)
         or _DIGEST_ANON
     )
-    feature = _text(event.detail.get("feature"))
-    if feature is None and event.kind in WORK_KINDS and row is not None:
-        feature = _text(row.feature)
+    if "feature" in event.detail:
+        # An explicit value is final: None or "" means the event recorded no feature.
+        feature = _text(event.detail["feature"])
+    else:
+        feature = _text(row.feature) if event.kind in WORK_KINDS and row is not None else None
     if event.kind == SESSION_STARTED:
         return f"{who} joined" + (f" ({feature})" if feature else "")
     if event.kind == SESSION_ENDED:
