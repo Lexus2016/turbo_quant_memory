@@ -52,6 +52,14 @@ ENV_JOURNAL_RETENTION_DAYS = "TQMEMORY_JOURNAL_RETENTION_DAYS"
 
 _LOG = logging.getLogger(__name__)
 
+
+class JournalFault(CoordinationUnavailable):
+    """An operational journal failure: missing or damaged blob, unreadable HEAD, a file that keeps changing.
+
+    Not a ``ValueError``: the caller's arguments were fine, so callers must report it as degraded, not as a
+    bad request.
+    """
+
 _BINARY_SCAN_BYTES = 8192
 _DAY_SECONDS = 86400.0
 _RECENT_SECONDS = _DAY_SECONDS
@@ -306,7 +314,7 @@ class Journal:
             current = observed
             if dest.is_file() and _digest(self._current_bytes(dest, rel)) == _digest(observed):
                 return snapshot, current
-        raise ValueError(f"{rel} kept changing while it was being snapshotted; nothing was overwritten")
+        raise JournalFault(f"{rel} kept changing while it was being snapshotted; nothing was overwritten")
 
     # Retention and recovery ---------------------------------------------------
 
@@ -425,7 +433,7 @@ class Journal:
 
     def _current_bytes(self, dest: Path, rel: str) -> bytes:
         if dest.stat().st_size > self._limits.max_file_bytes:
-            raise ValueError(f"current {rel} exceeds the journal size limit; it was not overwritten")
+            raise JournalFault(f"current {rel} exceeds the journal size limit; it was not overwritten")
         return dest.read_bytes()
 
     def _snapshot(self, rel: str, content: bytes) -> VersionRecord:
@@ -468,7 +476,7 @@ class Journal:
                 timeout=_GIT_TIMEOUT_SECONDS,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ValueError(f"cannot read HEAD for {rel}: {exc}") from None
+            raise JournalFault(f"cannot read HEAD for {rel}: {exc}") from None
         if result.returncode != 0:
             raise ValueError(f"{rel} is not a committed file in HEAD")
         return result.stdout
@@ -494,11 +502,11 @@ class Journal:
         try:
             data = zlib.decompress(_blob_path(self._blobs_root, digest).read_bytes())
         except FileNotFoundError:
-            raise ValueError(f"blob for version {version_id} is missing") from None
+            raise JournalFault(f"blob for version {version_id} is missing") from None
         except zlib.error:
-            raise ValueError(f"blob for version {version_id} is corrupt") from None
+            raise JournalFault(f"blob for version {version_id} is corrupt") from None
         if _digest(data) != digest:
-            raise ValueError(f"blob for version {version_id} failed its checksum")
+            raise JournalFault(f"blob for version {version_id} failed its checksum")
         return data
 
     def _blob_size(self, digest: str) -> int:

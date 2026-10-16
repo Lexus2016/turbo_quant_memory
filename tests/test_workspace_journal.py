@@ -19,7 +19,7 @@ import pytest
 
 from turbo_memory_mcp.workspace import journal as journal_module
 from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
-from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
+from turbo_memory_mcp.workspace.journal import Journal, JournalFault, JournalLimits
 from turbo_memory_mcp.workspace.models import VersionRecord, Workspace
 from turbo_memory_mcp.workspace.paths import blobs_dir, coord_db_path, resolve_workspace
 
@@ -333,7 +333,7 @@ def test_restore_refuses_to_overwrite_oversized_current_file(
     big = repo / "grow.txt"
     big.write_text("x" * 200, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="not overwritten"):
+    with pytest.raises(JournalFault, match="not overwritten"):
         journal.restore("grow.txt", saved.version_id)
 
     assert big.read_text(encoding="utf-8") == "x" * 200
@@ -869,7 +869,7 @@ def test_restore_refuses_destination_that_never_settles(
         return record
 
     monkeypatch.setattr(Journal, "_snapshot", always_edit)
-    with pytest.raises(ValueError, match="kept changing"):
+    with pytest.raises(JournalFault, match="kept changing"):
         journal.restore("busy.txt", v1.version_id)
     monkeypatch.undo()
 
