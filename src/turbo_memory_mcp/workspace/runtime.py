@@ -17,16 +17,17 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from turbo_memory_mcp.store import resolve_storage_root
 from turbo_memory_mcp.workspace import models
+from turbo_memory_mcp.workspace import status as status_views
 from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
 from turbo_memory_mcp.workspace.liveness import is_process_alive, process_start_time
-from turbo_memory_mcp.workspace.models import SessionRow, Workspace
-from turbo_memory_mcp.workspace.paths import coord_db_path, is_disabled, resolve_workspace
+from turbo_memory_mcp.workspace.models import EventRow, SessionRow, Workspace
+from turbo_memory_mcp.workspace.paths import coord_db_path, is_disabled, resolve_workspace, to_relative
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ _END_RETRY_S: Final = 0.1
 _WARN_REPEAT_S: Final = 600.0
 _SESSION_ID_CHARS: Final = 12
 _UNRESOLVED_REFUSAL: Final = "workspace could not be resolved"
+_UNAVAILABLE_REASON: Final = "workspace coordination is not available"
 
 
 class WorkspaceRuntime:
@@ -160,6 +162,102 @@ class WorkspaceRuntime:
 
         return [row for row in self.live_sessions() if row.session_id != self.session_id]
 
+    def announce_work(
+        self,
+        feature: str,
+        areas: Sequence[str] | None = None,
+        details: str | None = None,
+    ) -> dict[str, Any]:
+        """Record what this session works on and report overlaps with other sessions.
+
+        Raises ``ValueError`` when an area lies outside the workspace; every other failure degrades.
+        """
+
+        normalized = _normalize_areas(self.workspace, areas or ())
+        db = self.db
+        if db is None:
+            return self._unavailable()
+        root_key = self.workspace.root_key
+        try:
+            now = time.time()
+            db.set_intent(self.session_id, feature, normalized, details)
+            db.append_event(
+                root_key,
+                models.WORK_ANNOUNCED,
+                now=now,
+                session_id=self.session_id,
+                detail={"feature": feature, "areas": list(normalized)},
+            )
+            rows = db.list_sessions(root_key)
+            events = _recent_events(db, root_key, now)
+        except Exception as exc:
+            self._degrade(exc)
+            return self._unavailable()
+        sessions_by_id = {row.session_id: row for row in rows}
+        return {
+            "status": "ok",
+            "feature": feature,
+            "areas": list(normalized),
+            "overlaps": status_views.overlap_views(normalized, _peers(rows, self.session_id)),
+            "recent_changes_in_areas": status_views.change_views(events, sessions_by_id, areas=normalized),
+        }
+
+    def finish_work(self) -> dict[str, Any]:
+        """Clear this session's announced work and record that it finished."""
+
+        db = self.db
+        if db is None:
+            return self._unavailable()
+        try:
+            db.clear_intent(self.session_id)
+            db.append_event(
+                self.workspace.root_key,
+                models.WORK_FINISHED,
+                now=time.time(),
+                session_id=self.session_id,
+            )
+        except Exception as exc:
+            self._degrade(exc)
+            return self._unavailable()
+        return {"status": "ok"}
+
+    def status(self) -> dict[str, Any]:
+        """Workspace overview: this session, its peers, overlaps and recent file changes.
+
+        Advances this session's event cursor to the newest event, so later reads start after it.
+        """
+
+        db = self.db
+        if db is None:
+            return self._unavailable()
+        root_key = self.workspace.root_key
+        try:
+            now = time.time()
+            own = db.get_session(self.session_id)
+            rows = db.list_sessions(root_key)
+            events = _recent_events(db, root_key, now)
+            db.set_cursor(self.session_id, db.max_event_id(root_key))
+        except Exception as exc:
+            self._degrade(exc)
+            return self._unavailable()
+        areas = own.areas if own is not None else ()
+        peers = _peers(rows, self.session_id)
+        return {
+            "status": "ok",
+            "workspace": root_key,
+            "you": {
+                "session_id": self.session_id,
+                "client": own.client_name if own is not None else "unknown",
+                "feature": own.feature if own is not None else None,
+                "areas": list(areas),
+            },
+            "sessions": [status_views.session_view(row) for row in peers],
+            "recent_changes": status_views.change_views(events, {row.session_id: row for row in rows}),
+            "overlaps": status_views.overlap_views(areas, peers),
+            "journal": {"state": "off", "reason": None},
+            "coverage": status_views.COVERAGE_TEXT,
+        }
+
     def shutdown(self) -> None:
         """Stop the ticker, remove this session and close the database. Safe to call repeatedly.
 
@@ -270,6 +368,11 @@ class WorkspaceRuntime:
         self.degraded_reason = str(exc) or type(exc).__name__
         self._log_failure(exc)
 
+    def _unavailable(self) -> dict[str, Any]:
+        """The empty value returned by a public method whose work could not be done."""
+
+        return {"status": "degraded", "reason": self.degraded_reason or _UNAVAILABLE_REASON}
+
     def _log_failure(self, exc: Exception, now: float | None = None) -> None:
         """Log the first failure of each kind, then repeats at most once per ``_WARN_REPEAT_S``."""
 
@@ -314,6 +417,32 @@ def _end_detail(row: SessionRow) -> dict[str, object]:
 
 def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
+
+
+def _normalize_areas(workspace: Workspace, areas: Sequence[str]) -> tuple[str, ...]:
+    """Workspace-relative POSIX form of each area, deduplicated in order; raises ValueError for an outside path."""
+
+    normalized: list[str] = []
+    for area in areas:
+        relative = to_relative(workspace, area)
+        if relative not in normalized:
+            normalized.append(relative)
+    return tuple(normalized)
+
+
+def _recent_events(db: CoordinationDB, root_key: str, now: float) -> list[EventRow]:
+    """Newest file-change events inside the status window, the only events the status views read."""
+
+    return db.events_since(
+        root_key,
+        now - status_views.STATUS_RECENT_WINDOW_S,
+        status_views.CHANGE_KINDS,
+        status_views.CHANGE_SCAN_LIMIT,
+    )
+
+
+def _peers(rows: Sequence[SessionRow], session_id: str) -> list[SessionRow]:
+    return [row for row in rows if row.session_id != session_id]
 
 
 def _unresolved_workspace(cwd: Path | str | None) -> Workspace:

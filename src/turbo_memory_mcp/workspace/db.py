@@ -249,22 +249,22 @@ class CoordinationDB:
     def events_after(self, workspace: str, after_id: int, limit: int = 200) -> list[EventRow]:
         with self._use() as conn:
             rows = conn.execute(
-                "SELECT event_id, workspace, kind, session_id, path, detail, created_at FROM events"
-                " WHERE workspace = ? AND event_id > ? ORDER BY event_id LIMIT ?",
+                _EVENT_SELECT + " WHERE workspace = ? AND event_id > ? ORDER BY event_id LIMIT ?",
                 (workspace, after_id, limit),
             ).fetchall()
-        return [
-            EventRow(
-                event_id=row[0],
-                workspace=row[1],
-                kind=row[2],
-                session_id=row[3],
-                path=row[4],
-                detail=_decode_object(row[5], "event detail"),
-                created_at=row[6],
-            )
-            for row in rows
-        ]
+        return [_event_row(row) for row in rows]
+
+    def events_since(self, workspace: str, since: float, kinds: Sequence[str], limit: int) -> list[EventRow]:
+        """Newest-first events of the given kinds created at or after ``since``, at most ``limit`` of them."""
+
+        placeholders = ", ".join("?" for _ in kinds)
+        with self._use() as conn:
+            rows = conn.execute(
+                _EVENT_SELECT + " WHERE workspace = ? AND created_at >= ? AND kind IN (" + placeholders + ")"
+                " ORDER BY event_id DESC LIMIT ?",
+                (workspace, since, *kinds, limit),
+            ).fetchall()
+        return [_event_row(row) for row in rows]
 
     def max_event_id(self, workspace: str) -> int:
         with self._use() as conn:
@@ -358,6 +358,21 @@ _SESSION_SELECT = (
     "SELECT session_id, workspace, client_name, client_version, pid, proc_start, started_at,"
     " last_activity_at, feature, areas, details FROM sessions"
 )
+
+
+_EVENT_SELECT = "SELECT event_id, workspace, kind, session_id, path, detail, created_at FROM events"
+
+
+def _event_row(row: tuple[Any, ...]) -> EventRow:
+    return EventRow(
+        event_id=row[0],
+        workspace=row[1],
+        kind=row[2],
+        session_id=row[3],
+        path=row[4],
+        detail=_decode_object(row[5], "event detail"),
+        created_at=row[6],
+    )
 
 
 def _session_row(row: tuple[Any, ...]) -> SessionRow:
