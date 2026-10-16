@@ -5,8 +5,9 @@ into the workspace's coordination database and a background ticker prunes rows w
 has exited. Read methods only read rows, so they stay cheap on every tool response; process
 liveness is checked in ``tick`` alone.
 
-Every public method fails open: a coordination error is recorded in ``degraded_reason`` and
-an empty value is returned instead of an exception.
+Every public method fails open: any failure is recorded in ``degraded_reason`` and an empty
+value is returned instead of an exception. ``start`` never raises; it returns None only when
+the kill switch is on.
 """
 
 from __future__ import annotations
@@ -32,15 +33,21 @@ logger = logging.getLogger(__name__)
 TICK_INTERVAL_S: Final = 5.0
 EVENT_RETENTION_S: Final = 86400.0
 TICKER_THREAD_NAME: Final = "tqmemory-workspace-ticker"
-_SHUTDOWN_JOIN_S: Final = 2.0
+# Upper bound for shutdown to wait for the ticker thread and for an in-flight tick.
+_SHUTDOWN_WAIT_S: Final = 10.0
+_END_ATTEMPTS: Final = 3
+_END_RETRY_S: Final = 0.1
+# Repeats of the same failure kind are logged at most this often.
+_WARN_REPEAT_S: Final = 600.0
 _SESSION_ID_CHARS: Final = 12
+_UNRESOLVED_REFUSAL: Final = "workspace could not be resolved"
 
 
 class WorkspaceRuntime:
     """Presence handle for one agent session in one git working tree.
 
-    ``degraded_reason`` holds the most recent coordination failure, or None while
-    coordination works. It is not cleared by later successes.
+    ``degraded_reason`` holds the most recent failure, or None. The next fully successful
+    ``tick`` clears it. Failures are logged, but repeats of one kind at most every 10 minutes.
     """
 
     def __init__(self, workspace: Workspace, session_id: str) -> None:
@@ -49,12 +56,15 @@ class WorkspaceRuntime:
         self.db: CoordinationDB | None = None
         self.degraded_reason: str | None = None
         self._lifecycle_lock = threading.Lock()
+        self._client_lock = threading.Lock()
+        self._client_noted = False
+        # Serializes ticks in this process and guards the database close, so no tick runs on a closed db.
+        self._tick_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._closed = False
-        self._client_noted = False
-        # Serializes ticks in this process, so the ticker and a direct caller never prune the same row twice.
-        self._tick_lock = threading.Lock()
+        self._warn_lock = threading.Lock()
+        self._warned_at: dict[str, float] = {}
 
     @classmethod
     def start(
@@ -66,34 +76,38 @@ class WorkspaceRuntime:
 
         if is_disabled(environ):
             return None
-        runtime = cls(resolve_workspace(cwd, environ), uuid.uuid4().hex[:_SESSION_ID_CHARS])
+        session_id = uuid.uuid4().hex[:_SESSION_ID_CHARS]
         try:
-            db_file = coord_db_path(resolve_storage_root(environ), runtime.workspace.project_id)
-            runtime.db = CoordinationDB.open(db_file)
-        except (CoordinationUnavailable, ValueError) as exc:
+            workspace = resolve_workspace(cwd, environ)
+        except Exception as exc:
+            runtime = cls(_unresolved_workspace(cwd), session_id)
             runtime._degrade(exc)
             return runtime
+        runtime = cls(workspace, session_id)
         try:
+            runtime.db = CoordinationDB.open(coord_db_path(resolve_storage_root(environ), workspace.project_id))
             runtime._register()
-        except CoordinationUnavailable as exc:
+            runtime._start_ticker()
+        except Exception as exc:
             runtime._degrade(exc)
             runtime._withdraw()
-            return runtime
-        runtime._start_ticker()
         return runtime
 
     def note_client(self, name: str | None, version: str | None) -> None:
         """Record the client's name and version once, the first time a name is known."""
 
-        db = self.db
-        if not name or self._client_noted or db is None:
+        if not name:
             return
-        try:
-            db.update_session_client(self.session_id, name, version or "")
-        except CoordinationUnavailable as exc:
-            self._degrade(exc)
-            return
-        self._client_noted = True
+        with self._client_lock:
+            db = self.db
+            if self._client_noted or db is None:
+                return
+            try:
+                db.update_session_client(self.session_id, name, version or "")
+            except Exception as exc:
+                self._degrade(exc)
+                return
+            self._client_noted = True
 
     def touch(self) -> None:
         """Refresh this session's last-activity timestamp."""
@@ -103,7 +117,7 @@ class WorkspaceRuntime:
             return
         try:
             db.touch_session(self.session_id, time.time())
-        except CoordinationUnavailable as exc:
+        except Exception as exc:
             self._degrade(exc)
 
     def tick(self, now: float | None = None) -> None:
@@ -121,18 +135,13 @@ class WorkspaceRuntime:
                     if is_process_alive(row.pid, row.proc_start):
                         live.append(row)
                         continue
-                    db.delete_session(row.session_id)
-                    db.append_event(
-                        root_key,
-                        models.SESSION_ENDED,
-                        now=stamp,
-                        session_id=row.session_id,
-                        detail={"client": row.client_name, "feature": row.feature},
-                    )
+                    db.end_session(root_key, row.session_id, now=stamp, detail=_end_detail(row))
                 db.prune_events(stamp - EVENT_RETENTION_S)
                 self._on_tick(live)
-            except CoordinationUnavailable as exc:
+            except Exception as exc:
                 self._degrade(exc)
+                return
+            self.degraded_reason = None
 
     def live_sessions(self) -> list[SessionRow]:
         """Sessions of this workspace as last pruned by ``tick``, including this one."""
@@ -142,7 +151,7 @@ class WorkspaceRuntime:
             return []
         try:
             return db.list_sessions(self.workspace.root_key)
-        except CoordinationUnavailable as exc:
+        except Exception as exc:
             self._degrade(exc)
             return []
 
@@ -152,7 +161,11 @@ class WorkspaceRuntime:
         return [row for row in self.live_sessions() if row.session_id != self.session_id]
 
     def shutdown(self) -> None:
-        """Stop the ticker, remove this session and close the database. Safe to call repeatedly."""
+        """Stop the ticker, remove this session and close the database. Safe to call repeatedly.
+
+        Waits up to ``_SHUTDOWN_WAIT_S`` for an in-flight tick. If that wait times out, the database
+        is left open rather than closed under the running tick.
+        """
 
         with self._lifecycle_lock:
             if self._closed:
@@ -160,23 +173,17 @@ class WorkspaceRuntime:
             self._closed = True
             thread = self._thread
         self._stop.set()
+        deadline = time.monotonic() + _SHUTDOWN_WAIT_S
         if thread is not None and thread is not threading.current_thread():
-            thread.join(_SHUTDOWN_JOIN_S)
-        db = self.db
-        if db is None:
+            thread.join(_remaining(deadline))
+        if not self._tick_lock.acquire(timeout=_remaining(deadline)):
+            self._degrade(CoordinationUnavailable("shutdown timed out waiting for an active tick"))
             return
         try:
-            db.delete_session(self.session_id)
-            db.append_event(
-                self.workspace.root_key,
-                models.SESSION_ENDED,
-                now=time.time(),
-                session_id=self.session_id,
-            )
-        except CoordinationUnavailable as exc:
-            self._degrade(exc)
+            self._end_own_session()
         finally:
             self._close_db()
+            self._tick_lock.release()
 
     def _register(self) -> None:
         db = self.db
@@ -207,25 +214,60 @@ class WorkspaceRuntime:
 
     def _start_ticker(self) -> None:
         thread = threading.Thread(target=self._run_ticker, name=TICKER_THREAD_NAME, daemon=True)
-        with self._lifecycle_lock:
-            if self._closed:
-                return
-            self._thread = thread
         thread.start()
+        with self._lifecycle_lock:
+            self._thread = thread
 
     def _run_ticker(self) -> None:
         while not self._stop.wait(TICK_INTERVAL_S):
             try:
                 self.tick()
-            except Exception:
+            except Exception as exc:
                 # The ticker must survive any failure; the next interval retries.
-                logger.warning("workspace ticker failed", exc_info=True)
+                self._degrade(exc)
+
+    def _end_own_session(self) -> None:
+        """Record this session's graceful end, retrying briefly so a transient lock leaves no phantom row."""
+
+        for attempt in range(_END_ATTEMPTS):
+            db = self.db
+            if db is None:
+                return
+            try:
+                mine = next(
+                    (row for row in db.list_sessions(self.workspace.root_key) if row.session_id == self.session_id),
+                    None,
+                )
+                db.end_session(
+                    self.workspace.root_key,
+                    self.session_id,
+                    now=time.time(),
+                    detail={} if mine is None else _end_detail(mine),
+                )
+                return
+            except Exception as exc:
+                self._degrade(exc)
+                if attempt + 1 < _END_ATTEMPTS:
+                    time.sleep(_END_RETRY_S)
 
     def _on_tick(self, live_sessions: list[SessionRow]) -> None:
         """Hook run after each tick with the sessions still alive. Runs under the tick lock, so it must not call tick."""
 
     def _degrade(self, exc: Exception) -> None:
         self.degraded_reason = str(exc) or type(exc).__name__
+        self._log_failure(exc)
+
+    def _log_failure(self, exc: Exception, now: float | None = None) -> None:
+        """Log the first failure of each kind, then repeats at most once per ``_WARN_REPEAT_S``."""
+
+        kind = type(exc).__name__
+        stamp = time.monotonic() if now is None else now
+        with self._warn_lock:
+            last = self._warned_at.get(kind)
+            if last is not None and stamp - last < _WARN_REPEAT_S:
+                return
+            self._warned_at[kind] = stamp
+        logger.warning("workspace coordination degraded (%s)", kind, exc_info=exc)
 
     def _withdraw(self) -> None:
         """Remove a half-registered session row, best effort, so a live PID does not leave a ghost."""
@@ -234,7 +276,7 @@ class WorkspaceRuntime:
         if db is not None:
             try:
                 db.delete_session(self.session_id)
-            except CoordinationUnavailable as exc:
+            except Exception as exc:
                 self._degrade(exc)
         self._close_db()
 
@@ -245,5 +287,24 @@ class WorkspaceRuntime:
             return
         try:
             db.close()
-        except CoordinationUnavailable as exc:
+        except Exception as exc:
             self._degrade(exc)
+
+
+def _end_detail(row: SessionRow) -> dict[str, object]:
+    return {"client": row.client_name, "feature": row.feature}
+
+
+def _remaining(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
+
+
+def _unresolved_workspace(cwd: Path | str | None) -> Workspace:
+    root = Path(cwd) if cwd is not None else Path(os.curdir)
+    return Workspace(
+        root=root,
+        root_key=root.as_posix(),
+        project_id="",
+        is_git=False,
+        journal_refusal=_UNRESOLVED_REFUSAL,
+    )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import pytest
 from turbo_memory_mcp.workspace import models
 from turbo_memory_mcp.workspace import runtime as runtime_module
 from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
-from turbo_memory_mcp.workspace.models import SessionRow
+from turbo_memory_mcp.workspace.models import SessionRow, Workspace
 from turbo_memory_mcp.workspace.paths import coord_db_path, resolve_workspace, workspace_storage_dir
 from turbo_memory_mcp.workspace.runtime import TICKER_THREAD_NAME, WorkspaceRuntime
 
@@ -77,6 +78,9 @@ def children() -> Iterator[list[subprocess.Popen[str]]]:
         proc.communicate(timeout=10)
 
 
+CHILD_REPORT_TIMEOUT_S = 30.0
+
+
 def _spawn(children: list[subprocess.Popen[str]], repo: Path, env: dict[str, str]) -> tuple[subprocess.Popen[str], str]:
     proc = subprocess.Popen(
         [sys.executable, "-c", CHILD],
@@ -87,8 +91,16 @@ def _spawn(children: list[subprocess.Popen[str]], repo: Path, env: dict[str, str
         text=True,
     )
     children.append(proc)
-    line = proc.stdout.readline().strip() if proc.stdout is not None else ""
-    assert line, "child did not report its session id"
+    assert proc.stdout is not None
+    lines: list[str] = []
+    # Read on a helper thread so a child that never reports fails the test instead of hanging it.
+    reader = threading.Thread(target=lambda: lines.append(proc.stdout.readline()), daemon=True)  # type: ignore[union-attr]
+    reader.start()
+    reader.join(CHILD_REPORT_TIMEOUT_S)
+    line = lines[0].strip() if lines and not reader.is_alive() else ""
+    if not line:
+        proc.kill()
+        pytest.fail("child did not report its session id in time")
     return proc, line
 
 
@@ -277,8 +289,10 @@ def test_ticker_prunes_dead_sessions_in_background(
 
 
 def test_live_sessions_reads_rows_without_liveness_checks(
-    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Keep the real ticker from pruning the ghost before the read is asserted.
+    monkeypatch.setattr(runtime_module, "TICK_INTERVAL_S", 3600.0)
     runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
     assert runtime is not None
     runtimes.append(runtime)
@@ -334,3 +348,212 @@ def test_start_opens_shared_coordination_file(
 
     assert isinstance(runtime.db, CoordinationDB)
     assert coord_db_path(home, runtime.workspace.project_id).exists()
+
+
+def test_resolution_failure_returns_a_degraded_runtime(
+    repo: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> Workspace:
+        raise RuntimeError("identity exploded")
+
+    monkeypatch.setattr(runtime_module, "resolve_workspace", boom)
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    monkeypatch.undo()
+
+    assert runtime is not None
+    assert runtime.db is None
+    assert runtime.degraded_reason == "identity exploded"
+    assert runtime.workspace.journal_refusal == "workspace could not be resolved"
+    assert runtime.live_sessions() == []
+
+
+def test_ticker_start_failure_withdraws_the_row(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(_self: threading.Thread) -> None:
+        raise RuntimeError("cannot start thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    broken = WorkspaceRuntime.start(cwd=repo, environ=env)
+    monkeypatch.undo()
+
+    assert broken is not None
+    assert broken.degraded_reason == "cannot start thread"
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert observer is not None
+    runtimes.append(observer)
+    assert _ids(observer.live_sessions()) == {observer.session_id}
+
+
+def test_shutdown_waits_for_an_active_tick(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "TICK_INTERVAL_S", 3600.0)
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_hook(_live: list[SessionRow]) -> None:
+        entered.set()
+        release.wait(10.0)
+
+    runtime._on_tick = blocking_hook  # type: ignore[method-assign]
+    ticking = threading.Thread(target=runtime.tick, daemon=True)
+    ticking.start()
+    assert entered.wait(10.0)
+
+    closer = threading.Thread(target=runtime.shutdown, daemon=True)
+    closer.start()
+    closer.join(0.3)
+
+    assert closer.is_alive(), "shutdown must wait for the in-flight tick"
+    assert runtime.db is not None, "the database must not close under a running tick"
+    release.set()
+    closer.join(10.0)
+    ticking.join(10.0)
+    assert not closer.is_alive()
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert observer is not None
+    runtimes.append(observer)
+    assert runtime.session_id not in _ids(observer.live_sessions())
+
+
+def test_shutdown_retries_a_transient_failure_before_closing(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    original_end = CoordinationDB.end_session
+    attempts: list[int] = []
+
+    def flaky_end(self: CoordinationDB, *args: object, **kwargs: object) -> bool:
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise CoordinationUnavailable("database is locked")
+        return original_end(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(CoordinationDB, "end_session", flaky_end)
+    runtime.shutdown()
+    monkeypatch.undo()
+
+    assert len(attempts) == 3
+    assert runtime.db is None
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert observer is not None
+    runtimes.append(observer)
+    assert _ids(observer.live_sessions()) == {observer.session_id}
+    assert observer.db is not None
+    ended = [e for e in observer.db.events_after(observer.workspace.root_key, 0) if e.kind == models.SESSION_ENDED]
+    assert [e.session_id for e in ended] == [runtime.session_id]
+
+
+def test_shutdown_gives_up_after_bounded_retries_and_closes(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    attempts: list[int] = []
+
+    def always_fails(self: CoordinationDB, *args: object, **kwargs: object) -> bool:
+        attempts.append(1)
+        raise CoordinationUnavailable("database is locked")
+
+    monkeypatch.setattr(CoordinationDB, "end_session", always_fails)
+    runtime.shutdown()
+
+    assert len(attempts) == 3
+    assert runtime.db is None
+    assert runtime.degraded_reason == "database is locked"
+
+
+def test_shutdown_event_carries_the_same_detail_as_pruning(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    leaving = WorkspaceRuntime.start(cwd=repo, environ=env)
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert leaving is not None and observer is not None
+    runtimes.append(observer)
+    leaving.note_client("codex", "2.1")
+    leaving.shutdown()
+
+    assert observer.db is not None
+    ended = [e for e in observer.db.events_after(observer.workspace.root_key, 0) if e.kind == models.SESSION_ENDED]
+    assert [(e.session_id, e.detail) for e in ended] == [(leaving.session_id, {"client": "codex", "feature": None})]
+
+
+def test_note_client_writes_only_the_first_known_name(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    writes: list[str] = []
+    original_update = CoordinationDB.update_session_client
+
+    def counting_update(self: CoordinationDB, session_id: str, name: str, version: str) -> None:
+        writes.append(name)
+        original_update(self, session_id, name, version)
+
+    monkeypatch.setattr(CoordinationDB, "update_session_client", counting_update)
+    threads = [threading.Thread(target=runtime.note_client, args=(f"client-{index}", "1.0")) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10.0)
+
+    assert len(writes) == 1
+
+
+def test_malformed_session_row_degrades_instead_of_raising(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    assert runtime.db is not None
+    with runtime.db.lock:
+        runtime.db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = ?", (runtime.session_id,))
+
+    assert runtime.live_sessions() == []
+    assert runtime.degraded_reason
+    runtime.tick()
+    runtime.touch()
+
+
+def test_degraded_reason_clears_after_a_successful_tick(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    runtime._degrade(CoordinationUnavailable("transient"))
+    assert runtime.degraded_reason == "transient"
+
+    runtime.tick()
+
+    assert runtime.degraded_reason is None
+
+
+def test_repeated_failures_are_logged_at_most_every_ten_minutes(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+
+    with caplog.at_level(logging.WARNING, logger="turbo_memory_mcp.workspace.runtime"):
+        runtime._log_failure(CoordinationUnavailable("a"), now=0.0)
+        runtime._log_failure(CoordinationUnavailable("b"), now=100.0)
+        runtime._log_failure(OSError("c"), now=100.0)
+        runtime._log_failure(CoordinationUnavailable("d"), now=601.0)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "workspace coordination degraded (CoordinationUnavailable)",
+        "workspace coordination degraded (OSError)",
+        "workspace coordination degraded (CoordinationUnavailable)",
+    ]

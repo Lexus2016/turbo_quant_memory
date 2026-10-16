@@ -518,6 +518,39 @@ def test_delete_session_also_removes_its_cursor(db: CoordinationDB) -> None:
     assert db.get_cursor("A") is None
 
 
+def test_end_session_records_one_event_and_only_the_first_call_ends_it(db: CoordinationDB) -> None:
+    db.insert_session(_session("A"))
+    db.set_cursor("A", 3)
+
+    assert db.end_session(WORKSPACE, "A", now=10.0, detail={"client": "codex", "feature": None}) is True
+    assert db.end_session(WORKSPACE, "A", now=11.0, detail={"client": "codex", "feature": None}) is False
+
+    events = [event for event in db.events_after(WORKSPACE, 0) if event.kind == models.SESSION_ENDED]
+    assert [(event.session_id, event.detail) for event in events] == [("A", {"client": "codex", "feature": None})]
+    assert db.get_cursor("A") is None
+    assert db.list_sessions(WORKSPACE) == []
+
+
+def test_end_session_ignores_rows_of_another_workspace(db: CoordinationDB) -> None:
+    db.insert_session(_session("A", workspace="/repo/other"))
+    assert db.end_session(WORKSPACE, "A", now=10.0) is False
+    assert [row.session_id for row in db.list_sessions("/repo/other")] == ["A"]
+
+
+def test_malformed_stored_rows_raise_coordination_unavailable(db: CoordinationDB) -> None:
+    db.insert_session(_session("A"))
+    with db.lock:
+        db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = 'A'")
+        db.conn.execute(
+            "INSERT INTO events (workspace, kind, detail, created_at) VALUES (?, ?, '{bad', 1.0)",
+            (WORKSPACE, models.WORK_ANNOUNCED),
+        )
+    with pytest.raises(CoordinationUnavailable):
+        db.list_sessions(WORKSPACE)
+    with pytest.raises(CoordinationUnavailable):
+        db.events_after(WORKSPACE, 0)
+
+
 def test_prune_events_removes_only_older_rows(db: CoordinationDB) -> None:
     db.append_event(WORKSPACE, models.SESSION_STARTED, now=100.0)
     kept = db.append_event(WORKSPACE, models.SESSION_ENDED, now=300.0)

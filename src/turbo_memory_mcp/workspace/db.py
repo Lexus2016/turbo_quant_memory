@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from turbo_memory_mcp.workspace.models import EventRow, LeaseRow, SessionRow
+from turbo_memory_mcp.workspace.models import SESSION_ENDED, EventRow, LeaseRow, SessionRow
 
 if sys.platform == "win32":
     import msvcrt
@@ -156,6 +156,44 @@ class CoordinationDB:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM cursors WHERE session_id = ?", (session_id,))
 
+    def end_session(
+        self,
+        workspace: str,
+        session_id: str,
+        *,
+        now: float,
+        detail: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Remove a session, its cursor and record ``SESSION_ENDED`` in one write transaction.
+
+        Returns False, and appends nothing, when the session row was already gone. So when two
+        processes end the same dead session, exactly one of them records the event.
+        """
+
+        payload = json.dumps(dict(detail or {}), sort_keys=True, default=str)
+        with self._use() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                removed = conn.execute(
+                    "DELETE FROM sessions WHERE session_id = ? AND workspace = ?",
+                    (session_id, workspace),
+                ).rowcount
+                if removed == 0:
+                    conn.execute("COMMIT")
+                    return False
+                conn.execute("DELETE FROM cursors WHERE session_id = ?", (session_id,))
+                conn.execute(
+                    "INSERT INTO events (workspace, kind, session_id, path, detail, created_at)"
+                    " VALUES (?, ?, ?, NULL, ?, ?)",
+                    (workspace, SESSION_ENDED, session_id, payload, now),
+                )
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+            return True
+
     def list_sessions(self, workspace: str) -> list[SessionRow]:
         with self._use() as conn:
             rows = conn.execute(
@@ -175,7 +213,7 @@ class CoordinationDB:
                 started_at=row[6],
                 last_activity_at=row[7],
                 feature=row[8],
-                areas=tuple(json.loads(row[9])),
+                areas=tuple(_decode_list(row[9], "session areas")),
                 details=row[10],
             )
             for row in rows
@@ -232,7 +270,7 @@ class CoordinationDB:
                 kind=row[2],
                 session_id=row[3],
                 path=row[4],
-                detail=json.loads(row[5]),
+                detail=_decode_object(row[5], "event detail"),
                 created_at=row[6],
             )
             for row in rows
@@ -324,6 +362,28 @@ class CoordinationDB:
             proc_start=row[3],
             acquired_at=row[4],
         )
+
+
+def _decode_list(text: str, what: str) -> list[Any]:
+    value = _decode_json(text, what)
+    if not isinstance(value, list):
+        raise CoordinationUnavailable(f"malformed {what} in coordination database")
+    return value
+
+
+def _decode_object(text: str, what: str) -> dict[str, Any]:
+    value = _decode_json(text, what)
+    if not isinstance(value, dict):
+        raise CoordinationUnavailable(f"malformed {what} in coordination database")
+    return value
+
+
+def _decode_json(text: str, what: str) -> Any:
+    # A damaged row must surface as an unavailable database, never as a raw decoding error.
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise CoordinationUnavailable(f"malformed {what} in coordination database") from exc
 
 
 def _open_connection(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
