@@ -227,6 +227,9 @@ class WorkspaceWatcher:
             _guard(rel, partial(self._journal_one, rel, head_tracked))
 
     def _journal_one(self, rel: str, head_tracked: set[str]) -> None:
+        if _has_symlinked_ancestor(self._workspace.root, rel):
+            logger.info("workspace watcher skips %s: it is reached through a symlink", rel)
+            return
         attribution, session_id = self._attribute(rel)
         kind: Literal["inferred", "unknown"] = "inferred" if attribution == "inferred" else "unknown"
         if (self._workspace.root / rel).is_file():
@@ -240,16 +243,22 @@ class WorkspaceWatcher:
     def _journal_gone_directory(self, absolute: str) -> None:
         if self._content_under is None:
             return
-        rel = to_relative(self._workspace, absolute)
+        try:
+            rel = _lexical_relative(self._workspace.root, absolute)
+        except ValueError:
+            return
         # Always enumerate: a directory that was moved away and recreated still lost its journaled files.
         if rel == "." or _inside_git_dir(rel):
             return
         for child in self._content_under(rel):
-            if (self._workspace.root / child).exists():
+            if _present_here(self._workspace.root, child):
                 continue
             _guard(child, partial(self._journal_gone_child, child))
 
     def _journal_gone_child(self, child: str) -> None:
+        if _has_symlinked_ancestor(self._workspace.root, child):
+            logger.info("workspace watcher skips %s: it is reached through a symlink", child)
+            return
         attribution, session_id = self._attribute(child)
         kind: Literal["inferred", "unknown"] = "inferred" if attribution == "inferred" else "unknown"
         self._journal.record_deletion(child, attribution=kind, session_id=session_id)
@@ -369,6 +378,40 @@ def _guard(rel: str, action: Callable[[], object]) -> None:
         action()
     except Exception:
         logger.warning("workspace watcher could not journal %s", rel, exc_info=True)
+
+
+def _lexical_relative(root: Path, path: str) -> str:
+    """Workspace-relative POSIX form of ``path``, computed without resolving symlinks.
+
+    A directory replaced by a symlink keeps its own prefix this way, so its journaled children are still found.
+    Raises ``ValueError`` for a path that escapes the root lexically.
+    """
+
+    candidate = os.path.normpath(path if os.path.isabs(path) else os.path.join(str(root), path))
+    relative = os.path.relpath(candidate, str(root))
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep) or os.path.isabs(relative):
+        raise ValueError("path outside workspace")
+    return Path(relative).as_posix()
+
+
+def _has_symlinked_ancestor(root: Path, rel: str) -> bool:
+    """Whether a directory on the way to ``rel`` is a symlink. The journal resolves such paths through the link."""
+
+    current = root
+    for part in rel.split("/")[:-1]:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _present_here(root: Path, rel: str) -> bool:
+    """Whether ``rel`` is a regular file at its own path, without following a symlinked ancestor or leaf."""
+
+    if _has_symlinked_ancestor(root, rel):
+        return False
+    leaf = root.joinpath(*rel.split("/"))
+    return leaf.is_file() and not leaf.is_symlink()
 
 
 def _relative_paths(workspace: Workspace, absolute: Iterable[str]) -> list[str]:

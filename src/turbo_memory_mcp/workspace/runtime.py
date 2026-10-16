@@ -57,6 +57,8 @@ DIGEST_MORE_HINT: Final = "call workspace_status for details"
 # Shutdown's database work (lease release, session end, close) shares one deadline of this length.
 _SHUTDOWN_DB_WAIT_S: Final = 2.0
 _CLOSE_THREAD_NAME: Final = "tqmemory-workspace-close"
+# How long the deferred closer waits for a busy database lock before it gives up.
+_DEFERRED_LOCK_WAIT_S: Final = 30.0
 # The lease owner runs the journal's retention and size eviction at most this often.
 EVICT_INTERVAL_S: Final = 3600.0
 # After a failed watcher start, the session waits this long before the next attempt (no lease, no baseline).
@@ -770,18 +772,35 @@ class WorkspaceRuntime:
         try:
             db.close()
         except CoordinationLockBusy as exc:
-            # The lock holder finishes on its own; a daemon thread closes the connection once the lock is free.
+            # The lock holder finishes on its own; a daemon thread releases the lease, ends the session and closes
+            # the connection once the lock is free, so peers never wait on a row this process no longer serves.
             self._log_failure(exc)
-            threading.Thread(target=_close_when_free, args=(db,), name=_CLOSE_THREAD_NAME, daemon=True).start()
+            worker = threading.Thread(
+                target=_finish_when_free,
+                args=(db, self.workspace.root_key, self.session_id),
+                name=_CLOSE_THREAD_NAME,
+                daemon=True,
+            )
+            worker.start()
         except Exception as exc:
             self._degrade(exc)
 
 
-def _close_when_free(db: CoordinationDB) -> None:
+def _finish_when_free(db: CoordinationDB, root_key: str, session_id: str) -> None:
+    """Release the lease, end the session row and close the database once the lock frees.
+
+    Gives up with a log after ``_DEFERRED_LOCK_WAIT_S``. The lock is taken once for all three steps.
+    """
+
     try:
-        db.close()
+        with lock_deadline(time.monotonic() + _DEFERRED_LOCK_WAIT_S):
+            db.release_lease(root_key, session_id)
+            row = db.get_session(session_id)
+            if row is not None:
+                db.end_session(root_key, session_id, now=time.time(), detail=_end_detail(row))
+            db.close()
     except Exception:
-        logger.debug("deferred coordination close failed", exc_info=True)
+        logger.warning("workspace coordination gave up finishing session %s after shutdown", session_id, exc_info=True)
 
 
 def _over_cap_key(root_key: str) -> str:

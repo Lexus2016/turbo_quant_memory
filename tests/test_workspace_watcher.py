@@ -767,3 +767,92 @@ def test_moved_out_directory_is_enumerated_even_when_recreated(
     watcher.flush_now()
 
     assert journal.history("docs/a.md", limit=1)[0].kind == "deletion"
+
+
+def test_deferred_shutdown_releases_lease_and_session_once_the_lock_frees(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "_SHUTDOWN_DB_WAIT_S", 0.3)
+    first, second = _pair(runtimes, repo, env)
+    assert second.db is not None
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_db_lock() -> None:
+        assert second.db is not None
+        with second.db.lock:
+            held.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=hold_db_lock, daemon=True)
+    holder.start()
+    try:
+        assert held.wait(5)
+        second.shutdown()
+    finally:
+        release.set()
+        holder.join(10)
+
+    # The deferred closer finishes once the lock is free: lease and session row go, the database closes.
+    deadline = time.monotonic() + 10.0
+    while _live(runtime_module._CLOSE_THREAD_NAME) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _live(runtime_module._CLOSE_THREAD_NAME) == []
+    assert _lease(first) is None
+    assert first.db is not None
+    assert first.db.get_session(second.session_id) is None
+
+    # A peer can now take the lease.
+    third = _start(runtimes, repo, env)
+    third.tick()
+    lease = _lease(first)
+    assert lease is not None
+    assert lease.session_id == third.session_id
+    assert third.watcher is not None
+
+
+def _latest_kind(db: CoordinationDB, workspace: str, path: str) -> str | None:
+    with db.lock:
+        row = db.conn.execute(
+            "SELECT kind FROM versions WHERE workspace = ? AND path = ? ORDER BY version_id DESC LIMIT 1",
+            (workspace, path),
+        ).fetchone()
+    return None if row is None else str(row[0])
+
+
+def test_directory_replaced_by_symlink_is_not_journaled_through_the_link(
+    repo: Path, tmp_path: Path, standalone: tuple[WorkspaceWatcher, Journal, CoordinationDB]
+) -> None:
+    """A journaled directory replaced by a symlink: the journal resolves paths through links, so nothing is filed
+    under a link target's path. The watcher skips the child rather than record a deletion for a file that exists."""
+
+    watcher, journal, db = standalone
+    workspace = watcher._workspace.root_key
+    inside = repo / "elsewhere"
+    inside.mkdir()
+    (inside / "a.md").write_text("copy\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "b.md").write_text("copy\n", encoding="utf-8")
+
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("a\n", encoding="utf-8")
+    (docs / "b.md").write_text("b\n", encoding="utf-8")
+    journal.record("docs/a.md")
+    journal.record("docs/b.md")
+    moved = tmp_path / "moved-away"
+    shutil.move(str(docs), str(moved))
+    docs.symlink_to(inside, target_is_directory=True)
+    watcher_module._Handler(watcher).on_any_event(DirMovedEvent(str(docs), str(moved)))
+    watcher.flush_now()
+
+    # No deletion lands under the link target's path, and the real file there is untouched.
+    assert _latest_kind(db, workspace, "elsewhere/a.md") is None
+    assert _latest_kind(db, workspace, "docs/a.md") == "content"
+
+    docs.unlink()
+    docs.symlink_to(outside, target_is_directory=True)
+    watcher_module._Handler(watcher).on_any_event(DirMovedEvent(str(docs), str(moved)))
+    watcher.flush_now()
+    assert _latest_kind(db, workspace, "docs/b.md") == "content"
