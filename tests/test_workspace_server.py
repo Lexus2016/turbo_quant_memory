@@ -564,3 +564,45 @@ def test_server_instructions_carry_the_coordination_rules(env: dict[str, str]) -
     assert "checkout -- ." in text
     assert "reset --hard" in text
     assert "explicit confirmation" in text
+
+
+def test_hook_call_does_not_consume_the_pending_update(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    hook, follow_up = _session_calls(
+        server,
+        [("recent_context", {"format": "hook"}), ("recent_context", {})],
+    )
+
+    assert set(_payload(hook)) == {"hookSpecificOutput"}
+    assert any("codex" in line for line in _payload(follow_up)["workspace"]["new"])
+
+
+def test_pruned_version_never_borrows_the_current_feature(
+    env: dict[str, str], runtimes: list[WorkspaceRuntime], repo: Path
+) -> None:
+    runtime = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env)
+    peer.note_client("codex", "1.0")
+    peer.announce_work("feature A", ["src"])
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    journal = runtime.journal
+    assert journal is not None
+    journal.record("src/a.py", attribution="inferred", session_id=peer.session_id, feature="feature A")
+    assert runtime.db is not None
+    runtime.db.prune_events(time.time() + 3600)
+    peer.announce_work("feature B", ["src"])
+    server = build_server(make_local_dispatcher(default_environ=env), workspace=runtime)
+
+    [result] = _session_calls(server, [("file_history", {"path": "src/a.py"})])
+
+    [version] = _payload(result)["versions"]
+    assert "feature B" not in version["writer_hint"]
+    assert "feature A" not in version["writer_hint"]
+    assert "codex" in version["writer_hint"]

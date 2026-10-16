@@ -265,18 +265,19 @@ def _writer_hint(
     sessions: Mapping[str, SessionRow] | None,
     detail: Mapping[str, Any] | None,
 ) -> str:
-    """A hint about who may have written a version. Inferred writers are never stated as fact, and a failed lookup
-    never asserts that a session ended."""
+    """A hint about who may have written a version. Inferred writers are never stated as fact, a failed lookup
+    never asserts that a session ended, and a version without a recorded feature is never labelled with the
+    session's current feature."""
 
     recorded = detail.get("feature") if detail is not None else None
-    feature = recorded if isinstance(recorded, str) else None
+    feature = recorded if isinstance(recorded, str) else ""
     if record.attribution != "inferred":
         return writer_hint(record.attribution, None, feature)
     if sessions is None:
         uncertain = "inside another session's announced area"
-        return f"{uncertain} ({feature})" if feature is not None else uncertain
+        return f"{uncertain} ({feature})" if feature else uncertain
     session = sessions.get(record.session_id) if record.session_id is not None else None
-    if session is None and feature is not None:
+    if session is None and feature:
         return f"inside an announced area ({feature}); that session has ended"
     return writer_hint(record.attribution, session, feature)
 
@@ -364,12 +365,15 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
             return result
         try:
             _begin_workspace_call()
+            # A hook payload is consumed by Claude Code, so it must not advance the cursor and lose the update.
+            if isinstance(result, dict) and HOOK_OUTPUT_KEY in result:
+                return result
             digest = workspace.digest()
             if digest is None:
                 return result
             if isinstance(result, str):
                 return result + _text_digest(digest)
-            if isinstance(result, dict) and HOOK_OUTPUT_KEY not in result:
+            if isinstance(result, dict):
                 return {**result, "workspace": digest}
             return result
         except Exception:
