@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -70,3 +70,17 @@ class LeaseRow:
     pid: int
     proc_start: float | None
     acquired_at: float
+
+
+@dataclass(frozen=True)
+class VersionRecord:
+    """One journaled version of a workspace file: a content snapshot or a deletion marker."""
+
+    version_id: int
+    path: str
+    kind: Literal["content", "deletion"]
+    sha256: str | None
+    size: int
+    observed_at: float
+    attribution: Literal["inferred", "unknown", "restore"]
+    session_id: str | None
