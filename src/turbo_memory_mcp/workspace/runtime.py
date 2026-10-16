@@ -180,27 +180,28 @@ class WorkspaceRuntime:
         root_key = self.workspace.root_key
         try:
             now = time.time()
-            db.set_intent(self.session_id, feature, normalized, details)
-            db.append_event(
+            db.announce_intent(
                 root_key,
-                models.WORK_ANNOUNCED,
+                self.session_id,
+                feature,
+                normalized,
+                details,
                 now=now,
-                session_id=self.session_id,
                 detail={"feature": feature, "areas": list(normalized)},
             )
             rows = db.list_sessions(root_key)
-            events = _recent_events(db, root_key, now)
+            changes, _ = _recent_changes(db, root_key, now, areas=normalized)
+            response: dict[str, Any] = {
+                "status": "ok",
+                "feature": feature,
+                "areas": list(normalized),
+                "overlaps": status_views.overlap_views(normalized, _peers(rows, self.session_id)),
+                "recent_changes_in_areas": status_views.change_views(changes, _by_id(rows)),
+            }
         except Exception as exc:
             self._degrade(exc)
             return self._unavailable()
-        sessions_by_id = {row.session_id: row for row in rows}
-        return {
-            "status": "ok",
-            "feature": feature,
-            "areas": list(normalized),
-            "overlaps": status_views.overlap_views(normalized, _peers(rows, self.session_id)),
-            "recent_changes_in_areas": status_views.change_views(events, sessions_by_id, areas=normalized),
-        }
+        return response
 
     def finish_work(self) -> dict[str, Any]:
         """Clear this session's announced work and record that it finished."""
@@ -209,13 +210,7 @@ class WorkspaceRuntime:
         if db is None:
             return self._unavailable()
         try:
-            db.clear_intent(self.session_id)
-            db.append_event(
-                self.workspace.root_key,
-                models.WORK_FINISHED,
-                now=time.time(),
-                session_id=self.session_id,
-            )
+            db.finish_intent(self.workspace.root_key, self.session_id, now=time.time())
         except Exception as exc:
             self._degrade(exc)
             return self._unavailable()
@@ -235,28 +230,30 @@ class WorkspaceRuntime:
             now = time.time()
             own = db.get_session(self.session_id)
             rows = db.list_sessions(root_key)
-            events = _recent_events(db, root_key, now)
-            db.set_cursor(self.session_id, db.max_event_id(root_key))
+            changes, watermark = _recent_changes(db, root_key, now, areas=None)
+            areas = own.areas if own is not None else ()
+            peers = _peers(rows, self.session_id)
+            response: dict[str, Any] = {
+                "status": "ok",
+                "workspace": root_key,
+                "you": {
+                    "session_id": self.session_id,
+                    "client": own.client_name if own is not None else "unknown",
+                    "feature": own.feature if own is not None else None,
+                    "areas": list(areas),
+                },
+                "sessions": [status_views.session_view(row) for row in peers],
+                "recent_changes": status_views.change_views(changes, _by_id(rows)),
+                "overlaps": status_views.overlap_views(areas, peers),
+                "journal": {"state": "off", "reason": None},
+                "coverage": status_views.COVERAGE_TEXT,
+            }
+            # Last step: a response that failed to build must not move the cursor past unseen events.
+            db.set_cursor(self.session_id, watermark)
         except Exception as exc:
             self._degrade(exc)
             return self._unavailable()
-        areas = own.areas if own is not None else ()
-        peers = _peers(rows, self.session_id)
-        return {
-            "status": "ok",
-            "workspace": root_key,
-            "you": {
-                "session_id": self.session_id,
-                "client": own.client_name if own is not None else "unknown",
-                "feature": own.feature if own is not None else None,
-                "areas": list(areas),
-            },
-            "sessions": [status_views.session_view(row) for row in peers],
-            "recent_changes": status_views.change_views(events, {row.session_id: row for row in rows}),
-            "overlaps": status_views.overlap_views(areas, peers),
-            "journal": {"state": "off", "reason": None},
-            "coverage": status_views.COVERAGE_TEXT,
-        }
+        return response
 
     def shutdown(self) -> None:
         """Stop the ticker, remove this session and close the database. Safe to call repeatedly.
@@ -424,21 +421,42 @@ def _normalize_areas(workspace: Workspace, areas: Sequence[str]) -> tuple[str, .
 
     normalized: list[str] = []
     for area in areas:
-        relative = to_relative(workspace, area)
+        relative = to_relative(workspace, area.replace("\\", "/"))
         if relative not in normalized:
             normalized.append(relative)
     return tuple(normalized)
 
 
-def _recent_events(db: CoordinationDB, root_key: str, now: float) -> list[EventRow]:
-    """Newest file-change events inside the status window, the only events the status views read."""
+def _recent_changes(
+    db: CoordinationDB,
+    root_key: str,
+    now: float,
+    *,
+    areas: Sequence[str] | None,
+) -> tuple[list[EventRow], int]:
+    """Newest file changes in the status window under ``areas``, and the watermark they were read against.
 
-    return db.events_since(
-        root_key,
-        now - status_views.STATUS_RECENT_WINDOW_S,
-        status_views.CHANGE_KINDS,
-        status_views.CHANGE_SCAN_LIMIT,
+    The watermark is read first; every page is bounded by it, so the result is a consistent prefix of the log.
+    """
+
+    watermark = db.max_event_id(root_key)
+    changes = status_views.collect_changes(
+        lambda upper, before: db.events_window(
+            root_key,
+            status_views.CHANGE_KINDS,
+            upper_id=upper,
+            before_id=before,
+            limit=status_views.CHANGE_PAGE_SIZE,
+        ),
+        upper_id=watermark,
+        since=now - status_views.STATUS_RECENT_WINDOW_S,
+        areas=areas,
     )
+    return changes, watermark
+
+
+def _by_id(rows: Sequence[SessionRow]) -> dict[str, SessionRow]:
+    return {row.session_id: row for row in rows}
 
 
 def _peers(rows: Sequence[SessionRow], session_id: str) -> list[SessionRow]:

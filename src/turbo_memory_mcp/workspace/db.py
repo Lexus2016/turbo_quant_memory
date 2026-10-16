@@ -19,7 +19,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from turbo_memory_mcp.workspace.models import SESSION_ENDED, EventRow, LeaseRow, SessionRow
+from turbo_memory_mcp.workspace.models import (
+    SESSION_ENDED,
+    WORK_ANNOUNCED,
+    WORK_FINISHED,
+    EventRow,
+    LeaseRow,
+    SessionRow,
+)
 
 if sys.platform == "win32":
     import msvcrt
@@ -223,6 +230,50 @@ class CoordinationDB:
                 (session_id,),
             )
 
+    def announce_intent(
+        self,
+        workspace: str,
+        session_id: str,
+        feature: str,
+        areas: Sequence[str],
+        details: str | None,
+        *,
+        now: float,
+        detail: Mapping[str, Any],
+    ) -> None:
+        """Store the announced work and record ``WORK_ANNOUNCED`` in one write transaction."""
+
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET feature = ?, areas = ?, details = ? WHERE session_id = ?",
+                (feature, json.dumps(list(areas)), details, session_id),
+            )
+            _insert_event(conn, workspace, WORK_ANNOUNCED, session_id, now, detail)
+
+    def finish_intent(self, workspace: str, session_id: str, *, now: float) -> None:
+        """Clear the announced work and record ``WORK_FINISHED`` in one write transaction."""
+
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET feature = NULL, areas = '[]', details = NULL WHERE session_id = ?",
+                (session_id,),
+            )
+            _insert_event(conn, workspace, WORK_FINISHED, session_id, now, {})
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """A write transaction under the lock: committed when the block finishes, rolled back on any error."""
+
+        with self._use() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+
     # Events -------------------------------------------------------------------
 
     def append_event(
@@ -254,15 +305,30 @@ class CoordinationDB:
             ).fetchall()
         return [_event_row(row) for row in rows]
 
-    def events_since(self, workspace: str, since: float, kinds: Sequence[str], limit: int) -> list[EventRow]:
-        """Newest-first events of the given kinds created at or after ``since``, at most ``limit`` of them."""
+    def events_window(
+        self,
+        workspace: str,
+        kinds: Sequence[str],
+        *,
+        upper_id: int,
+        before_id: int,
+        limit: int,
+    ) -> list[EventRow]:
+        """Newest-first events of ``kinds`` with ``before_id > event_id`` and ``event_id <= upper_id``.
+
+        Callers read ``upper_id`` first (the watermark) and page down with ``before_id``, so events
+        appended during a read are never returned and a cursor set to the watermark never skips one.
+        """
 
         placeholders = ", ".join("?" for _ in kinds)
         with self._use() as conn:
             rows = conn.execute(
-                _EVENT_SELECT + " WHERE workspace = ? AND created_at >= ? AND kind IN (" + placeholders + ")"
+                _EVENT_SELECT
+                + " WHERE workspace = ? AND event_id <= ? AND event_id < ? AND kind IN ("
+                + placeholders
+                + ")"
                 " ORDER BY event_id DESC LIMIT ?",
-                (workspace, since, *kinds, limit),
+                (workspace, upper_id, before_id, *kinds, limit),
             ).fetchall()
         return [_event_row(row) for row in rows]
 
@@ -358,6 +424,21 @@ _SESSION_SELECT = (
     "SELECT session_id, workspace, client_name, client_version, pid, proc_start, started_at,"
     " last_activity_at, feature, areas, details FROM sessions"
 )
+
+
+def _insert_event(
+    conn: sqlite3.Connection,
+    workspace: str,
+    kind: str,
+    session_id: str | None,
+    now: float,
+    detail: Mapping[str, Any],
+) -> None:
+    payload = json.dumps(dict(detail), sort_keys=True, default=str)
+    conn.execute(
+        "INSERT INTO events (workspace, kind, session_id, path, detail, created_at) VALUES (?, ?, ?, NULL, ?, ?)",
+        (workspace, kind, session_id, payload, now),
+    )
 
 
 _EVENT_SELECT = "SELECT event_id, workspace, kind, session_id, path, detail, created_at FROM events"
