@@ -15,7 +15,7 @@
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=turbo-quant-memory"><img alt="MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-listed-6f42c1.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg">
   <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="MCP-инструменты" src="https://img.shields.io/badge/MCP-19%20tools-green.svg">
+  <img alt="MCP-инструменты" src="https://img.shields.io/badge/MCP-24%20tools-green.svg">
   <img alt="Локально" src="https://img.shields.io/badge/data-100%25%20local-success.svg">
 </p>
 
@@ -107,10 +107,21 @@ Turbo Quant Memory не просто *обещает* экономить ток�
 * **Заметки человека весят больше заметок агента.** Всё, что вы явно попросили запомнить, помечается как `human-explicit` и при равной релевантности стоит выше собственных наблюдений агента.
 * **Зашифрованное хранилище секретов.** Привязано к проекту, AES-256-GCM, структурно недостижимо для поиска. → [docs/secrets-vault.ru.md](docs/secrets-vault.ru.md)
 * **Работает на слабой машине.** Эмбеддер по умолчанию — ONNX через fastembed: без PyTorch, модель ~0,22 ГБ, комфортно на 2 ГБ оперативной памяти.
+* **Несколько агентов в одном проекте — автоматически.** Агенты, работающие в одной папке, видят сессии друг друга, объявленную работу и недавние изменения файлов; файлы, которые меняются, пока они делят рабочее дерево, сохраняются и могут быть восстановлены. Настройка не нужна.
 
 Полные технические подробности → [docs/features.ru.md](docs/features.ru.md)
 
-## 19 MCP-инструментов
+## Несколько агентов в одном проекте
+
+Если вы запускаете нескольких агентов в одном рабочем дереве, tqmemory связывает их автоматически. Ничего настраивать не нужно.
+
+* **Агенты видят друг друга.** `workspace_status` показывает активные сессии, работу, которую заявила каждая из них (`announce_work`, `finish_work`), и недавно изменённые файлы. Другие ответы tqmemory содержат короткую пометку `workspace` только тогда, когда произошло что-то новое.
+* **Изменённые файлы версионируются.** Пока две или более сессии используют общее git-дерево, каждое изменение файла сохраняется. `file_history` показывает версии, `restore_file` возвращает нужную; само восстановление тоже можно отменить. То же доступно из терминала: `turbo-memory-mcp files log` и `turbo-memory-mcp files restore`.
+* **Ограничения.** Версии хранятся только пока две или более сессии делят git-дерево: до 1 МиБ на файл, 256 МиБ на проект и 14 дней.
+
+Это частичная защита, а не гарантия: она не на 100%. Запись не блокируется, поэтому два агента всё равно могут перезаписать работу друг друга, а tqmemory лишь показывает это и помогает восстановить. Агенты, которые никогда не вызывают tqmemory, ничего не видят. Работает только на одном компьютере. Чтобы выключить, задайте `TQMEMORY_WORKSPACE_DISABLE=1`.
+
+## 24 MCP-инструмента
 
 | Группа | Инструменты |
 | :--- | :--- |
@@ -119,6 +130,7 @@ Turbo Quant Memory не просто *обещает* экономить ток�
 | Граф | `link_entities` · `unlink_entities` · `get_related_entities` |
 | Гигиена | `lint_knowledge_base` · `health` · `self_test` · `server_info` |
 | Хранилище | `set_secret` · `get_secret` · `list_secrets` · `delete_secret` |
+| Рабочее пространство | `announce_work` · `finish_work` · `workspace_status` · `file_history` · `restore_file` |
 
 ## Документация
 

@@ -111,6 +111,17 @@ When you learn something important, fix a complex bug, or make an architectural 
 - Any vault error (`master_key_unavailable`, `master_key_mismatch`, `vault_error`) carries a `setup_hint` field with the exact commands the user needs. Print it verbatim and stop — never invent or regenerate a key.
 - `master_key_mismatch` specifically means the resolved key does not match the vault — usually a `TQMEMORY_SECRETS_PASSPHRASE` shadowing a keyring-keyed vault (that variable is an Argon2id passphrase, never the raw keyring key). The fix is normally to UNSET it. Reads never mint a key, so the vault is intact.
 
+### 3.6 Working alongside other agents
+
+Several agent sessions may share one working tree. tqmemory shows them to each other; it does not block anyone.
+
+- At session start, call `workspace_status`.
+- When starting a feature, call `announce_work(feature, areas)`; when done, call `finish_work()`.
+- While other sessions are live: call `workspace_status` before editing a file you have not touched recently, before every commit, and every few edits.
+- When any tqmemory response carries a `workspace` field, read it. Before writing a file another session changed since you read it, re-read it.
+- While other sessions are live, do not run destructive git commands (`checkout -- .`, `reset --hard`, `stash`, `clean`, branch switch) without the human's explicit confirmation.
+- If your edit overwrote someone's work, or theirs overwrote yours: `file_history(path)` then `restore_file(path, version)`; a restore is itself undoable.
+
 ## 4. Troubleshoot
 
 | Symptom | Action |

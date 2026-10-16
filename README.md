@@ -20,7 +20,7 @@
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=turbo-quant-memory"><img alt="MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-listed-6f42c1.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg">
   <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP-19%20tools-green.svg">
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP-24%20tools-green.svg">
   <img alt="Local-first" src="https://img.shields.io/badge/data-100%25%20local-success.svg">
 </p>
 
@@ -118,10 +118,21 @@ Turbo Quant Memory doesn't just *claim* to save tokens — every install keeps a
 * **Human notes outrank agent notes.** Anything you explicitly asked to remember is flagged `human-explicit` and ranks above the agent's own observations at equal relevance.
 * **Encrypted secrets vault.** Project-scoped, AES-256-GCM, structurally unreachable from search. → [docs/secrets-vault.md](docs/secrets-vault.md)
 * **Runs on a small machine.** The default embedder is ONNX via fastembed — no PyTorch, ~0.22 GB model, comfortable on 2 GB of RAM.
+* **Several agents, one project — automatically.** Agents working in the same folder see each other's sessions, announced work and recent file changes, and files that change while they share a working tree are kept and can be restored. No setup.
 
 Full technical detail → [docs/features.md](docs/features.md)
 
-## The 19 MCP tools
+## Several agents in one project
+
+If you run more than one agent in the same working tree, tqmemory connects them automatically. There is nothing to configure.
+
+* **Agents see each other.** `workspace_status` lists the live sessions, what each one announced it is working on (`announce_work`, `finish_work`) and which files changed recently. Other tqmemory responses carry a short `workspace` note only when something new has happened.
+* **Changed files are versioned.** While two or more sessions share a git working tree, every change to a file is kept. `file_history` lists the versions and `restore_file` brings one back; the restore is itself undoable. The same is available from a terminal: `turbo-memory-mcp files log` and `turbo-memory-mcp files restore`.
+* **Limits.** Versions are kept only while two or more sessions share a git working tree, up to 1 MiB per file, 256 MiB per project and 14 days.
+
+This is partial protection, not a guarantee. It does not block writes: two agents can still overwrite each other's work, and tqmemory can only show it and help you recover. Agents that never call tqmemory see nothing. It works on one computer only. To turn it off, set `TQMEMORY_WORKSPACE_DISABLE=1`.
+
+## The 24 MCP tools
 
 | Group | Tools |
 | :--- | :--- |
@@ -130,6 +141,7 @@ Full technical detail → [docs/features.md](docs/features.md)
 | Graph | `link_entities` · `unlink_entities` · `get_related_entities` |
 | Hygiene | `lint_knowledge_base` · `health` · `self_test` · `server_info` |
 | Vault | `set_secret` · `get_secret` · `list_secrets` · `delete_secret` |
+| Workspace | `announce_work` · `finish_work` · `workspace_status` · `file_history` · `restore_file` |
 
 ## Documentation
 

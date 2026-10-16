@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - unreleased
+
+### Added
+- **Workspace coordination for several agents in one working tree.** Automatic,
+  no setup, MCP only. Sessions see each other's live status, announced work
+  and recent file changes. Other tqmemory responses carry a short `workspace`
+  field only when something new happened, and nothing is shown to a lone
+  session.
+- **Five tools:** `announce_work`, `finish_work`, `workspace_status`,
+  `file_history` and `restore_file`. Announcements are information only; they
+  never block or order work.
+- **Version journal.** While two or more sessions share a git working tree,
+  changed files are stored content-addressed under tqmemory storage and can be
+  restored; a restore is itself undoable. Limits: 1 MiB per file, 256 MiB per
+  project, 14 days. `TQMEMORY_WORKSPACE_DISABLE=1` turns the feature off.
+- **`turbo-memory-mcp files log PATH` and `files restore PATH VERSION`** work
+  from a terminal without the daemon.
+- **`watchdog` dependency** for the file watcher.
+- SKILL.md §3.6 tells agents how to use the coordination tools.
+
 ## [0.30.0] - 2026-10-04
 
 ### Added
