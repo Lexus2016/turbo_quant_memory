@@ -1,12 +1,19 @@
 """Content-addressed version journal for files in a shared git working tree.
 
-Each change to a tracked-or-not text file is stored as a zlib-compressed blob keyed by its
-SHA-256 under the project's workspace storage directory, never inside the repository.
-Version rows live in the coordination database; ``journal.log`` mirrors every inserted version
-so the index can be rebuilt after the database is lost.
+Each change to a text file is stored as a zlib-compressed blob keyed by its SHA-256 under the
+project's workspace storage directory, never inside the repository. Version rows live in the
+coordination database. ``journal.log`` mirrors every version (with its original ``version_id``)
+so the index can be rebuilt after the database is lost, and carries a watermark so evicted ids are
+never reused.
 
-Every write runs in one ``BEGIN IMMEDIATE`` transaction, which serializes writers across
-processes, so eviction can never delete a blob that a concurrent ``record`` is about to reference.
+Ordering rules that keep the two stores consistent:
+
+- A version's blob and row commit together. Its log line is appended only after that commit, under
+  the write lock, so a rolled-back row can never leave a log line behind.
+- Eviction commits the deletion first and rewrites the log afterwards, so the log can only be a
+  superset of the index. Blobs are swept last, and only when neither store refers to them.
+- Restores of one workspace are serialized by a lock file, and the current file is re-hashed right
+  before it is replaced.
 """
 
 from __future__ import annotations
@@ -16,7 +23,9 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 import subprocess
+import sys
 import time
 import uuid
 import zlib
@@ -31,6 +40,11 @@ from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailabl
 from turbo_memory_mcp.workspace.models import FILE_CHANGED, FILE_DELETED, VersionRecord, Workspace
 from turbo_memory_mcp.workspace.paths import to_relative
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 ENV_JOURNAL_MAX_FILE_BYTES = "TQMEMORY_JOURNAL_MAX_FILE_BYTES"
 ENV_JOURNAL_MAX_BYTES = "TQMEMORY_JOURNAL_MAX_BYTES"
 ENV_JOURNAL_RETENTION_DAYS = "TQMEMORY_JOURNAL_RETENTION_DAYS"
@@ -39,18 +53,35 @@ _BINARY_SCAN_BYTES = 8192
 _DAY_SECONDS = 86400.0
 _RECENT_SECONDS = _DAY_SECONDS
 _GIT_TIMEOUT_SECONDS = 10
+_LOCK_RETRY_SECONDS = 0.05
 _ZLIB_LEVEL = 6
 _LOG_NAME = "journal.log"
 _BLOB_SUFFIX = ".z"
 _TEMP_SUFFIX = ".tmp"
+_LOCK_SUFFIX = ".lock"
+_KIND_WATERMARK = "watermark"
 _RECORDABLE_ATTRIBUTIONS = frozenset({"inferred", "unknown"})
 _ALL_ATTRIBUTIONS = frozenset({"inferred", "unknown", "restore"})
 _KINDS = frozenset({"content", "deletion"})
-_LOG_KEYS = ("workspace", "path", "kind", "sha256", "size", "observed_at", "attribution", "session_id")
+_LOG_KEYS = (
+    "workspace",
+    "version_id",
+    "path",
+    "kind",
+    "sha256",
+    "size",
+    "observed_at",
+    "attribution",
+    "session_id",
+)
 _VERSION_SELECT = "SELECT version_id, path, kind, sha256, size, observed_at, attribution, session_id FROM versions"
 _INSERT_VERSION = (
     "INSERT INTO versions (workspace, path, kind, sha256, size, observed_at, attribution, session_id) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_INSERT_VERSION_WITH_ID = (
+    "INSERT INTO versions (version_id, workspace, path, kind, sha256, size, observed_at, attribution, session_id) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _INSERT_EVENT = "INSERT INTO events (workspace, kind, session_id, path, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)"
 
@@ -128,7 +159,7 @@ class Journal:
             latest = _latest(conn, self.workspace.root_key, rel)
             if latest is not None and latest.kind == "content" and latest.sha256 == digest:
                 return None
-            return self._insert(
+            record = self._insert(
                 conn,
                 rel,
                 kind="content",
@@ -140,6 +171,8 @@ class Journal:
                 observed_at=observed_at,
                 feature=feature,
             )
+        self._append_log(record)
+        return record
 
     def record_deletion(
         self,
@@ -159,7 +192,7 @@ class Journal:
             latest = _latest(conn, self.workspace.root_key, rel)
             if latest is not None and latest.kind == "deletion":
                 return None
-            return self._insert(
+            record = self._insert(
                 conn,
                 rel,
                 kind="deletion",
@@ -171,6 +204,8 @@ class Journal:
                 observed_at=observed_at,
                 feature=feature,
             )
+        self._append_log(record)
+        return record
 
     # Reading ------------------------------------------------------------------
 
@@ -205,11 +240,12 @@ class Journal:
     # Restore ------------------------------------------------------------------
 
     def restore(self, rel_path: str, version: int | Literal["HEAD"]) -> dict[str, Any]:
-        """Write ``version`` (a version id, or ``"HEAD"`` for the committed content) back to ``rel_path``.
+        """Write ``version`` (a version id, or ``"HEAD"`` for the committed blob) back to ``rel_path``.
 
-        Nothing is written unless the target content is read successfully first. The current file is
-        snapshotted with attribution ``"restore"`` before it is replaced, so the restore can be undone.
-        A current file that is too large to snapshot is refused rather than overwritten.
+        Nothing is written unless the target content is read successfully first. Under a per-workspace
+        lock, the current file is snapshotted with attribution ``"restore"`` and re-hashed right before it is
+        replaced; if it changed in between, it is snapshotted again, so the returned undo id always holds
+        the content that was actually overwritten. A current file too large to snapshot is refused.
         """
 
         rel = self._relative(rel_path)
@@ -224,14 +260,22 @@ class Journal:
         dest = self.workspace.root / rel
         if dest.is_dir():
             raise ValueError(f"{rel} is a directory")
-        current = b""
-        snapshot: VersionRecord | None = None
-        if dest.is_file():
-            current = self._current_bytes(dest, rel)
-            snapshot = self._snapshot(rel, current)
-        added, removed = _line_diff(current, target)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(dest, target)
+        with self._restore_lock():
+            snapshot: VersionRecord | None = None
+            current: bytes | None = None
+            if dest.is_file():
+                current = self._current_bytes(dest, rel)
+                snapshot = self._snapshot(rel, current)
+            if dest.is_file():
+                latest = self._current_bytes(dest, rel)
+                if current is None or _digest(latest) != _digest(current):
+                    current = latest
+                    snapshot = self._snapshot(rel, latest)
+            old = b"" if current is None else current
+            mode = stat.S_IMODE(dest.stat().st_mode) if dest.is_file() else None
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(dest, target, mode=mode)
+        added, removed = _line_diff(old, target)
         return {
             "status": "ok",
             "path": rel,
@@ -246,8 +290,8 @@ class Journal:
         """Drop versions past the retention age, then the oldest unprotected content until under the size cap.
 
         The newest content version of every path changed in the last 24 hours is never dropped for size.
-        Expired rows and their ``journal.log`` lines are removed in one transaction; blobs that neither the
-        index nor the log still refers to are swept afterwards. Returns the number of versions removed.
+        The deletion is committed first; then the log is rewritten and blobs that neither store refers to
+        are swept. Returns the number of versions removed.
         """
 
         observed_now = _now(now)
@@ -282,15 +326,16 @@ class Journal:
             self.over_cap = total > cap
             if expired:
                 conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
-                # Rewritten before commit: if this fails, the rollback leaves rows and blobs exactly as they were.
-                self._rewrite_log([row for row in rows if row.version_id not in expired])
-        self._sweep_unreferenced_blobs()
+            max_seen = max(row.version_id for row in rows)
+        self._maintain_after_commit({row.version_id for row in rows if row.version_id not in expired}, max_seen)
         return len(expired)
 
     def rebuild_index_if_empty(self) -> int:
         """Re-insert versions from ``journal.log`` when the index is empty; return how many were inserted.
 
-        Content entries whose blob is gone are skipped; deletion entries are always re-inserted.
+        Versions keep their logged ``version_id``, so an old id still names the same content. Content entries
+        whose blob is gone are skipped; deletion entries are always re-inserted. The id sequence is raised to
+        the highest id ever logged, so evicted ids are not handed out again.
         """
 
         with _transaction(self._db) as conn:
@@ -298,13 +343,18 @@ class Journal:
             if count or not self._log_path.is_file():
                 return 0
             inserted = 0
+            top = 0
             for entry in _read_log(self._log_path):
+                top = max(top, entry["version_id"])
+                if entry["kind"] == _KIND_WATERMARK:
+                    continue
                 digest = entry["sha256"]
                 if entry["kind"] == "content" and not _blob_path(self._blobs_root, digest).is_file():
                     continue
                 conn.execute(
-                    _INSERT_VERSION,
+                    _INSERT_VERSION_WITH_ID,
                     (
+                        entry["version_id"],
                         entry["workspace"],
                         entry["path"],
                         entry["kind"],
@@ -316,6 +366,7 @@ class Journal:
                     ),
                 )
                 inserted += 1
+            _bump_sequence(conn, top)
             return inserted
 
     # Internals ----------------------------------------------------------------
@@ -324,7 +375,8 @@ class Journal:
         rel = to_relative(self.workspace, path)
         if rel == ".":
             raise ValueError("path must name a file inside the workspace")
-        if ".git" in rel.split("/"):
+        # casefold: on case-insensitive filesystems ".GIT" and "sub/.Git" alias the git directory.
+        if any(part.casefold() == ".git" for part in rel.split("/")):
             raise ValueError("path is inside .git")
         return rel
 
@@ -348,20 +400,21 @@ class Journal:
         return dest.read_bytes()
 
     def _snapshot(self, rel: str, content: bytes) -> VersionRecord:
-        digest = hashlib.sha256(content).hexdigest()
         with _transaction(self._db) as conn:
-            return self._insert(
+            record = self._insert(
                 conn,
                 rel,
                 kind="content",
                 content=content,
-                digest=digest,
+                digest=_digest(content),
                 size=len(content),
                 attribution="restore",
                 session_id=None,
                 observed_at=_now(None),
                 feature=None,
             )
+        self._append_log(record)
+        return record
 
     def _check_restorable(self, version_id: int, rel: str) -> None:
         with _reading(self._db) as conn:
@@ -376,21 +429,10 @@ class Journal:
             raise ValueError(f"version {version_id} is a deletion and cannot be restored")
 
     def _head_content(self, rel: str) -> bytes:
-        spec = f"HEAD:{rel}"
+        # One call: a tree, a missing path or a submodule makes cat-file fail, so no separate type check is needed.
         try:
-            kind = subprocess.run(
-                ["git", "cat-file", "-t", spec],
-                cwd=self.workspace.root,
-                check=False,
-                capture_output=True,
-                timeout=_GIT_TIMEOUT_SECONDS,
-            )
-            if kind.returncode != 0:
-                raise ValueError(f"{rel} is not in HEAD")
-            if kind.stdout.strip() != b"blob":
-                raise ValueError(f"{rel} is not a committed file in HEAD")
             result = subprocess.run(
-                ["git", "show", spec],
+                ["git", "cat-file", "blob", f"HEAD:{rel}"],
                 cwd=self.workspace.root,
                 check=False,
                 capture_output=True,
@@ -399,8 +441,25 @@ class Journal:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ValueError(f"cannot read HEAD for {rel}: {exc}") from None
         if result.returncode != 0:
-            raise ValueError(f"cannot read {rel} from HEAD")
+            raise ValueError(f"{rel} is not a committed file in HEAD")
         return result.stdout
+
+    @contextmanager
+    def _restore_lock(self) -> Iterator[None]:
+        """Hold a per-workspace lock file (flock, or LK_LOCK on Windows) for the whole restore."""
+
+        key = hashlib.sha256(self.workspace.root_key.encode("utf-8")).hexdigest()[:16]
+        lock_path = self._blobs_root.parent / f"restore-{key}{_LOCK_SUFFIX}"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            _acquire(fd)
+            try:
+                yield
+            finally:
+                _release(fd)
+        finally:
+            os.close(fd)
 
     def _read_blob(self, digest: str, version_id: int) -> bytes:
         try:
@@ -409,7 +468,7 @@ class Journal:
             raise ValueError(f"blob for version {version_id} is missing") from None
         except zlib.error:
             raise ValueError(f"blob for version {version_id} is corrupt") from None
-        if hashlib.sha256(data).hexdigest() != digest:
+        if _digest(data) != digest:
             raise ValueError(f"blob for version {version_id} failed its checksum")
         return data
 
@@ -419,52 +478,55 @@ class Journal:
         except FileNotFoundError:
             return 0
 
-    def _sweep_unreferenced_blobs(self) -> None:
+    def _maintain_after_commit(self, surviving_ids: set[int], max_seen: int) -> None:
+        """Rewrite the log, then sweep blobs, in one write transaction so no record interleaves."""
+
+        with _transaction(self._db) as conn:
+            self._rewrite_log(surviving_ids, max_seen)
+            self._sweep_unreferenced_blobs(conn)
+
+    def _sweep_unreferenced_blobs(self, conn: sqlite3.Connection) -> None:
         """Delete blobs that neither the index nor ``journal.log`` refers to.
 
-        Runs in its own write transaction so the reference set is read under the same cross-process lock
-        every record holds. A blob that cannot be unlinked (for example, open elsewhere on Windows) is left
-        for a later sweep rather than failing the eviction.
+        A blob that cannot be unlinked (for example, open elsewhere on Windows) is left for a later sweep.
         """
 
         if not self._blobs_root.is_dir():
             return
-        with _transaction(self._db) as conn:
-            referenced = {
-                row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")
-            }
-            if self._log_path.is_file():
-                referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
-            for shard in self._blobs_root.iterdir():
-                if not shard.is_dir():
+        referenced = {row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")}
+        if self._log_path.is_file():
+            referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
+        for shard in self._blobs_root.iterdir():
+            if not shard.is_dir():
+                continue
+            for entry in list(shard.iterdir()):
+                if entry.suffix == _BLOB_SUFFIX and entry.stem in referenced:
                     continue
-                for entry in list(shard.iterdir()):
-                    if entry.suffix == _BLOB_SUFFIX and entry.stem in referenced:
-                        continue
-                    if entry.suffix not in (_BLOB_SUFFIX, _TEMP_SUFFIX):
-                        continue
-                    try:
-                        entry.unlink()
-                    except OSError:
-                        continue
+                if entry.suffix not in (_BLOB_SUFFIX, _TEMP_SUFFIX):
+                    continue
+                try:
+                    entry.unlink()
+                except OSError:
+                    continue
 
-    def _rewrite_log(self, surviving: list[_EvictRow]) -> None:
-        """Keep only the log lines that match a surviving version; torn or foreign lines are dropped."""
+    def _rewrite_log(self, surviving_ids: set[int], max_seen: int) -> None:
+        """Keep only lines of surviving versions, drop torn lines, and end with a watermark of the highest id ever seen."""
 
-        if not self._log_path.is_file():
-            return
-        keep = Counter(_log_key_of_row(row) for row in surviving)
+        old_text = self._log_path.read_text(encoding="utf-8") if self._log_path.is_file() else ""
+        top = max_seen
         kept: list[str] = []
-        changed = False
-        for line in self._log_path.read_text(encoding="utf-8").splitlines(keepends=True):
+        for line in old_text.splitlines(keepends=True):
             entry = _parse_log_line(line)
-            if entry is not None and keep[_log_key_of_entry(entry)] > 0:
-                keep[_log_key_of_entry(entry)] -= 1
-                kept.append(line)
-            else:
-                changed = True
-        if changed:
-            _atomic_write(self._log_path, "".join(kept).encode("utf-8"))
+            if entry is None:
+                continue
+            top = max(top, entry["version_id"])
+            if entry["kind"] != _KIND_WATERMARK and entry["version_id"] in surviving_ids:
+                kept.append(line if line.endswith("\n") else f"{line}\n")
+        if top > 0:
+            kept.append(_json_line({"kind": _KIND_WATERMARK, "version_id": top}))
+        new_text = "".join(kept)
+        if new_text != old_text:
+            _atomic_write(self._log_path, new_text.encode("utf-8"))
 
     def _insert(
         self,
@@ -480,9 +542,9 @@ class Journal:
         observed_at: float,
         feature: str | None,
     ) -> VersionRecord:
-        """Store the blob, insert the version row, mirror it to the log and append its event.
+        """Store the blob, insert the version row and its event. Must run inside ``_transaction``.
 
-        Must run inside ``_transaction``; any failure rolls the row back and leaves at most an unreferenced blob.
+        The log line is not written here; callers append it after the transaction commits.
         """
 
         workspace = self.workspace.root_key
@@ -494,16 +556,6 @@ class Journal:
         version_id = cursor.lastrowid
         if version_id is None:  # pragma: no cover - sqlite always reports the rowid of an INSERT
             raise CoordinationUnavailable("version insert returned no row id")
-        record = VersionRecord(
-            version_id=version_id,
-            path=rel,
-            kind=kind,
-            sha256=digest,
-            size=size,
-            observed_at=observed_at,
-            attribution=attribution,
-            session_id=session_id,
-        )
         detail: dict[str, Any] = {"attribution": attribution, "session_id": session_id, "version_id": version_id}
         if feature is not None:
             detail["feature"] = feature
@@ -518,9 +570,22 @@ class Journal:
                 observed_at,
             ),
         )
-        # Logged last: a failed event insert must not leave a log line for a rolled-back row.
-        _append_log(self._log_path, workspace, record)
-        return record
+        return VersionRecord(
+            version_id=version_id,
+            path=rel,
+            kind=kind,
+            sha256=digest,
+            size=size,
+            observed_at=observed_at,
+            attribution=attribution,
+            session_id=session_id,
+        )
+
+    def _append_log(self, record: VersionRecord) -> None:
+        line = _json_line(_log_entry(self.workspace.root_key, record))
+        # The write transaction serializes the append with eviction's rewrite and with other appends.
+        with _transaction(self._db):
+            _append_line(self._log_path, line)
 
 
 # Module helpers -----------------------------------------------------------------
@@ -548,6 +613,10 @@ def _now(now: float | None) -> float:
     return time.time() if now is None else float(now)
 
 
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 @contextmanager
 def _transaction(db: CoordinationDB) -> Iterator[sqlite3.Connection]:
     """A write transaction under the handle's lock; ``BEGIN IMMEDIATE`` also serializes writers across processes."""
@@ -573,6 +642,16 @@ def _reading(db: CoordinationDB) -> Iterator[sqlite3.Connection]:
             yield db.conn
         except sqlite3.Error as exc:
             raise CoordinationUnavailable(str(exc)) from exc
+
+
+def _bump_sequence(conn: sqlite3.Connection, value: int) -> None:
+    """Raise the AUTOINCREMENT counter of ``versions`` to at least ``value``."""
+
+    conn.execute(
+        "INSERT INTO sqlite_sequence (name, seq) SELECT 'versions', 0 "
+        "WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'versions')"
+    )
+    conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'versions'", (value,))
 
 
 def _latest(conn: sqlite3.Connection, workspace: str, rel: str) -> VersionRecord | None:
@@ -619,21 +698,47 @@ def _write_blob(blobs_root: Path, digest: str, content: bytes) -> None:
     _atomic_write(path, zlib.compress(content, _ZLIB_LEVEL))
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
-    """Write ``data`` to a temp file beside ``path`` and move it into place with ``os.replace``."""
+def _atomic_write(path: Path, data: bytes, mode: int | None = None) -> None:
+    """Write ``data`` to a temp file beside ``path`` and move it into place with ``os.replace``.
+
+    ``mode`` (permission bits) is applied to the temp file before the replace, so the destination keeps its mode.
+    """
 
     temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}{_TEMP_SUFFIX}")
     try:
         temp.write_bytes(data)
+        if mode is not None:
+            os.chmod(temp, mode)
         os.replace(temp, path)
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
 
 
-def _append_log(log_path: Path, workspace: str, record: VersionRecord) -> None:
-    entry = {
+def _append_line(log_path: Path, line: str) -> None:
+    """Append one line. A torn trailing fragment is terminated first, so it stays an isolated invalid line."""
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    needs_break = False
+    if log_path.is_file() and log_path.stat().st_size > 0:
+        with log_path.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            needs_break = handle.read(1) != b"\n"
+    with log_path.open("ab") as handle:
+        if needs_break:
+            handle.write(b"\n")
+        handle.write(line.encode("utf-8"))
+        handle.flush()
+
+
+def _json_line(obj: Mapping[str, Any]) -> str:
+    return json.dumps(obj, sort_keys=True) + "\n"
+
+
+def _log_entry(workspace: str, record: VersionRecord) -> dict[str, Any]:
+    return {
         "workspace": workspace,
+        "version_id": record.version_id,
         "path": record.path,
         "kind": record.kind,
         "sha256": record.sha256,
@@ -642,20 +747,20 @@ def _append_log(log_path: Path, workspace: str, record: VersionRecord) -> None:
         "attribution": record.attribution,
         "session_id": record.session_id,
     }
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-        handle.flush()
 
 
 def _parse_log_line(line: str) -> dict[str, Any] | None:
-    """Return a well-formed journal entry, or ``None`` for a torn or foreign line."""
+    """Return a well-formed version entry or watermark, or ``None`` for a torn or foreign line."""
 
     try:
         entry = json.loads(line)
     except ValueError:
         return None
-    if not isinstance(entry, dict) or any(key not in entry for key in _LOG_KEYS):
+    if not isinstance(entry, dict) or type(entry.get("version_id")) is not int:
+        return None
+    if entry.get("kind") == _KIND_WATERMARK:
+        return entry
+    if any(key not in entry for key in _LOG_KEYS):
         return None
     if entry["kind"] not in _KINDS or entry["attribution"] not in _ALL_ATTRIBUTIONS:
         return None
@@ -673,12 +778,27 @@ def _read_log(log_path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _log_key_of_entry(entry: dict[str, Any]) -> tuple[Any, ...]:
-    return (entry["workspace"], entry["path"], entry["kind"], entry["sha256"], entry["observed_at"])
+def _acquire(fd: int) -> None:
+    if sys.platform == "win32":
+        while True:
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                time.sleep(_LOCK_RETRY_SECONDS)
+    fcntl.flock(fd, fcntl.LOCK_EX)
 
 
-def _log_key_of_row(row: _EvictRow) -> tuple[Any, ...]:
-    return (row.workspace, row.path, row.kind, row.sha256, row.observed_at)
+def _release(fd: int) -> None:
+    try:
+        if sys.platform == "win32":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass  # closing the descriptor releases the lock anyway
 
 
 def _line_diff(old: bytes, new: bytes) -> tuple[int, int]:

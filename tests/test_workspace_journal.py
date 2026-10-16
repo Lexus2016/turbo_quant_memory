@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
+import stat
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from turbo_memory_mcp.workspace.db import CoordinationDB
+from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
 from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
 from turbo_memory_mcp.workspace.models import Workspace
 from turbo_memory_mcp.workspace.paths import blobs_dir, coord_db_path, resolve_workspace
@@ -276,10 +281,11 @@ def test_evict_compacts_log(repo: Path, workspace: Workspace, db: CoordinationDB
     journal.evict(now=T0)
 
     lines = _log_path(storage_root, workspace).read_text(encoding="utf-8").splitlines()
-    entries = [json.loads(line) for line in lines]
+    entries = [json.loads(line) for line in lines if '"watermark"' not in line]
     assert [entry["path"] for entry in entries] == ["b.txt"]
     assert set(entries[0]) == {
         "workspace",
+        "version_id",
         "path",
         "kind",
         "sha256",
@@ -348,7 +354,7 @@ def test_restore_rejects_wrong_path_and_deletion_versions(
         journal.restore("two.txt", gone.version_id)
     with pytest.raises(ValueError, match="no version"):
         journal.restore("two.txt", 99_999)
-    with pytest.raises(ValueError, match="not in HEAD"):
+    with pytest.raises(ValueError, match="committed file"):
         journal.restore("never-committed.txt", "HEAD")
 
     assert (repo / "two.txt").read_text(encoding="utf-8") == "two\n"
@@ -391,33 +397,6 @@ def test_restore_head_refuses_committed_directory_and_writes_nothing(
     assert not (repo / "docs").exists()
 
 
-def test_evict_rolls_back_cleanly_when_log_rewrite_fails(
-    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
-):
-    limits = JournalLimits(max_file_bytes=1_048_576, max_total_bytes=268_435_456, retention_days=14)
-    journal = _journal(workspace, db, storage_root, limits)
-    (repo / "old.txt").write_text(_incompressible("old "), encoding="utf-8")
-    expired = journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "new.txt").write_text(_incompressible("new "), encoding="utf-8")
-    kept = journal.record("new.txt", now=T0)
-    assert expired is not None and kept is not None
-    real_replace = os.replace
-
-    def failing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-        if Path(dst).name == "journal.log":
-            raise OSError("disk trouble")
-        real_replace(src, dst)
-
-    monkeypatch.setattr(os, "replace", failing_replace)
-    with pytest.raises(OSError, match="disk trouble"):
-        journal.evict(now=T0)
-    monkeypatch.undo()
-
-    assert [entry.version_id for entry in journal.history("old.txt")] == [expired.version_id]
-    assert journal.read_version(expired.version_id) == _incompressible("old ").encode("utf-8")
-    assert journal.read_version(kept.version_id) == _incompressible("new ").encode("utf-8")
-
-
 def test_evict_tolerates_blob_unlink_failure_and_sweeps_later(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -457,7 +436,8 @@ def test_evict_keeps_only_surviving_log_lines(repo: Path, workspace: Workspace, 
 
     journal.evict(now=T0)
 
-    entries = [json.loads(line) for line in _log_path(storage_root, workspace).read_text(encoding="utf-8").splitlines()]
+    lines = _log_path(storage_root, workspace).read_text(encoding="utf-8").splitlines()
+    entries = [json.loads(line) for line in lines if '"watermark"' not in line]
     assert [entry["path"] for entry in entries] == ["b.txt"]
 
 
@@ -482,3 +462,266 @@ def test_evict_on_empty_index_keeps_blobs_and_log_for_rebuild(
         assert rebuilt.read_version(rebuilt.history("keep.txt")[0].version_id) == b"only copy\n"
     finally:
         fresh_db.close()
+
+
+def _wipe_db(db: CoordinationDB, storage_root: Path, workspace: Workspace) -> CoordinationDB:
+    db.close()
+    db_file = coord_db_path(storage_root, workspace.project_id)
+    for suffix in ("", "-wal", "-shm"):
+        Path(f"{db_file}{suffix}").unlink(missing_ok=True)
+    return CoordinationDB.open(db_file)
+
+
+def _version_lines(storage_root: Path, workspace: Workspace) -> list[dict]:
+    lines = _log_path(storage_root, workspace).read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if '"watermark"' not in line]
+
+
+class _FailingCommit:
+    """Connection proxy whose COMMIT always fails; everything else passes through."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, parameters: tuple = ()) -> sqlite3.Cursor:
+        if sql.strip().upper() == "COMMIT":
+            raise sqlite3.OperationalError("injected commit failure")
+        return self._conn.execute(sql, parameters)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._conn, name)
+
+
+def test_git_directory_is_refused_in_any_letter_case(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    for rel in (".GIT/config", "sub/.Git/x"):
+        with pytest.raises(ValueError, match=r"inside \.git"):
+            journal.record(rel, now=T0)
+        with pytest.raises(ValueError, match=r"inside \.git"):
+            journal.history(rel)
+        with pytest.raises(ValueError, match=r"inside \.git"):
+            journal.restore(rel, "HEAD")
+
+
+def test_rebuild_keeps_original_ids_and_restores_same_content(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("stale\n", encoding="utf-8")
+    first = journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "b.txt").write_text("second\n", encoding="utf-8")
+    second = journal.record("b.txt", now=T0)
+    (repo / "c.txt").write_text("third\n", encoding="utf-8")
+    third = journal.record("c.txt", now=T0 + 1)
+    assert first is not None and second is not None and third is not None
+    assert (first.version_id, second.version_id, third.version_id) == (1, 2, 3)
+    assert journal.evict(now=T0 + 2) == 1
+
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        assert rebuilt.rebuild_index_if_empty() == 2
+        assert rebuilt.read_version(2) == b"second\n"
+        assert rebuilt.read_version(3) == b"third\n"
+        (repo / "d.txt").write_text("fourth\n", encoding="utf-8")
+        newest = rebuilt.record("d.txt", now=T0 + 3)
+        assert newest is not None and newest.version_id == 4
+    finally:
+        fresh.close()
+
+
+def test_evicted_highest_id_is_not_reused_after_db_loss(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    for name in ("a.txt", "b.txt"):
+        (repo / name).write_text(f"{name}\n", encoding="utf-8")
+        journal.record(name, now=T0)
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    old = journal.record("old.txt", now=T0 - 20 * DAY)
+    assert old is not None and old.version_id == 3
+    assert journal.evict(now=T0) == 1
+
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        assert rebuilt.rebuild_index_if_empty() == 2
+        (repo / "new.txt").write_text("new\n", encoding="utf-8")
+        newest = rebuilt.record("new.txt", now=T0)
+        assert newest is not None and newest.version_id == 4
+    finally:
+        fresh.close()
+
+
+def test_evict_commit_failure_leaves_log_a_superset_of_the_index(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    journal.record("new.txt", now=T0)
+    real_conn = db.conn
+    db.conn = _FailingCommit(real_conn)  # type: ignore[assignment]
+    try:
+        with pytest.raises(CoordinationUnavailable, match="injected commit failure"):
+            journal.evict(now=T0)
+    finally:
+        db.conn = real_conn
+
+    indexed = {entry.version_id for name in ("old.txt", "new.txt") for entry in journal.history(name)}
+    logged = {entry["version_id"] for entry in _version_lines(storage_root, workspace)}
+    assert len(indexed) == 2
+    assert indexed <= logged
+
+
+def test_log_rewrite_failure_after_commit_leaves_no_dangling_version(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("old body\n", encoding="utf-8")
+    journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "new.txt").write_text("new body\n", encoding="utf-8")
+    journal.record("new.txt", now=T0)
+    real_replace = os.replace
+
+    def failing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if Path(dst).name == "journal.log":
+            raise OSError("disk trouble")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError, match="disk trouble"):
+        journal.evict(now=T0)
+    monkeypatch.undo()
+
+    assert journal.history("old.txt") == []
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        assert rebuilt.rebuild_index_if_empty() >= 1
+        for name in ("old.txt", "new.txt"):
+            for entry in rebuilt.history(name):
+                if entry.kind == "content":
+                    rebuilt.read_version(entry.version_id)
+    finally:
+        fresh.close()
+
+
+def test_torn_line_does_not_swallow_the_next_entry(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    journal.record("a.txt", now=T0)
+    with _log_path(storage_root, workspace).open("ab") as handle:
+        handle.write(b'{"workspace": "x", "vers')
+    (repo / "b.txt").write_text("bee\n", encoding="utf-8")
+    later = journal.record("b.txt", now=T0 + 1)
+    assert later is not None
+
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        assert rebuilt.rebuild_index_if_empty() == 2
+        recovered = rebuilt.history("b.txt")
+        assert [entry.version_id for entry in recovered] == [later.version_id]
+        assert rebuilt.read_version(later.version_id) == b"bee\n"
+    finally:
+        fresh.close()
+
+
+def test_concurrent_restores_snapshot_what_they_overwrite(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "race.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    alpha = journal.record("race.txt", now=T0)
+    target.write_text("beta\n", encoding="utf-8")
+    beta = journal.record("race.txt", now=T0 + 1)
+    target.write_text("base\n", encoding="utf-8")
+    assert alpha is not None and beta is not None
+    real_snapshot = Journal._snapshot
+
+    def slow_snapshot(self: Journal, rel: str, content: bytes) -> object:
+        time.sleep(0.2)  # widen the window in which an unlocked second restore reads the same file
+        return real_snapshot(self, rel, content)
+
+    monkeypatch.setattr(Journal, "_snapshot", slow_snapshot)
+    results: dict[str, dict] = {}
+    errors: list[BaseException] = []
+
+    def run(name: str, version_id: int) -> None:
+        try:
+            results[name] = journal.restore("race.txt", version_id)
+        except BaseException as exc:  # surfaced by the assertion below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run, args=("alpha", alpha.version_id)),
+        threading.Thread(target=run, args=("beta", beta.version_id)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    monkeypatch.undo()
+
+    assert errors == []
+    previous = {name: journal.read_version(results[name]["previous_version_id"]) for name in results}
+    final = target.read_bytes()
+    if previous["alpha"] == b"base\n":
+        assert previous["beta"] == b"alpha\n"
+        assert final == b"beta\n"
+    else:
+        assert previous["alpha"] == b"beta\n"
+        assert previous["beta"] == b"base\n"
+        assert final == b"alpha\n"
+
+
+def test_restore_snapshots_again_when_file_changed_before_replace(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "story.txt"
+    target.write_text("v1\n", encoding="utf-8")
+    v1 = journal.record("story.txt", now=T0)
+    target.write_text("original\n", encoding="utf-8")
+    assert v1 is not None
+    real_snapshot = Journal._snapshot
+    edited: list[bool] = []
+
+    def snapshot_then_edit(self: Journal, rel: str, content: bytes) -> object:
+        record = real_snapshot(self, rel, content)
+        if not edited:
+            edited.append(True)
+            (repo / rel).write_text("human edit\n", encoding="utf-8")
+        return record
+
+    monkeypatch.setattr(Journal, "_snapshot", snapshot_then_edit)
+    result = journal.restore("story.txt", v1.version_id)
+    monkeypatch.undo()
+
+    assert target.read_text(encoding="utf-8") == "v1\n"
+    assert journal.read_version(result["previous_version_id"]) == b"human edit\n"
+
+
+def test_restore_keeps_destination_permissions(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
+):
+    journal = _journal(workspace, db, storage_root)
+    script = repo / "run.sh"
+    script.write_text("echo one\n", encoding="utf-8")
+    saved = journal.record("run.sh", now=T0)
+    assert saved is not None
+    script.write_text("echo two\n", encoding="utf-8")
+    os.chmod(script, 0o755)
+
+    journal.restore("run.sh", saved.version_id)
+
+    assert script.read_text(encoding="utf-8") == "echo one\n"
+    if sys.platform != "win32":
+        assert stat.S_IMODE(script.stat().st_mode) == 0o755
