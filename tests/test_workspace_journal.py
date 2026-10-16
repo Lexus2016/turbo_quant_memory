@@ -942,3 +942,25 @@ def test_head_restore_of_a_damaged_git_object_is_a_journal_fault(
 
     with pytest.raises(JournalFault, match="HEAD"):
         journal.restore("tracked.txt", "HEAD")
+
+
+def test_head_read_runs_git_in_the_c_locale(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal = _journal(workspace, db, storage_root)
+    seen: list[dict[str, str] | None] = []
+    real_run = subprocess.run
+
+    def _spy(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        if args[:2] == ["git", "cat-file"]:
+            seen.append(kwargs.get("env"))
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(journal_module.subprocess, "run", _spy)
+
+    journal.restore("tracked.txt", "HEAD")
+
+    [env] = seen
+    assert env is not None
+    assert env["LC_ALL"] == "C"
+    assert env["LANGUAGE"] == "C"

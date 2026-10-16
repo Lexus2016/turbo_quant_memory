@@ -475,6 +475,7 @@ class Journal:
                 check=False,
                 capture_output=True,
                 timeout=_GIT_TIMEOUT_SECONDS,
+                env=_c_locale_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise JournalFault(f"cannot read HEAD for {rel}: {exc}") from None
@@ -667,6 +668,11 @@ _CALLER_HEAD_MARKERS = (
 def _is_caller_head_error(stderr: bytes) -> bool:
     text = stderr.decode("utf-8", errors="replace").lower()
     return any(marker in text for marker in _CALLER_HEAD_MARKERS)
+
+
+def _c_locale_env() -> dict[str, str]:
+    """Environment for git calls whose messages are parsed: git's English messages, whatever the user's locale."""
+    return {**os.environ, "LC_ALL": "C", "LANGUAGE": "C"}
 
 
 def _git_message(stderr: bytes) -> str:
