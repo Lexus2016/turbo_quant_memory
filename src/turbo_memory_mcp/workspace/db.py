@@ -197,27 +197,17 @@ class CoordinationDB:
     def list_sessions(self, workspace: str) -> list[SessionRow]:
         with self._use() as conn:
             rows = conn.execute(
-                "SELECT session_id, workspace, client_name, client_version, pid, proc_start, started_at,"
-                " last_activity_at, feature, areas, details FROM sessions WHERE workspace = ?"
-                " ORDER BY started_at, session_id",
+                _SESSION_SELECT + " WHERE workspace = ? ORDER BY started_at, session_id",
                 (workspace,),
             ).fetchall()
-        return [
-            SessionRow(
-                session_id=row[0],
-                workspace=row[1],
-                client_name=row[2],
-                client_version=row[3],
-                pid=row[4],
-                proc_start=row[5],
-                started_at=row[6],
-                last_activity_at=row[7],
-                feature=row[8],
-                areas=tuple(_decode_list(row[9], "session areas")),
-                details=row[10],
-            )
-            for row in rows
-        ]
+        return [_session_row(row) for row in rows]
+
+    def get_session(self, session_id: str) -> SessionRow | None:
+        """Read one session row; decodes only that row, so a damaged peer row cannot affect it."""
+
+        with self._use() as conn:
+            row = conn.execute(_SESSION_SELECT + " WHERE session_id = ?", (session_id,)).fetchone()
+        return None if row is None else _session_row(row)
 
     def set_intent(self, session_id: str, feature: str, areas: Sequence[str], details: str | None) -> None:
         with self._use() as conn:
@@ -364,6 +354,28 @@ class CoordinationDB:
         )
 
 
+_SESSION_SELECT = (
+    "SELECT session_id, workspace, client_name, client_version, pid, proc_start, started_at,"
+    " last_activity_at, feature, areas, details FROM sessions"
+)
+
+
+def _session_row(row: tuple[Any, ...]) -> SessionRow:
+    return SessionRow(
+        session_id=row[0],
+        workspace=row[1],
+        client_name=row[2],
+        client_version=row[3],
+        pid=row[4],
+        proc_start=row[5],
+        started_at=row[6],
+        last_activity_at=row[7],
+        feature=row[8],
+        areas=tuple(_decode_list(row[9], "session areas")),
+        details=row[10],
+    )
+
+
 def _decode_list(text: str, what: str) -> list[Any]:
     value = _decode_json(text, what)
     if not isinstance(value, list):
@@ -382,7 +394,7 @@ def _decode_json(text: str, what: str) -> Any:
     # A damaged row must surface as an unavailable database, never as a raw decoding error.
     try:
         return json.loads(text)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise CoordinationUnavailable(f"malformed {what} in coordination database") from exc
 
 

@@ -551,6 +551,26 @@ def test_malformed_stored_rows_raise_coordination_unavailable(db: CoordinationDB
         db.events_after(WORKSPACE, 0)
 
 
+def test_deeply_nested_stored_value_raises_coordination_unavailable(db: CoordinationDB) -> None:
+    db.insert_session(_session("A"))
+    with db.lock:
+        db.conn.execute("UPDATE sessions SET areas = ? WHERE session_id = 'A'", ("[" * 200_000,))
+    with pytest.raises(CoordinationUnavailable):
+        db.list_sessions(WORKSPACE)
+    with pytest.raises(CoordinationUnavailable):
+        db.get_session("A")
+
+
+def test_get_session_reads_one_row_and_ignores_damaged_peers(db: CoordinationDB) -> None:
+    db.insert_session(_session("A"))
+    db.insert_session(_session("B"))
+    with db.lock:
+        db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = 'B'")
+    row = db.get_session("A")
+    assert row is not None and row.session_id == "A"
+    assert db.get_session("missing") is None
+
+
 def test_prune_events_removes_only_older_rows(db: CoordinationDB) -> None:
     db.append_event(WORKSPACE, models.SESSION_STARTED, now=100.0)
     kept = db.append_event(WORKSPACE, models.SESSION_ENDED, now=300.0)

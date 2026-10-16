@@ -163,14 +163,13 @@ class WorkspaceRuntime:
     def shutdown(self) -> None:
         """Stop the ticker, remove this session and close the database. Safe to call repeatedly.
 
-        Waits up to ``_SHUTDOWN_WAIT_S`` for an in-flight tick. If that wait times out, the database
-        is left open rather than closed under the running tick.
+        Waits up to ``_SHUTDOWN_WAIT_S`` for an in-flight tick. If that wait times out, nothing is
+        cleaned up and the session stays registered; a later ``shutdown`` call retries the cleanup.
         """
 
         with self._lifecycle_lock:
             if self._closed:
                 return
-            self._closed = True
             thread = self._thread
         self._stop.set()
         deadline = time.monotonic() + _SHUTDOWN_WAIT_S
@@ -180,10 +179,15 @@ class WorkspaceRuntime:
             self._degrade(CoordinationUnavailable("shutdown timed out waiting for an active tick"))
             return
         try:
-            self._end_own_session()
+            try:
+                self._end_own_session()
+            finally:
+                self._close_db()
         finally:
-            self._close_db()
             self._tick_lock.release()
+        # Only now is cleanup finished, so only now may a later call be a no-op.
+        with self._lifecycle_lock:
+            self._closed = True
 
     def _register(self) -> None:
         db = self.db
@@ -234,21 +238,30 @@ class WorkspaceRuntime:
             if db is None:
                 return
             try:
-                mine = next(
-                    (row for row in db.list_sessions(self.workspace.root_key) if row.session_id == self.session_id),
-                    None,
-                )
                 db.end_session(
                     self.workspace.root_key,
                     self.session_id,
                     now=time.time(),
-                    detail={} if mine is None else _end_detail(mine),
+                    detail=self._own_detail(db),
                 )
                 return
             except Exception as exc:
                 self._degrade(exc)
                 if attempt + 1 < _END_ATTEMPTS:
                     time.sleep(_END_RETRY_S)
+
+    def _own_detail(self, db: CoordinationDB) -> dict[str, object]:
+        """This session's client and feature for the end event; empty when they cannot be read.
+
+        Only this row is decoded, and a failure here never prevents ending the session.
+        """
+
+        try:
+            row = db.get_session(self.session_id)
+        except Exception as exc:
+            self._degrade(exc)
+            return {}
+        return {} if row is None else _end_detail(row)
 
     def _on_tick(self, live_sessions: list[SessionRow]) -> None:
         """Hook run after each tick with the sessions still alive. Runs under the tick lock, so it must not call tick."""
@@ -260,14 +273,18 @@ class WorkspaceRuntime:
     def _log_failure(self, exc: Exception, now: float | None = None) -> None:
         """Log the first failure of each kind, then repeats at most once per ``_WARN_REPEAT_S``."""
 
-        kind = type(exc).__name__
-        stamp = time.monotonic() if now is None else now
-        with self._warn_lock:
-            last = self._warned_at.get(kind)
-            if last is not None and stamp - last < _WARN_REPEAT_S:
-                return
-            self._warned_at[kind] = stamp
-        logger.warning("workspace coordination degraded (%s)", kind, exc_info=exc)
+        try:
+            kind = type(exc).__name__
+            stamp = time.monotonic() if now is None else now
+            with self._warn_lock:
+                last = self._warned_at.get(kind)
+                if last is not None and stamp - last < _WARN_REPEAT_S:
+                    return
+                self._warned_at[kind] = stamp
+            logger.warning("workspace coordination degraded (%s)", kind, exc_info=exc)
+        except Exception:
+            # A failing log handler must never turn a degraded state into an exception for the caller.
+            return
 
     def _withdraw(self) -> None:
         """Remove a half-registered session row, best effort, so a live PID does not leave a ghost."""

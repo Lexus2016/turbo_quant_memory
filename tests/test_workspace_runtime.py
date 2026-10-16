@@ -557,3 +557,142 @@ def test_repeated_failures_are_logged_at_most_every_ten_minutes(
         "workspace coordination degraded (OSError)",
         "workspace coordination degraded (CoordinationUnavailable)",
     ]
+
+
+def _raw_session_count(db: CoordinationDB, session_id: str) -> int:
+    with db.lock:
+        row = db.conn.execute("SELECT COUNT(*) FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    return int(row[0])
+
+
+def _ended_events(db: CoordinationDB, workspace: str) -> list[models.EventRow]:
+    return [event for event in db.events_after(workspace, 0) if event.kind == models.SESSION_ENDED]
+
+
+def test_shutdown_ends_the_session_despite_a_malformed_peer_row(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    leaving = WorkspaceRuntime.start(cwd=repo, environ=env)
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert leaving is not None and observer is not None
+    runtimes.append(observer)
+    assert observer.db is not None
+    peer = _ghost(observer.workspace.root_key)
+    observer.db.insert_session(peer)
+    with observer.db.lock:
+        observer.db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = ?", (peer.session_id,))
+    leaving.note_client("codex", "2.1")
+
+    leaving.shutdown()
+
+    assert _raw_session_count(observer.db, leaving.session_id) == 0
+    ended = [(e.session_id, e.detail) for e in _ended_events(observer.db, observer.workspace.root_key)]
+    assert ended == [(leaving.session_id, {"client": "codex", "feature": None})]
+
+
+def test_shutdown_ends_the_session_with_empty_detail_when_its_own_row_is_damaged(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    leaving = WorkspaceRuntime.start(cwd=repo, environ=env)
+    observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert leaving is not None and observer is not None
+    runtimes.append(observer)
+    assert leaving.db is not None
+    with leaving.db.lock:
+        leaving.db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = ?", (leaving.session_id,))
+
+    leaving.shutdown()
+
+    assert observer.db is not None
+    assert _raw_session_count(observer.db, leaving.session_id) == 0
+    ended = [(e.session_id, e.detail) for e in _ended_events(observer.db, observer.workspace.root_key)]
+    assert ended == [(leaving.session_id, {})]
+
+
+def test_timed_out_shutdown_retries_cleanup_on_the_next_call(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_module, "_SHUTDOWN_WAIT_S", 0.2)
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    runtime._tick_lock.acquire()
+    try:
+        runtime.shutdown()
+        assert runtime.db is not None, "a timed-out shutdown must not close the database"
+        observer = WorkspaceRuntime.start(cwd=repo, environ=env)
+        assert observer is not None
+        runtimes.append(observer)
+        assert runtime.session_id in _ids(observer.live_sessions())
+    finally:
+        runtime._tick_lock.release()
+
+    runtime.shutdown()
+
+    assert runtime.db is None
+    assert runtime.session_id not in _ids(observer.live_sessions())
+    runtime.shutdown()
+
+
+class _BrokenHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.emits = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.emits += 1
+        raise RuntimeError("handler broke")
+
+
+def test_broken_log_handler_never_breaks_fail_open_paths(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    handler = _BrokenHandler()
+    logger = logging.getLogger("turbo_memory_mcp.workspace.runtime")
+    logger.addHandler(handler)
+    try:
+
+        def list_fails(*_args: object, **_kwargs: object) -> list[SessionRow]:
+            raise CoordinationUnavailable("list broke")
+
+        monkeypatch.setattr(CoordinationDB, "list_sessions", list_fails)
+        assert runtime.live_sessions() == []
+        assert runtime.degraded_reason == "list broke"
+        monkeypatch.undo()
+
+        def resolve_fails(*_args: object, **_kwargs: object) -> Workspace:
+            raise RuntimeError("identity exploded")
+
+        monkeypatch.setattr(runtime_module, "resolve_workspace", resolve_fails)
+        degraded_start = WorkspaceRuntime.start(cwd=repo, environ=env)
+        monkeypatch.undo()
+        assert degraded_start is not None
+        assert degraded_start.degraded_reason == "identity exploded"
+    finally:
+        logger.removeHandler(handler)
+    assert handler.emits >= 2
+
+
+def test_tick_lock_is_released_even_when_closing_the_database_fails(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = WorkspaceRuntime.start(cwd=repo, environ=env)
+    assert runtime is not None
+    runtimes.append(runtime)
+    db = runtime.db
+    assert db is not None
+
+    def close_fails(_self: CoordinationDB) -> None:
+        raise RuntimeError("close broke")
+
+    monkeypatch.setattr(CoordinationDB, "close", close_fails)
+    runtime.shutdown()
+    monkeypatch.undo()
+    db.close()
+
+    assert runtime.degraded_reason == "close broke"
+    assert runtime._tick_lock.acquire(blocking=False)
+    runtime._tick_lock.release()
