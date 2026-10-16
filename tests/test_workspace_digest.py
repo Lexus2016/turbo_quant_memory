@@ -366,7 +366,7 @@ def test_arrival_before_any_tick_is_not_lost(repo: Path, env: dict[str, str], ru
     assert "codex joined" in digest["new"]
 
 
-def test_page_failure_keeps_progress_already_read(
+def test_later_page_failure_shows_the_read_prefix_and_advances_past_it(
     repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     viewer = _start(runtimes, repo, env)
@@ -431,3 +431,73 @@ def test_file_dedup_keeps_first_occurrence_order_at_scale(
     digest = viewer.digest()
 
     assert _lines_with(digest, "1500 files changed: src/f1499.py, src/f1498.py, src/f1497.py …") != []
+
+
+# Fix round 2 ----------------------------------------------------------------
+
+
+def test_arrival_of_a_departed_peer_names_its_client(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    _start(runtimes, repo, env)
+    viewer = _start(runtimes, repo, env)
+    leaver = _start(runtimes, repo, env)  # client unknown at start, as before MCP initialize
+    leaver.note_client("codex", "1.0")
+    leaver.announce_work("ranking")
+    assert leaver.db is not None
+    with leaver.db.lock:
+        leaver.db.conn.execute("UPDATE sessions SET pid = ? WHERE session_id = ?", (_dead_pid(), leaver.session_id))
+    _settle(viewer)
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex joined" in digest["new"]
+    assert "codex announced ranking" in digest["new"]
+    assert not any("another session" in line for line in digest["new"])
+
+
+def test_arrival_line_shows_a_feature_recorded_on_the_event(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    assert viewer.db is not None
+    viewer.db.append_event(
+        viewer.workspace.root_key,
+        models.SESSION_STARTED,
+        now=time.time(),
+        session_id="ghost0000001",
+        detail={"client": "codex", "feature": "ranking"},
+    )
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex joined (ranking)" in digest["new"]
+
+
+def test_work_event_without_a_feature_falls_back_to_the_session_row(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    peer.announce_work("ranking")  # the row now records feature "ranking"
+    viewer.digest()
+    assert viewer.db is not None
+    viewer.db.append_event(
+        viewer.workspace.root_key,
+        models.WORK_ANNOUNCED,
+        now=time.time(),
+        session_id=peer.session_id,
+        detail={},
+    )
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex announced ranking" in digest["new"]

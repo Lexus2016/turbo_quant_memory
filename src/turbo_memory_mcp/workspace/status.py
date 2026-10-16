@@ -31,6 +31,7 @@ CHANGE_SCAN_LIMIT: Final = 5000
 RECENT_CHANGES_LIMIT: Final = 20
 DIGEST_MAX_LINES: Final = 3
 DIGEST_SESSION_KINDS: Final = (SESSION_STARTED, SESSION_ENDED, WORK_ANNOUNCED, WORK_FINISHED)
+WORK_KINDS: Final = (WORK_ANNOUNCED, WORK_FINISHED)
 _DIGEST_ANON: Final = "another session"
 _UNKNOWN_CLIENT: Final = "unknown"
 _GLOB_CHARS: Final = "*?["
@@ -207,6 +208,7 @@ def build_digest(
     ``"+k more updates"`` and covers the lines that were dropped.
     """
 
+    identities = _batch_identities(events)
     lines: list[str] = []
     paths: list[str] = []
     seen: set[str] = set()
@@ -215,7 +217,7 @@ def build_digest(
         if event.kind in DIGEST_SESSION_KINDS:
             if event.session_id == me.session_id:
                 continue
-            lines.append(_session_digest_line(event, sessions))
+            lines.append(_session_digest_line(event, sessions, identities))
         elif event.kind in CHANGE_KINDS:
             path = event.path
             if path is None or not _change_is_relevant(event, me):
@@ -250,18 +252,44 @@ def _files_digest_line(paths: Sequence[str]) -> str:
     return f"{len(paths)} files changed: {shown}" + (" …" if len(paths) > 3 else "")
 
 
-def _session_digest_line(event: EventRow, sessions: Mapping[str, SessionRow]) -> str:
-    """Name the client and feature from the event's own detail; the session row is only a fallback for the client."""
+def _batch_identities(events: Sequence[EventRow]) -> dict[str, str]:
+    """Client name per session, taken from every event in the batch that records a known one.
 
-    row = sessions.get(event.session_id) if event.session_id is not None else None
+    A session's arrival is written before its client names itself, so its own arrival event cannot
+    name it; a later event of the same session (its announcement or its end) can. The newest wins.
+    """
+
+    identities: dict[str, str] = {}
+    for event in events:
+        client = _client_text(event.detail.get("client"))
+        if event.session_id is not None and client is not None:
+            identities[event.session_id] = client
+    return identities
+
+
+def _session_digest_line(
+    event: EventRow,
+    sessions: Mapping[str, SessionRow],
+    identities: Mapping[str, str],
+) -> str:
+    """One session line. Client: this event's detail, then the batch identity map, then the session row.
+
+    Feature: this event's detail; a work event without one falls back to the session row's feature.
+    """
+
+    session_id = event.session_id
+    row = sessions.get(session_id) if session_id is not None else None
     who = (
         _client_text(event.detail.get("client"))
+        or (identities.get(session_id) if session_id is not None else None)
         or (_client_text(row.client_name) if row is not None else None)
         or _DIGEST_ANON
     )
     feature = _text(event.detail.get("feature"))
+    if feature is None and event.kind in WORK_KINDS and row is not None:
+        feature = _text(row.feature)
     if event.kind == SESSION_STARTED:
-        return f"{who} joined"
+        return f"{who} joined" + (f" ({feature})" if feature else "")
     if event.kind == SESSION_ENDED:
         return f"{who} left" + (f" ({feature})" if feature else "")
     if event.kind == WORK_ANNOUNCED:

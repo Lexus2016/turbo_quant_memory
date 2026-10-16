@@ -412,7 +412,8 @@ class WorkspaceRuntime:
             try:
                 page = db.events_after(root_key, after, limit=requested)
             except Exception as exc:
-                # Keep what was already read: the cursor moves to it, and the failed page is retried next call.
+                # Deliberate: the prefix already read is shown and the cursor advances past it. Returning None
+                # here would silently drop events that were read; the failed page is retried by the next call.
                 self._log_failure(exc)
                 break
             events.extend(page)
