@@ -104,6 +104,7 @@ Text never presents an inferred writer as fact ("changed — inside Codex's anno
 - **Git workspaces only (my call).** Outside git there is no cheap baseline and no natural bound, so the journal does not run there; awareness still works and `workspace_status` says the journal is unavailable. The watcher also refuses a workspace whose root is the user's home directory or a filesystem root, and reports that state instead of watching.
 - On each change event it reads the file promptly and stores the content in a content-addressed store under tqmemory storage (compressed, keyed by SHA-256), indexed in the coordination DB (workspace, relative path, hash, size, time, attribution level). Never written into the user's repository or `.git`.
 - **Exactly one watcher per workspace** through a lease row: the owner must be a live process; any live tqmemory process of that workspace takes over when the owner is gone (checked on tool calls and on a background timer). Duplicate snapshots are harmless because storage is content-addressed and inserts are idempotent.
+- **Journal log:** every recorded version and deletion is also appended as one JSON line to `workspace/journal.log` next to the blobs. When the versions table is empty (a new or healed database), the index is rebuilt from this log, skipping entries whose blob is gone. Eviction rewrites the log so it stays bounded.
 - **Deletions and renames (my call):** a deletion is recorded as a journal entry for that path, and `restore_file` can bring a deleted file back from its last stored version (or from git `HEAD` when the file was clean). A rename is recorded as a deletion of the old path plus a new version at the new path.
 - **Filters and limits:** `.gitignore`, `.tqmemoryignore`, `.git/`, binary files; defaults (my call) 1 MiB per file, 256 MiB per project, 14 days retention, all overridable by environment variables.
 - **Eviction (my call):** versions older than the retention age are removed. Over the size cap, the oldest versions go first, but the newest version of every path changed in the last 24 hours is never evicted for size. Recording never stops because of the cap; when the cap cannot be met, `workspace_status` reports it.
@@ -113,6 +114,7 @@ Text never presents an inferred writer as fact ("changed — inside Codex's anno
 ### Failure behavior and switch
 
 - Any coordination failure (database busy past the short timeout, corrupt database, watcher error) leaves memory tools fully working: the `workspace` field is omitted, coordination tools report a degraded state, nothing is raised into memory tools.
+- **A corrupt coordination database heals itself.** On open the database is checked (`PRAGMA quick_check`); a damaged file is set aside as `coord.sqlite.corrupt-<timestamp>` (only the newest such copy is kept) and a fresh database is created. Sessions re-register on their own and the version index is rebuilt from the journal log. Periodic backup copies were considered and rejected (maintainer agreed): the database is mostly ephemeral, and a periodic copy misses exactly the newest versions a restore needs.
 - `TQMEMORY_WORKSPACE_DISABLE=1` (name is my call) turns the whole feature off; independent of `TQMEMORY_DAEMON_DISABLE`.
 - `health()` / `server_info()` report: feature on/off, database path and state, watcher owner per active workspace, coverage.
 
@@ -128,6 +130,7 @@ Considered and rejected by the maintainer. Hooks would add write blocking and ex
 - Watcher: starts when the second session appears with a correct baseline, snapshots changes, honors ignores and limits, hands the lease over after the owner dies; `restore_file` is undoable; a deleted file can be restored; eviction keeps the newest recent version of each path; a home-directory or non-git root is refused with a reported state.
 - Two sessions started with different cwd inside one tree, or with `TQMEMORY_PROJECT_ROOT` set, resolve to the same workspace; two worktrees of one repo resolve to different workspaces.
 - Fail-open: locked or corrupt database leaves every memory tool working.
+- A corrupt coordination database is set aside and replaced automatically, and file history survives through the journal log.
 - Windows CI passes.
 
 ## Docs and release

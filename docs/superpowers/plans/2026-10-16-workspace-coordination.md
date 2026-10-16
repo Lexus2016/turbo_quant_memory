@@ -17,7 +17,7 @@
 - Coordination code never acquires or waits on the memory dispatch lock (`server.py` `make_local_dispatcher`, `daemon.py:565`) and never imports retrieval, embedding or LanceDB modules.
 - Fail open: no coordination error ever propagates into a memory tool; the `workspace` field is simply omitted.
 - Kill switch: `TQMEMORY_WORKSPACE_DISABLE` set to `1`, `true` or `yes` (case-insensitive) turns the whole feature off.
-- Storage: `<resolve_storage_root()>/projects/<project_id>/workspace/coord.sqlite` and `.../workspace/blobs/`. Nothing is ever written into the user's repository or `.git`, except a file that `restore_file` restores on request.
+- Storage: `<resolve_storage_root()>/projects/<project_id>/workspace/coord.sqlite`, `.../workspace/blobs/` and `.../workspace/journal.log`. A corrupt `coord.sqlite` heals itself (quarantine + fresh db); no periodic backup copies. Nothing is ever written into the user's repository or `.git`, except a file that `restore_file` restores on request.
 - Journal defaults: 1 MiB per file (`TQMEMORY_JOURNAL_MAX_FILE_BYTES=1048576`), 256 MiB per project (`TQMEMORY_JOURNAL_MAX_BYTES=268435456`), 14 days (`TQMEMORY_JOURNAL_RETENTION_DAYS=14`). The newest content version of every path changed in the last 24 hours is never evicted for size.
 - The journal runs only in git workspaces, only while ≥2 live sessions share the workspace, never on the home directory or a filesystem root.
 - Status line: at most 3 lines plus a pointer to `workspace_status`; absent when the session is alone in its workspace.
@@ -107,7 +107,7 @@
 **Interfaces:**
 - Produces:
   - `class CoordinationUnavailable(Exception)` — raised by every `CoordinationDB` method on `sqlite3.Error`.
-  - `CoordinationDB.open(path: Path, *, busy_timeout_ms: int = 250) -> CoordinationDB` — creates parents, `journal_mode=WAL`, applies the schema below, `meta.schema_version = "1"`. Attributes `conn: sqlite3.Connection` (`check_same_thread=False`) and `lock: threading.Lock` (serializes use within one process). `close() -> None`.
+  - `CoordinationDB.open(path: Path, *, busy_timeout_ms: int = 250) -> CoordinationDB` — creates parents, `journal_mode=WAL`, applies the schema below, `meta.schema_version = "1"`. Self-healing: after connecting it runs `PRAGMA quick_check`; when the file is not a database or the check is not `ok`, it closes, renames `coord.sqlite` (and its `-wal`/`-shm`) to `coord.sqlite.corrupt-<unix_ts>`, deletes older `coord.sqlite.corrupt-*` files (keep only the newest) and creates a fresh database. It raises `CoordinationUnavailable` only when the fresh database cannot be created either. Attributes `conn: sqlite3.Connection` (`check_same_thread=False`) and `lock: threading.Lock` (serializes use within one process). `close() -> None`.
   - Row dataclasses in `models.py`: `SessionRow(session_id, workspace, client_name, client_version, pid, proc_start, started_at, last_activity_at, feature, areas: tuple[str, ...], details)`, `EventRow(event_id, workspace, kind, session_id, path, detail: dict[str, Any], created_at)`, `LeaseRow(workspace, session_id, pid, proc_start, acquired_at)`.
   - Event kind constants in `models.py`: `SESSION_STARTED = "session_started"`, `SESSION_ENDED = "session_ended"`, `WORK_ANNOUNCED = "work_announced"`, `WORK_FINISHED = "work_finished"`, `FILE_CHANGED = "file_changed"`, `FILE_DELETED = "file_deleted"`.
   - Methods: `insert_session(row: SessionRow) -> None`, `update_session_client(session_id: str, client_name: str, client_version: str) -> None`, `touch_session(session_id: str, now: float) -> None`, `delete_session(session_id: str) -> None`, `list_sessions(workspace: str) -> list[SessionRow]`, `set_intent(session_id: str, feature: str, areas: Sequence[str], details: str | None) -> None`, `clear_intent(session_id: str) -> None`, `append_event(workspace: str, kind: str, *, now: float, session_id: str | None = None, path: str | None = None, detail: Mapping[str, Any] | None = None) -> int`, `events_after(workspace: str, after_id: int, limit: int = 200) -> list[EventRow]`, `max_event_id(workspace: str) -> int`, `prune_events(older_than: float) -> int`, `get_cursor(session_id: str) -> int | None`, `set_cursor(session_id: str, event_id: int) -> None`, `lease_owner(workspace: str) -> LeaseRow | None`, `try_acquire_lease(workspace: str, session_id: str, pid: int, proc_start: float | None, now: float, owner_alive: Callable[[LeaseRow], bool]) -> bool` (one `BEGIN IMMEDIATE` transaction: no row → take it; own row → True; `owner_alive(row)` False → replace; else False), `release_lease(workspace: str, session_id: str) -> None`.
@@ -141,7 +141,8 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
   - `test_open_creates_schema_and_wal` — `PRAGMA journal_mode` is `"wal"`; all six tables exist; `schema_version == "1"`.
   - `test_concurrent_processes_write_without_errors` — `multiprocessing.get_context("spawn")`, 4 processes × 50 iterations of `insert_session` + `append_event` on one db file; afterwards 200 sessions, 200 events, no child exited non-zero.
   - `test_lease_is_exclusive_and_taken_over_from_dead_owner` — A acquires (True); B with `owner_alive=lambda r: True` gets False; B with `owner_alive=lambda r: False` gets True; `lease_owner(ws).session_id == "B"`.
-  - `test_corrupt_file_raises_coordination_unavailable` — write `b"not a database" * 100` to the path; `CoordinationDB.open` raises `CoordinationUnavailable`.
+  - `test_corrupt_file_is_quarantined_and_replaced` — write `b"not a database" * 100` to the path; `CoordinationDB.open` succeeds with the schema present and one `coord.sqlite.corrupt-*` file next to it; corrupting and opening again still leaves exactly one quarantined file.
+  - `test_unusable_location_raises_coordination_unavailable` — the parent of the db path is a regular file; `CoordinationDB.open` raises `CoordinationUnavailable`.
   - `test_events_after_and_cursor` — three events; `events_after(ws, first_id)` returns the last two in order; `set_cursor`/`get_cursor` round-trip; `get_cursor("nobody") is None`.
 - [ ] **Step 2: Run** `uv run pytest tests/test_workspace_db.py -v` — Expected: FAIL.
 - [ ] **Step 3: Implement** `db.py` and the row types.
@@ -173,7 +174,8 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
   - `test_killed_session_disappears_with_ended_event` — kill one child (`proc.kill()`, `wait()`), call `tick()`: its id is absent from `live_sessions()` and `events_after(ws, 0)` contains a `SESSION_ENDED` event with its `session_id`.
   - `test_runtimes_in_different_workspaces_do_not_see_each_other` — two repos, one `TQMEMORY_HOME`: each runtime's `live_sessions()` holds only itself.
   - `test_disabled_switch_returns_none` — `TQMEMORY_WORKSPACE_DISABLE=1` → `start()` returns `None`.
-  - `test_degraded_when_db_corrupt` — garbage in `coord_db_path`: runtime is not `None`, `degraded_reason` is set, `live_sessions() == []`.
+  - `test_degraded_when_storage_unusable` — make `<TQMEMORY_HOME>/projects/<project_id>/workspace` a regular file: runtime is not `None`, `degraded_reason` is set, `live_sessions() == []`.
+  - `test_corrupt_db_self_heals` — garbage in `coord_db_path`: runtime starts healthy (`degraded_reason is None`) and sees itself.
   - `test_shutdown_is_idempotent_and_removes_session` — after two `shutdown()` calls a second runtime sees only itself.
 - [ ] **Step 2: Run** `uv run pytest tests/test_workspace_runtime.py -v` — Expected: FAIL.
 - [ ] **Step 3: Implement** `runtime.py`.
@@ -258,7 +260,9 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
     - `history(rel_path: str, limit: int = 20) -> list[VersionRecord]` — newest first.
     - `read_version(version_id: int) -> bytes`.
     - `restore(rel_path: str, version: int | Literal["HEAD"]) -> dict[str, Any]` — validates via `to_relative` (outside → `ValueError("path outside workspace")`, nothing written); snapshots the current file first with attribution `"restore"` when it exists; writes atomically (temp file in the same dir + `os.replace`); `"HEAD"` reads `git show HEAD:<path>`; a version of another path, another workspace or kind `deletion` → `ValueError`. Returns `{"status": "ok", "path", "restored_version", "previous_version_id", "diff": {"added": int, "removed": int}}` (line counts via `difflib`).
-    - `evict(now: float | None = None) -> int` — removes versions older than `retention_days`; then, while referenced blob bytes exceed `max_total_bytes`, removes the oldest versions except the newest content version of each path whose `observed_at >= now - 86400`; deletes unreferenced blob files; sets `over_cap: bool`; returns the number of versions removed.
+    - `evict(now: float | None = None) -> int` — removes versions older than `retention_days`; then, while referenced blob bytes exceed `max_total_bytes`, removes the oldest versions except the newest content version of each path whose `observed_at >= now - 86400`; deletes unreferenced blob files; sets `over_cap: bool`; returns the number of versions removed. It also rewrites `journal.log` (temp file + `os.replace`) keeping only lines of surviving versions.
+    - Journal log: `record` and `record_deletion` append one JSON line per inserted version to `<blobs_root.parent>/journal.log` — keys `workspace`, `path`, `kind`, `sha256`, `size`, `observed_at`, `attribution`, `session_id` (append mode, flushed).
+    - `rebuild_index_if_empty() -> int` — when the `versions` table has no rows and `journal.log` exists, re-inserts every logged entry whose blob exists (deletions always), in log order; returns the number inserted; returns 0 otherwise.
   - Blob layout: `blobs/<sha[:2]>/<sha>.z`, zlib level 6, temp + `os.replace`; writing an existing blob is a no-op.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -271,6 +275,8 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
   - `test_unicode_and_space_paths_roundtrip` — `"docs/Мої нотатки/Read Me.md"` recorded, listed and restored with an identical path string.
   - `test_eviction_respects_age_cap_and_protects_recent_newest` — `retention_days=14`: a 15-day-old version is gone; with `max_total_bytes` smaller than the data, the newest version of a path changed 1 h ago survives and `over_cap` reports honestly.
   - `test_blobs_live_outside_repository` — `git status --porcelain` output is identical before and after `record`; the blob exists under `blobs_root`.
+  - `test_index_rebuilt_from_log_after_db_loss` — record two versions, delete the db files, open a fresh `CoordinationDB`, `Journal(...).rebuild_index_if_empty() == 2`, `history` lists both, `restore` of the older one works.
+  - `test_evict_compacts_log` — after `evict()` removes a version, `journal.log` no longer contains its line.
 - [ ] **Step 2: Run** `uv run pytest tests/test_workspace_journal.py -v` — Expected: FAIL.
 - [ ] **Step 3: Implement** `journal.py`.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
@@ -291,7 +297,7 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
   - `WorkspaceWatcher(workspace: Workspace, journal: Journal, attribute: Callable[[str], tuple[str, str | None]], *, debounce_s: float = 0.3, observer_factory: Callable[[], BaseObserver] = Observer)` with `start() -> None` (baseline, then a recursive observer on the root), `stop() -> None`, `running: bool`, `flush_now() -> None` (processes queued paths synchronously; for tests).
   - Per debounced batch: drop paths under `.git/`; drop paths reported by one `git check-ignore -z --stdin` call; drop `.tqmemoryignore` matches; then `journal.record(...)` for existing files and `journal.record_deletion(...)` for missing ones, attribution from `attribute(path)`. A move event → `record_deletion(src)` + `record(dest)`.
   - Baseline: every path from `git status --porcelain=v1 -z --untracked-files=all` that exists (for renames, the new path) → `journal.record(...)`.
-  - `runtime.journal: Journal | None` — built in `start()` when the workspace has no `journal_refusal` and the db opened.
+  - `runtime.journal: Journal | None` — built in `start()` when the workspace has no `journal_refusal` and the db opened; right after building it, `start()` calls `journal.rebuild_index_if_empty()`.
   - The runtime builds its watcher with `attribute=lambda path: infer_attribution(path, self.live_sessions())`.
   - `runtime._on_tick(live)` — refusal → journal state `"unavailable"` with the reason; `len(live) >= 2` → `try_acquire_lease(..., owner_alive=lambda row: is_process_alive(row.pid, row.proc_start) and any(s.session_id == row.session_id for s in live))`: acquired → start the watcher if not running; not acquired → stop it if running. `len(live) < 2` → stop and `release_lease`. The lease owner runs `journal.evict()` at most once per hour.
   - Never start or stop the watcher while holding `db.lock`: the watcher's flush thread takes `db.lock` inside `journal.record`, so stopping it under the lock deadlocks. `_on_tick` decides under the lock, releases it, then starts or stops.
@@ -357,7 +363,7 @@ CREATE INDEX IF NOT EXISTS versions_path ON versions(workspace, path, version_id
 - Test: `tests/test_workspace_cli.py`
 
 **Interfaces:**
-- Consumes: `resolve_workspace`, `coord_db_path`, `blobs_dir`, `CoordinationDB`, `Journal`, `JournalLimits` — opened directly from the process cwd; no runtime, no session row, no daemon.
+- Consumes: `resolve_workspace`, `coord_db_path`, `blobs_dir`, `CoordinationDB`, `Journal`, `JournalLimits` — opened directly from the process cwd; no runtime, no session row, no daemon. After opening, call `journal.rebuild_index_if_empty()`.
 - Produces:
   - `turbo-memory-mcp files log PATH [--limit N]` — one line per version: `f"{version_id}  {iso_time}  {kind}  {size} B  {attribution}"`; exit 0; no versions → `"no versions recorded for PATH"`, exit 0.
   - `turbo-memory-mcp files restore PATH VERSION` (id or `HEAD`) — prints `f"restored {path} to {version} (previous content saved as version {previous_version_id})"`; exit 0. Any `ValueError` or unavailable journal → message on stderr, exit 2.
