@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -68,6 +69,12 @@ def _files(
     assert runtime.db is not None
     for path in paths:
         runtime.db.append_event(runtime.workspace.root_key, kind, now=time.time(), path=path, detail=detail or {})
+
+
+def _dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
 
 
 def _lines_with(digest: dict[str, object] | None, prefix: str) -> list[str]:
@@ -300,3 +307,127 @@ def test_digest_and_status_share_one_cursor_that_never_moves_back(
     viewer.status()
 
     assert viewer.db.get_cursor(viewer.session_id) == ahead
+
+
+# Fix round 1 ----------------------------------------------------------------
+
+
+def _event_details(runtime: WorkspaceRuntime, kind: str) -> list[dict[str, object]]:
+    assert runtime.db is not None
+    events = runtime.db.events_after(runtime.workspace.root_key, 0, limit=10_000)
+    return [event.detail for event in events if event.kind == kind]
+
+
+def test_finished_work_line_names_the_feature(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    peer.announce_work("ranking")
+    peer.finish_work()
+
+    lines = viewer.digest()
+
+    assert lines is not None
+    assert "codex finished ranking" in lines["new"]
+    assert _event_details(peer, models.WORK_FINISHED)[-1] == {"client": "codex", "feature": "ranking"}
+
+
+def test_departed_peer_keeps_client_and_feature(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    leaver = _start(runtimes, repo, env, client="codex")
+    _start(runtimes, repo, env)
+    leaver.announce_work("ranking")
+    assert leaver.db is not None
+    # Simulate the process dying: the ticker of another session prunes the row.
+    with leaver.db.lock:
+        leaver.db.conn.execute("UPDATE sessions SET pid = ? WHERE session_id = ?", (_dead_pid(), leaver.session_id))
+    _settle(viewer)
+    assert leaver.session_id not in {row.session_id for row in viewer.live_sessions()}
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex announced ranking" in digest["new"]
+    assert not any("another session" in line for line in digest["new"])
+
+
+def test_arrival_before_any_tick_is_not_lost(repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]) -> None:
+    viewer = _start(runtimes, repo, env)
+    _start(runtimes, repo, env, client="codex")
+
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert "codex joined" in digest["new"]
+
+
+def test_page_failure_keeps_progress_already_read(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    assert viewer.db is not None
+    root = viewer.workspace.root_key
+    before = viewer.db.max_event_id(root)
+    _files(peer, [f"src/f{index}.py" for index in range(250)])
+    original = viewer.db.events_after
+
+    def second_page_fails(workspace: str, after_id: int, limit: int = 200) -> list[models.EventRow]:
+        if after_id != before:
+            raise CoordinationUnavailable("page lost")
+        return original(workspace, after_id, limit=limit)
+
+    monkeypatch.setattr(viewer.db, "events_after", second_page_fails)
+
+    digest = viewer.digest()
+
+    assert _lines_with(digest, "200 files changed:")
+    assert viewer.db.get_cursor(viewer.session_id) == before + 200
+
+
+def test_malformed_event_row_does_not_block_later_events(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    assert viewer.db is not None
+    root = viewer.workspace.root_key
+    with viewer.db.lock:
+        viewer.db.conn.execute(
+            "INSERT INTO events (workspace, kind, session_id, path, detail, created_at)"
+            " VALUES (?, ?, NULL, 'src/bad.py', '{bad', 1.0)",
+            (root, models.FILE_CHANGED),
+        )
+    bad_id = viewer.db.max_event_id(root)
+
+    viewer.digest()
+    assert viewer.db.get_cursor(viewer.session_id) == bad_id
+
+    _files(peer, ["src/ok.py"])
+    digest = viewer.digest()
+
+    assert digest is not None
+    assert any("src/ok.py" in line for line in digest["new"])
+
+
+def test_file_dedup_keeps_first_occurrence_order_at_scale(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    viewer = _start(runtimes, repo, env)
+    peer = _start(runtimes, repo, env, client="codex")
+    _settle(viewer)
+    viewer.digest()
+    _files(peer, [f"src/f{index % 1500}.py" for index in range(3000)])
+
+    digest = viewer.digest()
+
+    assert _lines_with(digest, "1500 files changed: src/f1499.py, src/f1498.py, src/f1497.py …") != []

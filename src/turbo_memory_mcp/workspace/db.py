@@ -244,21 +244,23 @@ class CoordinationDB:
         """Store the announced work and record ``WORK_ANNOUNCED`` in one write transaction."""
 
         with self._transaction() as conn:
+            client, _ = _session_identity(conn, session_id)
             conn.execute(
                 "UPDATE sessions SET feature = ?, areas = ?, details = ? WHERE session_id = ?",
                 (feature, json.dumps(list(areas)), details, session_id),
             )
-            _insert_event(conn, workspace, WORK_ANNOUNCED, session_id, now, detail)
+            _insert_event(conn, workspace, WORK_ANNOUNCED, session_id, now, {**detail, "client": client})
 
     def finish_intent(self, workspace: str, session_id: str, *, now: float) -> None:
         """Clear the announced work and record ``WORK_FINISHED`` in one write transaction."""
 
         with self._transaction() as conn:
+            client, feature = _session_identity(conn, session_id)
             conn.execute(
                 "UPDATE sessions SET feature = NULL, areas = '[]', details = NULL WHERE session_id = ?",
                 (session_id,),
             )
-            _insert_event(conn, workspace, WORK_FINISHED, session_id, now, {})
+            _insert_event(conn, workspace, WORK_FINISHED, session_id, now, {"client": client, "feature": feature})
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -451,7 +453,7 @@ def _event_row(row: tuple[Any, ...]) -> EventRow:
         kind=row[2],
         session_id=row[3],
         path=row[4],
-        detail=_decode_object(row[5], "event detail"),
+        detail=_lenient_object(row[5]),
         created_at=row[6],
     )
 
@@ -487,19 +489,28 @@ def _lenient_areas(text: str) -> tuple[str, ...]:
     return tuple(item for item in value if isinstance(item, str))
 
 
-def _decode_object(text: str, what: str) -> dict[str, Any]:
-    value = _decode_json(text, what)
-    if not isinstance(value, dict):
-        raise CoordinationUnavailable(f"malformed {what} in coordination database")
-    return value
+def _lenient_object(text: object) -> dict[str, Any]:
+    """Decode a stored event detail; anything undecodable or not an object reads as empty.
 
+    One damaged event row must not block the log: readers see it with no detail and move on.
+    """
 
-def _decode_json(text: str, what: str) -> Any:
-    # A damaged row must surface as an unavailable database, never as a raw decoding error.
+    if not isinstance(text, str):
+        return {}
     try:
-        return json.loads(text)
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise CoordinationUnavailable(f"malformed {what} in coordination database") from exc
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _session_identity(conn: sqlite3.Connection, session_id: str) -> tuple[str, str | None]:
+    """The client name and feature stored on a session row; ("unknown", None) when the row is gone."""
+
+    row = conn.execute("SELECT client_name, feature FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    if row is None:
+        return ("unknown", None)
+    return (str(row[0]), row[1])
 
 
 def _open_connection(path: Path, busy_timeout_ms: int) -> sqlite3.Connection:

@@ -537,7 +537,7 @@ def test_end_session_ignores_rows_of_another_workspace(db: CoordinationDB) -> No
     assert [row.session_id for row in db.list_sessions("/repo/other")] == ["A"]
 
 
-def test_malformed_stored_rows_raise_coordination_unavailable(db: CoordinationDB) -> None:
+def test_malformed_stored_rows_read_leniently(db: CoordinationDB) -> None:
     db.insert_session(_session("A"))
     with db.lock:
         db.conn.execute("UPDATE sessions SET areas = 'not json' WHERE session_id = 'A'")
@@ -545,9 +545,15 @@ def test_malformed_stored_rows_raise_coordination_unavailable(db: CoordinationDB
             "INSERT INTO events (workspace, kind, detail, created_at) VALUES (?, ?, '{bad', 1.0)",
             (WORKSPACE, models.WORK_ANNOUNCED),
         )
+        db.conn.execute(
+            "INSERT INTO events (workspace, kind, detail, created_at) VALUES (?, ?, '[1]', 2.0)",
+            (WORKSPACE, models.WORK_ANNOUNCED),
+        )
     assert [(row.session_id, row.areas) for row in db.list_sessions(WORKSPACE)] == [("A", ())]
-    with pytest.raises(CoordinationUnavailable):
-        db.events_after(WORKSPACE, 0)
+    assert [(event.kind, event.detail) for event in db.events_after(WORKSPACE, 0)] == [
+        (models.WORK_ANNOUNCED, {}),
+        (models.WORK_ANNOUNCED, {}),
+    ]
 
 
 def test_deeply_nested_or_non_list_areas_read_as_no_areas(db: CoordinationDB) -> None:

@@ -32,6 +32,7 @@ RECENT_CHANGES_LIMIT: Final = 20
 DIGEST_MAX_LINES: Final = 3
 DIGEST_SESSION_KINDS: Final = (SESSION_STARTED, SESSION_ENDED, WORK_ANNOUNCED, WORK_FINISHED)
 _DIGEST_ANON: Final = "another session"
+_UNKNOWN_CLIENT: Final = "unknown"
 _GLOB_CHARS: Final = "*?["
 _WHOLE_TREE: Final = "."
 
@@ -208,6 +209,7 @@ def build_digest(
 
     lines: list[str] = []
     paths: list[str] = []
+    seen: set[str] = set()
     file_line_at: int | None = None
     for event in reversed(events):
         if event.kind in DIGEST_SESSION_KINDS:
@@ -215,10 +217,12 @@ def build_digest(
                 continue
             lines.append(_session_digest_line(event, sessions))
         elif event.kind in CHANGE_KINDS:
-            if not _change_is_relevant(event, me):
+            path = event.path
+            if path is None or not _change_is_relevant(event, me):
                 continue
-            if event.path not in paths:
-                paths.append(event.path or "")
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
             if file_line_at is None:
                 file_line_at = len(lines)
                 lines.append("")
@@ -232,11 +236,13 @@ def build_digest(
 
 
 def _change_is_relevant(event: EventRow, me: SessionRow) -> bool:
-    if event.path is None:
-        return False
+    """A change with a path that falls in my areas (any path when I announced none), not inferred to me."""
+
     if event.detail.get("attribution") == "inferred" and event.detail.get("session_id") == me.session_id:
         return False
-    return not me.areas or any(area_matches(event.path, area) for area in me.areas)
+    if not me.areas:
+        return True
+    return event.path is not None and any(area_matches(event.path, area) for area in me.areas)
 
 
 def _files_digest_line(paths: Sequence[str]) -> str:
@@ -245,23 +251,33 @@ def _files_digest_line(paths: Sequence[str]) -> str:
 
 
 def _session_digest_line(event: EventRow, sessions: Mapping[str, SessionRow]) -> str:
+    """Name the client and feature from the event's own detail; the session row is only a fallback for the client."""
+
     row = sessions.get(event.session_id) if event.session_id is not None else None
-    recorded_client = event.detail.get("client")
-    if row is not None:
-        who = row.client_name
-    elif isinstance(recorded_client, str) and recorded_client:
-        who = recorded_client
-    else:
-        who = _DIGEST_ANON
+    who = (
+        _client_text(event.detail.get("client"))
+        or (_client_text(row.client_name) if row is not None else None)
+        or _DIGEST_ANON
+    )
+    feature = _text(event.detail.get("feature"))
     if event.kind == SESSION_STARTED:
         return f"{who} joined"
     if event.kind == SESSION_ENDED:
-        return f"{who} left"
+        return f"{who} left" + (f" ({feature})" if feature else "")
     if event.kind == WORK_ANNOUNCED:
-        feature = event.detail.get("feature")
-        named = feature if isinstance(feature, str) and feature else "work"
-        return f"{who} announced {named}"
-    return f"{who} finished work"
+        return f"{who} announced {feature or 'work'}"
+    return f"{who} finished {feature}" if feature else f"{who} finished work"
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _client_text(value: object) -> str | None:
+    """A client name that is actually known; the placeholder recorded before a client names itself is not."""
+
+    text = _text(value)
+    return None if text == _UNKNOWN_CLIENT else text
 
 
 def iso_time(stamp: float) -> str:
