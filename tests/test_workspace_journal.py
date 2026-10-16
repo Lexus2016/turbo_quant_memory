@@ -44,7 +44,7 @@ def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init", "-q")
-    (root / "tracked.txt").write_text("committed\n", encoding="utf-8")
+    (root / "tracked.txt").write_text("committed\n", encoding="utf-8", newline="\n")
     _git(root, "add", "tracked.txt")
     _git(root, "commit", "-q", "-m", "init")
     return root
@@ -87,7 +87,7 @@ def _log_path(storage_root: Path, workspace: Workspace) -> Path:
 
 def test_record_dedupes_unchanged_content(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
-    (repo / "notes.txt").write_text("first\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("first\n", encoding="utf-8", newline="\n")
 
     first = journal.record("notes.txt", attribution="inferred", session_id="s1", now=T0)
     second = journal.record("notes.txt", now=T0 + 1)
@@ -129,9 +129,9 @@ def test_history_newest_first_and_read_version(
 def test_restore_is_undoable(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
     target = repo / "story.txt"
-    target.write_text("v1 text\n", encoding="utf-8")
+    target.write_text("v1 text\n", encoding="utf-8", newline="\n")
     v1 = journal.record("story.txt", now=T0)
-    target.write_text("v2 text\nsecond line\n", encoding="utf-8")
+    target.write_text("v2 text\nsecond line\n", encoding="utf-8", newline="\n")
     v2 = journal.record("story.txt", now=T0 + 1)
     assert v1 is not None and v2 is not None
 
@@ -159,10 +159,10 @@ def test_restore_deleted_file_from_last_version_and_from_head(
 ):
     journal = _journal(workspace, db, storage_root)
     dirty = repo / "dirty.txt"
-    dirty.write_text("saved\n", encoding="utf-8")
+    dirty.write_text("saved\n", encoding="utf-8", newline="\n")
     saved = journal.record("dirty.txt", now=T0)
     assert saved is not None
-    dirty.write_text("unsaved edits\n", encoding="utf-8")
+    dirty.write_text("unsaved edits\n", encoding="utf-8", newline="\n")
     dirty.unlink()
 
     by_id = journal.restore("dirty.txt", saved.version_id)
@@ -198,14 +198,14 @@ def test_unicode_and_space_paths_roundtrip(repo: Path, workspace: Workspace, db:
     rel = "docs/Мої нотатки/Read Me.md"
     target = repo / "docs" / "Мої нотатки" / "Read Me.md"
     target.parent.mkdir(parents=True)
-    target.write_text("сім\n", encoding="utf-8")
+    target.write_text("сім\n", encoding="utf-8", newline="\n")
 
     record = journal.record(rel, now=T0)
 
     assert record is not None
     assert record.path == rel
     assert [entry.path for entry in journal.history(rel)] == [rel]
-    target.write_text("changed\n", encoding="utf-8")
+    target.write_text("changed\n", encoding="utf-8", newline="\n")
     result = journal.restore(rel, record.version_id)
     assert result["path"] == rel
     assert target.read_text(encoding="utf-8") == "сім\n"
@@ -221,9 +221,9 @@ def test_eviction_respects_age_cap_and_protects_recent_newest(
 ):
     limits = JournalLimits(max_file_bytes=1_048_576, max_total_bytes=100, retention_days=14)
     journal = _journal(workspace, db, storage_root, limits)
-    (repo / "old.txt").write_text(_incompressible("ancient "), encoding="utf-8")
+    (repo / "old.txt").write_text(_incompressible("ancient "), encoding="utf-8", newline="\n")
     ancient = journal.record("old.txt", now=T0 - 15 * DAY)
-    (repo / "recent.txt").write_text(_incompressible("recent "), encoding="utf-8")
+    (repo / "recent.txt").write_text(_incompressible("recent "), encoding="utf-8", newline="\n")
     fresh = journal.record("recent.txt", now=T0 - 3600)
     assert ancient is not None and fresh is not None
 
@@ -238,7 +238,7 @@ def test_eviction_respects_age_cap_and_protects_recent_newest(
 
 def test_blobs_live_outside_repository(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
-    (repo / "scratch.txt").write_text("draft\n", encoding="utf-8")
+    (repo / "scratch.txt").write_text("draft\n", encoding="utf-8", newline="\n")
     before = _git(repo, "status", "--porcelain")
 
     record = journal.record("scratch.txt", now=T0)
@@ -253,9 +253,9 @@ def test_blobs_live_outside_repository(repo: Path, workspace: Workspace, db: Coo
 def test_index_rebuilt_from_log_after_db_loss(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
     target = repo / "log.txt"
-    target.write_text("first\n", encoding="utf-8")
+    target.write_text("first\n", encoding="utf-8", newline="\n")
     older = journal.record("log.txt", now=T0)
-    target.write_text("second\n", encoding="utf-8")
+    target.write_text("second\n", encoding="utf-8", newline="\n")
     journal.record("log.txt", now=T0 + 1)
     db.close()
     db_file = coord_db_path(storage_root, workspace.project_id)
@@ -279,9 +279,9 @@ def test_index_rebuilt_from_log_after_db_loss(repo: Path, workspace: Workspace, 
 
 def test_evict_compacts_log(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
-    (repo / "a.txt").write_text("expired\n", encoding="utf-8")
+    (repo / "a.txt").write_text("expired\n", encoding="utf-8", newline="\n")
     journal.record("a.txt", now=T0 - 20 * DAY)
-    (repo / "b.txt").write_text("kept\n", encoding="utf-8")
+    (repo / "b.txt").write_text("kept\n", encoding="utf-8", newline="\n")
     journal.record("b.txt", now=T0)
 
     journal.evict(now=T0)
@@ -306,7 +306,7 @@ def test_file_events_carry_attribution_and_feature_hint(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "hinted.txt").write_text("hint\n", encoding="utf-8")
+    (repo / "hinted.txt").write_text("hint\n", encoding="utf-8", newline="\n")
     saved = journal.record("hinted.txt", attribution="inferred", session_id="s9", now=T0, feature="checkout")
     (repo / "hinted.txt").unlink()
     deleted = journal.record_deletion("hinted.txt", session_id="s9", now=T0 + 1)
@@ -330,11 +330,11 @@ def test_restore_refuses_to_overwrite_oversized_current_file(
 ):
     limits = JournalLimits(max_file_bytes=64)
     journal = _journal(workspace, db, storage_root, limits)
-    (repo / "grow.txt").write_text("small\n", encoding="utf-8")
+    (repo / "grow.txt").write_text("small\n", encoding="utf-8", newline="\n")
     saved = journal.record("grow.txt", now=T0)
     assert saved is not None
     big = repo / "grow.txt"
-    big.write_text("x" * 200, encoding="utf-8")
+    big.write_text("x" * 200, encoding="utf-8", newline="\n")
 
     with pytest.raises(JournalFault, match="not overwritten"):
         journal.restore("grow.txt", saved.version_id)
@@ -347,8 +347,8 @@ def test_restore_rejects_wrong_path_and_deletion_versions(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "one.txt").write_text("one\n", encoding="utf-8")
-    (repo / "two.txt").write_text("two\n", encoding="utf-8")
+    (repo / "one.txt").write_text("one\n", encoding="utf-8", newline="\n")
+    (repo / "two.txt").write_text("two\n", encoding="utf-8", newline="\n")
     one = journal.record("one.txt", now=T0)
     two = journal.record("two.txt", now=T0)
     gone = journal.record_deletion("two.txt", now=T0 + 1)
@@ -392,7 +392,7 @@ def test_restore_head_refuses_committed_directory_and_writes_nothing(
 ):
     journal = _journal(workspace, db, storage_root)
     (repo / "docs").mkdir()
-    (repo / "docs" / "a.txt").write_text("a\n", encoding="utf-8")
+    (repo / "docs" / "a.txt").write_text("a\n", encoding="utf-8", newline="\n")
     _git(repo, "add", "docs")
     _git(repo, "commit", "-q", "-m", "add docs")
     shutil.rmtree(repo / "docs")
@@ -407,9 +407,9 @@ def test_evict_tolerates_blob_unlink_failure_and_sweeps_later(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("expired body\n", encoding="utf-8")
+    (repo / "old.txt").write_text("expired body\n", encoding="utf-8", newline="\n")
     expired = journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "new.txt").write_text("kept body\n", encoding="utf-8")
+    (repo / "new.txt").write_text("kept body\n", encoding="utf-8", newline="\n")
     kept = journal.record("new.txt", now=T0)
     assert expired is not None and expired.sha256 is not None and kept is not None
     real_unlink = Path.unlink
@@ -433,9 +433,9 @@ def test_evict_tolerates_blob_unlink_failure_and_sweeps_later(
 
 def test_evict_keeps_only_surviving_log_lines(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
-    (repo / "a.txt").write_text("expired\n", encoding="utf-8")
+    (repo / "a.txt").write_text("expired\n", encoding="utf-8", newline="\n")
     journal.record("a.txt", now=T0 - 20 * DAY)
-    (repo / "b.txt").write_text("kept\n", encoding="utf-8")
+    (repo / "b.txt").write_text("kept\n", encoding="utf-8", newline="\n")
     journal.record("b.txt", now=T0)
     with _log_path(storage_root, workspace).open("a", encoding="utf-8") as handle:
         handle.write('{"torn": \n')
@@ -451,7 +451,7 @@ def test_evict_on_empty_index_keeps_blobs_and_log_for_rebuild(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "keep.txt").write_text("only copy\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("only copy\n", encoding="utf-8", newline="\n")
     saved = journal.record("keep.txt", now=T0)
     assert saved is not None and saved.sha256 is not None
     db.close()
@@ -515,11 +515,11 @@ def test_rebuild_keeps_original_ids_and_restores_same_content(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("stale\n", encoding="utf-8")
+    (repo / "old.txt").write_text("stale\n", encoding="utf-8", newline="\n")
     first = journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "b.txt").write_text("second\n", encoding="utf-8")
+    (repo / "b.txt").write_text("second\n", encoding="utf-8", newline="\n")
     second = journal.record("b.txt", now=T0)
-    (repo / "c.txt").write_text("third\n", encoding="utf-8")
+    (repo / "c.txt").write_text("third\n", encoding="utf-8", newline="\n")
     third = journal.record("c.txt", now=T0 + 1)
     assert first is not None and second is not None and third is not None
     assert (first.version_id, second.version_id, third.version_id) == (1, 2, 3)
@@ -531,7 +531,7 @@ def test_rebuild_keeps_original_ids_and_restores_same_content(
         assert rebuilt.rebuild_index_if_empty() == 2
         assert rebuilt.read_version(2) == b"second\n"
         assert rebuilt.read_version(3) == b"third\n"
-        (repo / "d.txt").write_text("fourth\n", encoding="utf-8")
+        (repo / "d.txt").write_text("fourth\n", encoding="utf-8", newline="\n")
         newest = rebuilt.record("d.txt", now=T0 + 3)
         assert newest is not None and newest.version_id == 4
     finally:
@@ -543,9 +543,9 @@ def test_evicted_highest_id_is_not_reused_after_db_loss(
 ):
     journal = _journal(workspace, db, storage_root)
     for name in ("a.txt", "b.txt"):
-        (repo / name).write_text(f"{name}\n", encoding="utf-8")
+        (repo / name).write_text(f"{name}\n", encoding="utf-8", newline="\n")
         journal.record(name, now=T0)
-    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8", newline="\n")
     old = journal.record("old.txt", now=T0 - 20 * DAY)
     assert old is not None and old.version_id == 3
     assert journal.evict(now=T0) == 1
@@ -554,7 +554,7 @@ def test_evicted_highest_id_is_not_reused_after_db_loss(
     try:
         rebuilt = _journal(workspace, fresh, storage_root)
         assert rebuilt.rebuild_index_if_empty() == 2
-        (repo / "new.txt").write_text("new\n", encoding="utf-8")
+        (repo / "new.txt").write_text("new\n", encoding="utf-8", newline="\n")
         newest = rebuilt.record("new.txt", now=T0)
         assert newest is not None and newest.version_id == 4
     finally:
@@ -565,9 +565,9 @@ def test_evict_commit_failure_leaves_log_a_superset_of_the_index(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8", newline="\n")
     journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    (repo / "new.txt").write_text("new\n", encoding="utf-8", newline="\n")
     journal.record("new.txt", now=T0)
     real_conn = db.conn
     db.conn = _FailingCommit(real_conn)  # type: ignore[assignment]
@@ -587,9 +587,9 @@ def test_log_rewrite_failure_after_commit_leaves_no_dangling_version(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("old body\n", encoding="utf-8")
+    (repo / "old.txt").write_text("old body\n", encoding="utf-8", newline="\n")
     journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "new.txt").write_text("new body\n", encoding="utf-8")
+    (repo / "new.txt").write_text("new body\n", encoding="utf-8", newline="\n")
     journal.record("new.txt", now=T0)
     real_replace = os.replace
 
@@ -620,11 +620,11 @@ def test_torn_line_does_not_swallow_the_next_entry(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8", newline="\n")
     journal.record("a.txt", now=T0)
     with _log_path(storage_root, workspace).open("ab") as handle:
         handle.write(b'{"workspace": "x", "vers')
-    (repo / "b.txt").write_text("bee\n", encoding="utf-8")
+    (repo / "b.txt").write_text("bee\n", encoding="utf-8", newline="\n")
     later = journal.record("b.txt", now=T0 + 1)
     assert later is not None
 
@@ -644,11 +644,11 @@ def test_concurrent_restores_snapshot_what_they_overwrite(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "race.txt"
-    target.write_text("alpha\n", encoding="utf-8")
+    target.write_text("alpha\n", encoding="utf-8", newline="\n")
     alpha = journal.record("race.txt", now=T0)
-    target.write_text("beta\n", encoding="utf-8")
+    target.write_text("beta\n", encoding="utf-8", newline="\n")
     beta = journal.record("race.txt", now=T0 + 1)
-    target.write_text("base\n", encoding="utf-8")
+    target.write_text("base\n", encoding="utf-8", newline="\n")
     assert alpha is not None and beta is not None
     real_snapshot = Journal._snapshot
 
@@ -693,9 +693,9 @@ def test_restore_snapshots_again_when_file_changed_before_replace(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "story.txt"
-    target.write_text("v1\n", encoding="utf-8")
+    target.write_text("v1\n", encoding="utf-8", newline="\n")
     v1 = journal.record("story.txt", now=T0)
-    target.write_text("original\n", encoding="utf-8")
+    target.write_text("original\n", encoding="utf-8", newline="\n")
     assert v1 is not None
     real_snapshot = Journal._snapshot
     edited: list[bool] = []
@@ -704,7 +704,7 @@ def test_restore_snapshots_again_when_file_changed_before_replace(
         record = real_snapshot(self, rel, content)
         if not edited:
             edited.append(True)
-            (repo / rel).write_text("human edit\n", encoding="utf-8")
+            (repo / rel).write_text("human edit\n", encoding="utf-8", newline="\n")
         return record
 
     monkeypatch.setattr(Journal, "_snapshot", snapshot_then_edit)
@@ -720,10 +720,10 @@ def test_restore_keeps_destination_permissions(
 ):
     journal = _journal(workspace, db, storage_root)
     script = repo / "run.sh"
-    script.write_text("echo one\n", encoding="utf-8")
+    script.write_text("echo one\n", encoding="utf-8", newline="\n")
     saved = journal.record("run.sh", now=T0)
     assert saved is not None
-    script.write_text("echo two\n", encoding="utf-8")
+    script.write_text("echo two\n", encoding="utf-8", newline="\n")
     os.chmod(script, 0o755)
 
     journal.restore("run.sh", saved.version_id)
@@ -737,16 +737,16 @@ def test_version_committed_during_eviction_survives_wipe_and_rebuild(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8", newline="\n")
     journal.record("old.txt", now=T0 - 20 * DAY)
-    (repo / "keep.txt").write_text("keep\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("keep\n", encoding="utf-8", newline="\n")
     journal.record("keep.txt", now=T0)
     real_maintain = Journal._maintain_after_commit
     late: list[VersionRecord | None] = []
 
     def maintain_after_late_write(self: Journal, *args: object, **kwargs: object) -> None:
         if not late:
-            (repo / "late.txt").write_text("late\n", encoding="utf-8")
+            (repo / "late.txt").write_text("late\n", encoding="utf-8", newline="\n")
             late.append(self.record("late.txt", now=T0 + 1))
         real_maintain(self, *args, **kwargs)
 
@@ -774,7 +774,7 @@ def test_failed_log_append_is_repaired_by_next_eviction(
     caplog: pytest.LogCaptureFixture,
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    (repo / "old.txt").write_text("old\n", encoding="utf-8", newline="\n")
     journal.record("old.txt", now=T0 - 20 * DAY)
     real_append = journal_module._append_line
     failures: list[int] = []
@@ -786,7 +786,7 @@ def test_failed_log_append_is_repaired_by_next_eviction(
         real_append(log_path, line)
 
     monkeypatch.setattr(journal_module, "_append_line", fail_once)
-    (repo / "unlogged.txt").write_text("unlogged\n", encoding="utf-8")
+    (repo / "unlogged.txt").write_text("unlogged\n", encoding="utf-8", newline="\n")
     with caplog.at_level(logging.WARNING, logger="turbo_memory_mcp.workspace.journal"):
         saved = journal.record("unlogged.txt", now=T0)
     monkeypatch.undo()
@@ -805,9 +805,9 @@ def test_failed_log_append_is_repaired_by_next_eviction(
 
 def test_duplicate_log_lines_rebuild_once(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
     journal = _journal(workspace, db, storage_root)
-    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8", newline="\n")
     journal.record("a.txt", now=T0)
-    (repo / "b.txt").write_text("b\n", encoding="utf-8")
+    (repo / "b.txt").write_text("b\n", encoding="utf-8", newline="\n")
     journal.record("b.txt", now=T0 + 1)
     log = _log_path(storage_root, workspace)
     first_line = log.read_text(encoding="utf-8").splitlines(keepends=True)[0]
@@ -828,9 +828,9 @@ def test_restore_snapshots_until_stable_when_edited_during_second_snapshot(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "story.txt"
-    target.write_text("v1\n", encoding="utf-8")
+    target.write_text("v1\n", encoding="utf-8", newline="\n")
     v1 = journal.record("story.txt", now=T0)
-    target.write_text("original\n", encoding="utf-8")
+    target.write_text("original\n", encoding="utf-8", newline="\n")
     assert v1 is not None
     real_snapshot = Journal._snapshot
     passes: list[bytes] = []
@@ -839,9 +839,9 @@ def test_restore_snapshots_until_stable_when_edited_during_second_snapshot(
         record = real_snapshot(self, rel, content)
         passes.append(content)
         if len(passes) == 1:
-            (repo / rel).write_text("first edit\n", encoding="utf-8")
+            (repo / rel).write_text("first edit\n", encoding="utf-8", newline="\n")
         if len(passes) == 2:
-            (repo / rel).write_text("second edit\n", encoding="utf-8")
+            (repo / rel).write_text("second edit\n", encoding="utf-8", newline="\n")
         return record
 
     monkeypatch.setattr(Journal, "_snapshot", snapshot_with_edits)
@@ -858,9 +858,9 @@ def test_restore_refuses_destination_that_never_settles(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "busy.txt"
-    target.write_text("v1\n", encoding="utf-8")
+    target.write_text("v1\n", encoding="utf-8", newline="\n")
     v1 = journal.record("busy.txt", now=T0)
-    target.write_text("start\n", encoding="utf-8")
+    target.write_text("start\n", encoding="utf-8", newline="\n")
     assert v1 is not None
     real_snapshot = Journal._snapshot
     counter = {"n": 0}
@@ -868,7 +868,7 @@ def test_restore_refuses_destination_that_never_settles(
     def always_edit(self: Journal, rel: str, content: bytes) -> VersionRecord:
         record = real_snapshot(self, rel, content)
         counter["n"] += 1
-        (repo / rel).write_text(f"edit {counter['n']}\n", encoding="utf-8")
+        (repo / rel).write_text(f"edit {counter['n']}\n", encoding="utf-8", newline="\n")
         return record
 
     monkeypatch.setattr(Journal, "_snapshot", always_edit)
@@ -883,7 +883,7 @@ def test_evicted_blob_is_swept_and_empty_index_still_sweeps_orphans(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root)
-    (repo / "old.txt").write_text("expired body\n", encoding="utf-8")
+    (repo / "old.txt").write_text("expired body\n", encoding="utf-8", newline="\n")
     saved = journal.record("old.txt", now=T0 - 20 * DAY)
     assert saved is not None and saved.sha256 is not None
     blob = _blob_file(storage_root, workspace, saved.sha256)
@@ -984,10 +984,10 @@ def test_restore_of_large_repetitive_files_is_fast(
     journal = _journal(workspace, db, storage_root)
     target = repo / "big.txt"
     old_text = "same line\n" * 10_000
-    target.write_text(old_text, encoding="utf-8")
+    target.write_text(old_text, encoding="utf-8", newline="\n")
     saved = journal.record("big.txt", now=T0)
     assert saved is not None
-    target.write_text("same line\n" * 9_999 + "other line\n", encoding="utf-8")
+    target.write_text("same line\n" * 9_999 + "other line\n", encoding="utf-8", newline="\n")
 
     started = time.perf_counter()
     result = journal.restore("big.txt", saved.version_id)
@@ -1005,7 +1005,7 @@ def test_restore_of_identical_content_reports_no_changes(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "same.txt"
-    target.write_text("steady\n", encoding="utf-8")
+    target.write_text("steady\n", encoding="utf-8", newline="\n")
     saved = journal.record("same.txt", now=T0)
     assert saved is not None
 
@@ -1020,10 +1020,10 @@ def test_restore_never_fails_because_the_diff_step_failed(
 ):
     journal = _journal(workspace, db, storage_root)
     target = repo / "stats.txt"
-    target.write_text("one\n", encoding="utf-8")
+    target.write_text("one\n", encoding="utf-8", newline="\n")
     saved = journal.record("stats.txt", now=T0)
     assert saved is not None
-    target.write_text("two\n", encoding="utf-8")
+    target.write_text("two\n", encoding="utf-8", newline="\n")
 
     def broken_matcher(*args: object, **kwargs: object) -> None:
         raise RuntimeError("diff engine broke")
@@ -1039,10 +1039,10 @@ def test_restore_refuses_target_over_per_file_limit_and_writes_nothing(
     repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path
 ):
     journal = _journal(workspace, db, storage_root, JournalLimits(max_file_bytes=64))
-    (repo / "big.txt").write_text("x" * 200, encoding="utf-8")
+    (repo / "big.txt").write_text("x" * 200, encoding="utf-8", newline="\n")
     _git(repo, "add", "big.txt")
     _git(repo, "commit", "-q", "-m", "big file")
-    (repo / "big.txt").write_text("small\n", encoding="utf-8")
+    (repo / "big.txt").write_text("small\n", encoding="utf-8", newline="\n")
 
     with pytest.raises(ValueError, match="per-file journal limit"):
         journal.restore("big.txt", "HEAD")
