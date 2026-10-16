@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -15,9 +16,10 @@ from pathlib import Path
 
 import pytest
 
+from turbo_memory_mcp.workspace import journal as journal_module
 from turbo_memory_mcp.workspace.db import CoordinationDB, CoordinationUnavailable
 from turbo_memory_mcp.workspace.journal import Journal, JournalLimits
-from turbo_memory_mcp.workspace.models import Workspace
+from turbo_memory_mcp.workspace.models import VersionRecord, Workspace
 from turbo_memory_mcp.workspace.paths import blobs_dir, coord_db_path, resolve_workspace
 
 DAY = 86400.0
@@ -725,3 +727,149 @@ def test_restore_keeps_destination_permissions(
     assert script.read_text(encoding="utf-8") == "echo one\n"
     if sys.platform != "win32":
         assert stat.S_IMODE(script.stat().st_mode) == 0o755
+
+
+def test_version_committed_during_eviction_survives_wipe_and_rebuild(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    journal.record("old.txt", now=T0 - 20 * DAY)
+    (repo / "keep.txt").write_text("keep\n", encoding="utf-8")
+    journal.record("keep.txt", now=T0)
+    real_maintain = Journal._maintain_after_commit
+    late: list[VersionRecord | None] = []
+
+    def maintain_after_late_write(self: Journal, *args: object, **kwargs: object) -> None:
+        if not late:
+            (repo / "late.txt").write_text("late\n", encoding="utf-8")
+            late.append(self.record("late.txt", now=T0 + 1))
+        real_maintain(self, *args, **kwargs)
+
+    monkeypatch.setattr(Journal, "_maintain_after_commit", maintain_after_late_write)
+    assert journal.evict(now=T0 + 2) == 1
+    monkeypatch.undo()
+
+    late_record = late[0]
+    assert late_record is not None
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        rebuilt.rebuild_index_if_empty()
+        assert rebuilt.read_version(late_record.version_id) == b"late\n"
+    finally:
+        fresh.close()
+
+
+def test_failed_log_append_is_repaired_by_next_eviction(
+    repo: Path,
+    workspace: Workspace,
+    db: CoordinationDB,
+    storage_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "old.txt").write_text("old\n", encoding="utf-8")
+    journal.record("old.txt", now=T0 - 20 * DAY)
+    real_append = journal_module._append_line
+    failures: list[int] = []
+
+    def fail_once(log_path: Path, line: str) -> None:
+        if not failures:
+            failures.append(1)
+            raise OSError("disk full")
+        real_append(log_path, line)
+
+    monkeypatch.setattr(journal_module, "_append_line", fail_once)
+    (repo / "unlogged.txt").write_text("unlogged\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="turbo_memory_mcp.workspace.journal"):
+        saved = journal.record("unlogged.txt", now=T0)
+    monkeypatch.undo()
+
+    assert saved is not None
+    assert "will write it" in caplog.text
+    assert journal.evict(now=T0 + 1) == 1
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        rebuilt.rebuild_index_if_empty()
+        assert rebuilt.read_version(saved.version_id) == b"unlogged\n"
+    finally:
+        fresh.close()
+
+
+def test_duplicate_log_lines_rebuild_once(repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path):
+    journal = _journal(workspace, db, storage_root)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    journal.record("a.txt", now=T0)
+    (repo / "b.txt").write_text("b\n", encoding="utf-8")
+    journal.record("b.txt", now=T0 + 1)
+    log = _log_path(storage_root, workspace)
+    first_line = log.read_text(encoding="utf-8").splitlines(keepends=True)[0]
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(first_line)
+
+    fresh = _wipe_db(db, storage_root, workspace)
+    try:
+        rebuilt = _journal(workspace, fresh, storage_root)
+        assert rebuilt.rebuild_index_if_empty() == 2
+        assert len(rebuilt.history("a.txt")) == 1
+    finally:
+        fresh.close()
+
+
+def test_restore_snapshots_until_stable_when_edited_during_second_snapshot(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "story.txt"
+    target.write_text("v1\n", encoding="utf-8")
+    v1 = journal.record("story.txt", now=T0)
+    target.write_text("original\n", encoding="utf-8")
+    assert v1 is not None
+    real_snapshot = Journal._snapshot
+    passes: list[bytes] = []
+
+    def snapshot_with_edits(self: Journal, rel: str, content: bytes) -> VersionRecord:
+        record = real_snapshot(self, rel, content)
+        passes.append(content)
+        if len(passes) == 1:
+            (repo / rel).write_text("first edit\n", encoding="utf-8")
+        if len(passes) == 2:
+            (repo / rel).write_text("second edit\n", encoding="utf-8")
+        return record
+
+    monkeypatch.setattr(Journal, "_snapshot", snapshot_with_edits)
+    result = journal.restore("story.txt", v1.version_id)
+    monkeypatch.undo()
+
+    assert target.read_text(encoding="utf-8") == "v1\n"
+    assert journal.read_version(result["previous_version_id"]) == b"second edit\n"
+    assert len(passes) == 3
+
+
+def test_restore_refuses_destination_that_never_settles(
+    repo: Path, workspace: Workspace, db: CoordinationDB, storage_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    journal = _journal(workspace, db, storage_root)
+    target = repo / "busy.txt"
+    target.write_text("v1\n", encoding="utf-8")
+    v1 = journal.record("busy.txt", now=T0)
+    target.write_text("start\n", encoding="utf-8")
+    assert v1 is not None
+    real_snapshot = Journal._snapshot
+    counter = {"n": 0}
+
+    def always_edit(self: Journal, rel: str, content: bytes) -> VersionRecord:
+        record = real_snapshot(self, rel, content)
+        counter["n"] += 1
+        (repo / rel).write_text(f"edit {counter['n']}\n", encoding="utf-8")
+        return record
+
+    monkeypatch.setattr(Journal, "_snapshot", always_edit)
+    with pytest.raises(ValueError, match="kept changing"):
+        journal.restore("busy.txt", v1.version_id)
+    monkeypatch.undo()
+
+    assert target.read_text(encoding="utf-8") == f"edit {counter['n']}\n"

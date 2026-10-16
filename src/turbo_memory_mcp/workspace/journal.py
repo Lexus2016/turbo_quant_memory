@@ -21,6 +21,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import stat
@@ -49,6 +50,8 @@ ENV_JOURNAL_MAX_FILE_BYTES = "TQMEMORY_JOURNAL_MAX_FILE_BYTES"
 ENV_JOURNAL_MAX_BYTES = "TQMEMORY_JOURNAL_MAX_BYTES"
 ENV_JOURNAL_RETENTION_DAYS = "TQMEMORY_JOURNAL_RETENTION_DAYS"
 
+_LOG = logging.getLogger(__name__)
+
 _BINARY_SCAN_BYTES = 8192
 _DAY_SECONDS = 86400.0
 _RECENT_SECONDS = _DAY_SECONDS
@@ -60,9 +63,21 @@ _BLOB_SUFFIX = ".z"
 _TEMP_SUFFIX = ".tmp"
 _LOCK_SUFFIX = ".lock"
 _KIND_WATERMARK = "watermark"
+_MAX_SNAPSHOT_PASSES = 3
 _RECORDABLE_ATTRIBUTIONS = frozenset({"inferred", "unknown"})
 _ALL_ATTRIBUTIONS = frozenset({"inferred", "unknown", "restore"})
 _KINDS = frozenset({"content", "deletion"})
+_ROW_KEYS = (
+    "version_id",
+    "workspace",
+    "path",
+    "kind",
+    "sha256",
+    "size",
+    "observed_at",
+    "attribution",
+    "session_id",
+)
 _LOG_KEYS = (
     "workspace",
     "version_id",
@@ -242,10 +257,10 @@ class Journal:
     def restore(self, rel_path: str, version: int | Literal["HEAD"]) -> dict[str, Any]:
         """Write ``version`` (a version id, or ``"HEAD"`` for the committed blob) back to ``rel_path``.
 
-        Nothing is written unless the target content is read successfully first. Under a per-workspace
-        lock, the current file is snapshotted with attribution ``"restore"`` and re-hashed right before it is
-        replaced; if it changed in between, it is snapshotted again, so the returned undo id always holds
-        the content that was actually overwritten. A current file too large to snapshot is refused.
+        Nothing is written unless the target content is read successfully first. Under a per-workspace lock the
+        destination is snapshotted with attribution ``"restore"`` until a re-read after the snapshot matches it
+        (at most three passes), then replaced, so the returned undo id holds the content that was overwritten.
+        A destination too large to snapshot, or one that never settles, is refused without writing.
         """
 
         rel = self._relative(rel_path)
@@ -261,16 +276,7 @@ class Journal:
         if dest.is_dir():
             raise ValueError(f"{rel} is a directory")
         with self._restore_lock():
-            snapshot: VersionRecord | None = None
-            current: bytes | None = None
-            if dest.is_file():
-                current = self._current_bytes(dest, rel)
-                snapshot = self._snapshot(rel, current)
-            if dest.is_file():
-                latest = self._current_bytes(dest, rel)
-                if current is None or _digest(latest) != _digest(current):
-                    current = latest
-                    snapshot = self._snapshot(rel, latest)
+            snapshot, current = self._snapshot_until_stable(rel, dest)
             old = b"" if current is None else current
             mode = stat.S_IMODE(dest.stat().st_mode) if dest.is_file() else None
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -284,14 +290,32 @@ class Journal:
             "diff": {"added": added, "removed": removed},
         }
 
+    def _snapshot_until_stable(self, rel: str, dest: Path) -> tuple[VersionRecord | None, bytes | None]:
+        """Snapshot ``dest`` until a re-read after the snapshot equals it; return the undo snapshot and that content.
+
+        An absent destination needs no snapshot. Raises ``ValueError`` when it still changes after the last pass.
+        """
+
+        snapshot: VersionRecord | None = None
+        current: bytes | None = None
+        for _ in range(_MAX_SNAPSHOT_PASSES):
+            if not dest.is_file():
+                return snapshot, current
+            observed = self._current_bytes(dest, rel)
+            snapshot = self._snapshot(rel, observed)
+            current = observed
+            if dest.is_file() and _digest(self._current_bytes(dest, rel)) == _digest(observed):
+                return snapshot, current
+        raise ValueError(f"{rel} kept changing while it was being snapshotted; nothing was overwritten")
+
     # Retention and recovery ---------------------------------------------------
 
     def evict(self, now: float | None = None) -> int:
         """Drop versions past the retention age, then the oldest unprotected content until under the size cap.
 
         The newest content version of every path changed in the last 24 hours is never dropped for size.
-        The deletion is committed first; then the log is rewritten and blobs that neither store refers to
-        are swept. Returns the number of versions removed.
+        The deletion commits first; then the log is regenerated from the index and unreferenced blobs are swept.
+        Returns the number of versions removed.
         """
 
         observed_now = _now(now)
@@ -326,16 +350,16 @@ class Journal:
             self.over_cap = total > cap
             if expired:
                 conn.executemany("DELETE FROM versions WHERE version_id = ?", [(item,) for item in sorted(expired)])
-            max_seen = max(row.version_id for row in rows)
-        self._maintain_after_commit({row.version_id for row in rows if row.version_id not in expired}, max_seen)
+        self._maintain_after_commit()
         return len(expired)
 
     def rebuild_index_if_empty(self) -> int:
         """Re-insert versions from ``journal.log`` when the index is empty; return how many were inserted.
 
-        Versions keep their logged ``version_id``, so an old id still names the same content. Content entries
-        whose blob is gone are skipped; deletion entries are always re-inserted. The id sequence is raised to
-        the highest id ever logged, so evicted ids are not handed out again.
+        Versions keep their logged ``version_id``, so an old id still names the same content. A version id seen
+        twice (a regenerated line plus a late append) is inserted once. Content entries whose blob is gone are
+        skipped; deletion entries are always re-inserted. The id sequence is raised to the highest id ever
+        logged, so evicted ids are not handed out again.
         """
 
         with _transaction(self._db) as conn:
@@ -344,10 +368,12 @@ class Journal:
                 return 0
             inserted = 0
             top = 0
+            seen: set[int] = set()
             for entry in _read_log(self._log_path):
                 top = max(top, entry["version_id"])
-                if entry["kind"] == _KIND_WATERMARK:
+                if entry["kind"] == _KIND_WATERMARK or entry["version_id"] in seen:
                     continue
+                seen.add(entry["version_id"])
                 digest = entry["sha256"]
                 if entry["kind"] == "content" and not _blob_path(self._blobs_root, digest).is_file():
                     continue
@@ -478,24 +504,31 @@ class Journal:
         except FileNotFoundError:
             return 0
 
-    def _maintain_after_commit(self, surviving_ids: set[int], max_seen: int) -> None:
-        """Rewrite the log, then sweep blobs, in one write transaction so no record interleaves."""
+    def _maintain_after_commit(self) -> None:
+        """Regenerate the log from the index, then sweep unreferenced blobs, in one write transaction.
+
+        While the index is alive it is authoritative, so the log is regenerated from its rows instead of being
+        filtered. A write that committed meanwhile is included; its own append may land after this and duplicate
+        a line, which rebuild dedupes.
+        """
 
         with _transaction(self._db) as conn:
-            self._rewrite_log(surviving_ids, max_seen)
-            self._sweep_unreferenced_blobs(conn)
+            referenced = {
+                row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")
+            }
+            if self._log_path.is_file():
+                referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
+            self._regenerate_log(conn)
+            self._sweep_unreferenced_blobs(referenced)
 
-    def _sweep_unreferenced_blobs(self, conn: sqlite3.Connection) -> None:
-        """Delete blobs that neither the index nor ``journal.log`` refers to.
+    def _sweep_unreferenced_blobs(self, referenced: set[str]) -> None:
+        """Delete blobs whose digest is not in ``referenced``.
 
         A blob that cannot be unlinked (for example, open elsewhere on Windows) is left for a later sweep.
         """
 
         if not self._blobs_root.is_dir():
             return
-        referenced = {row[0] for row in conn.execute("SELECT DISTINCT sha256 FROM versions WHERE sha256 IS NOT NULL")}
-        if self._log_path.is_file():
-            referenced.update(entry["sha256"] for entry in _read_log(self._log_path) if entry["kind"] == "content")
         for shard in self._blobs_root.iterdir():
             if not shard.is_dir():
                 continue
@@ -509,22 +542,23 @@ class Journal:
                 except OSError:
                     continue
 
-    def _rewrite_log(self, surviving_ids: set[int], max_seen: int) -> None:
-        """Keep only lines of surviving versions, drop torn lines, and end with a watermark of the highest id ever seen."""
+    def _regenerate_log(self, conn: sqlite3.Connection) -> None:
+        """Write ``journal.log`` from the index rows, followed by a watermark of the highest id ever assigned."""
 
         old_text = self._log_path.read_text(encoding="utf-8") if self._log_path.is_file() else ""
-        top = max_seen
-        kept: list[str] = []
-        for line in old_text.splitlines(keepends=True):
+        top = _id_high_water(conn)
+        for line in old_text.splitlines():
             entry = _parse_log_line(line)
-            if entry is None:
-                continue
-            top = max(top, entry["version_id"])
-            if entry["kind"] != _KIND_WATERMARK and entry["version_id"] in surviving_ids:
-                kept.append(line if line.endswith("\n") else f"{line}\n")
+            if entry is not None:
+                top = max(top, entry["version_id"])
+        rows = conn.execute(
+            "SELECT version_id, workspace, path, kind, sha256, size, observed_at, attribution, session_id "
+            "FROM versions ORDER BY version_id"
+        ).fetchall()
+        parts = [_json_line(dict(zip(_ROW_KEYS, row, strict=True))) for row in rows]
         if top > 0:
-            kept.append(_json_line({"kind": _KIND_WATERMARK, "version_id": top}))
-        new_text = "".join(kept)
+            parts.append(_json_line({"kind": _KIND_WATERMARK, "version_id": top}))
+        new_text = "".join(parts)
         if new_text != old_text:
             _atomic_write(self._log_path, new_text.encode("utf-8"))
 
@@ -582,13 +616,28 @@ class Journal:
         )
 
     def _append_log(self, record: VersionRecord) -> None:
+        """Append the record's log line under the write lock.
+
+        The row is already committed, so a failed append is logged rather than raised; the next regeneration
+        writes the line.
+        """
+
         line = _json_line(_log_entry(self.workspace.root_key, record))
-        # The write transaction serializes the append with eviction's rewrite and with other appends.
-        with _transaction(self._db):
-            _append_line(self._log_path, line)
+        try:
+            with _transaction(self._db):
+                _append_line(self._log_path, line)
+        except (OSError, CoordinationUnavailable) as exc:
+            _LOG.warning(
+                "version %s is not in journal.log yet (%s); the next eviction will write it", record.version_id, exc
+            )
 
 
 # Module helpers -----------------------------------------------------------------
+
+
+def _id_high_water(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'versions'").fetchone()
+    return 0 if row is None else int(row[0])
 
 
 def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
