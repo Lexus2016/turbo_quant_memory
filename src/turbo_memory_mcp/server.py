@@ -2489,7 +2489,7 @@ def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, A
 
     try:
         if index.count_rows(PROJECT_SCOPE) == 0:
-            if store.list_markdown_blocks() or store.list_notes(PROJECT_SCOPE):
+            if store.has_markdown_blocks() or store.list_notes(PROJECT_SCOPE):
                 index.sync_project()
             return
 
@@ -2592,7 +2592,7 @@ def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalInde
     """
     notes = store.list_notes(PROJECT_SCOPE)
     expected_note_ids = {str(note["note_id"]) for note in notes}
-    expected_block_ids = {str(block["block_id"]) for block in store.list_markdown_blocks()}
+    expected_block_ids = set(store.list_markdown_block_ids())
     expected_ids = expected_note_ids | expected_block_ids
     mirror_updated = index.existing_item_updated_at(PROJECT_SCOPE)
     existing_ids = set(mirror_updated)
@@ -2654,7 +2654,7 @@ def _repair_global_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex
 
 
 def _project_retrieval_requires_rebuild(store: MemoryStore) -> bool:
-    has_project_content = bool(store.list_markdown_blocks() or store.list_notes(PROJECT_SCOPE))
+    has_project_content = store.has_markdown_blocks() or bool(store.list_notes(PROJECT_SCOPE))
     if not has_project_content:
         return False
     manifest = store.read_project_retrieval_manifest()

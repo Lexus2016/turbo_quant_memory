@@ -230,7 +230,7 @@ def _query_scope(
 def _ensure_scope_synced(index: RetrievalIndex, store: MemoryStore, scope: str) -> None:
     if scope == PROJECT_SCOPE:
         if index.count_rows(PROJECT_SCOPE) == 0 and (
-            store.list_markdown_blocks(project_id=store.project.project_id) or store.list_notes(PROJECT_SCOPE)
+            store.has_markdown_blocks(project_id=store.project.project_id) or store.list_notes(PROJECT_SCOPE)
         ):
             index.sync_project()
         return

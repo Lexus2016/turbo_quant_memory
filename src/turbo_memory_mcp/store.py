@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -474,16 +474,24 @@ class MemoryStore:
         block / file-manifest / root JSON must not raise out of semantic_search /
         hydrate / server_info and take down all retrieval for the whole project.
         """
-        records: list[dict[str, Any]] = []
+        return list(self._iter_json_records_skipping_corrupt(directory, label=label))
+
+    def _iter_json_records_skipping_corrupt(self, directory: Path, *, label: str) -> Iterator[dict[str, Any]]:
+        """Stream the records of a derived-cache dir one at a time (see above).
+
+        Every read of such a dir goes through here, so callers that only need
+        a field per record never hold the whole corpus in memory.
+        """
         for path in sorted(directory.glob("*.json")):
             try:
-                records.append(_read_json(path))
+                record = _read_json(path)
             except (OSError, ValueError, TypeError) as exc:
                 print(
                     f"[tqmemory] skipping unreadable {label} {path}: {type(exc).__name__}: {exc}",
                     file=sys.stderr,
                 )
-        return records
+                continue
+            yield record
 
     def note_source_path(self, note: Mapping[str, Any]) -> Path:
         note_id = str(note["note_id"])
@@ -676,12 +684,30 @@ class MemoryStore:
         block_dir = self.project_markdown_blocks_dir(project_id)
         if not block_dir.exists():
             return []
-        blocks = self._load_json_records_skipping_corrupt(block_dir, label="markdown block")
+        blocks = list(self.iter_markdown_blocks(project_id))
         if root_id is not None:
             blocks = [block for block in blocks if block["root_id"] == root_id]
         if source_path is not None:
             blocks = [block for block in blocks if block["source_path"] == source_path]
         return blocks
+
+    def iter_markdown_blocks(self, project_id: str | None = None) -> Iterator[dict[str, Any]]:
+        """Yield the project's blocks one at a time, skipping unreadable files."""
+        block_dir = self.project_markdown_blocks_dir(project_id)
+        if not block_dir.exists():
+            return
+        yield from self._iter_json_records_skipping_corrupt(block_dir, label="markdown block")
+
+    def list_markdown_block_ids(self, project_id: str | None = None) -> list[str]:
+        """Block ids from file names (``<block_id>.json``); reads no block file."""
+        block_dir = self.project_markdown_blocks_dir(project_id)
+        if not block_dir.exists():
+            return []
+        return sorted(path.stem for path in block_dir.glob("*.json"))
+
+    def has_markdown_blocks(self, project_id: str | None = None) -> bool:
+        block_dir = self.project_markdown_blocks_dir(project_id)
+        return block_dir.exists() and next(block_dir.glob("*.json"), None) is not None
 
     def read_markdown_neighborhood(
         self,
@@ -751,8 +777,9 @@ class MemoryStore:
         deleted_block_ids: list[str] = []
         # One block scan for the root, not one per file (O(files x blocks)).
         block_ids_by_source: dict[str, list[str]] = {}
-        for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id):
-            block_ids_by_source.setdefault(str(block["source_path"]), []).append(str(block["block_id"]))
+        for block in self.iter_markdown_blocks(project_id):
+            if block["root_id"] == root_id:
+                block_ids_by_source.setdefault(str(block["source_path"]), []).append(str(block["block_id"]))
 
         for manifest in manifests:
             deleted_file_keys.append(str(manifest["file_key"]))

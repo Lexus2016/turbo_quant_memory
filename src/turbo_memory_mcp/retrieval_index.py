@@ -302,6 +302,14 @@ class RetrievalIndex:
                 block = self.store.read_markdown_block(block_id, resolved_project_id)
             except FileNotFoundError:
                 continue
+            except (OSError, ValueError) as exc:
+                # A corrupt block must not fail the sync: the caller would fall
+                # back to a full re-sync, and the next search would do it again.
+                print(
+                    f"[tqmemory] skipping unreadable markdown block {block_id}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
             rows.append(mirror_markdown_block(self.store, block, project_id=resolved_project_id))
         return self.upsert_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id)
 
@@ -485,9 +493,13 @@ class RetrievalIndex:
         Reads only the two columns; never embeds.
         """
         table = self._open_scope_table(scope, project_id=project_id)
-        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+        row_count = 0 if table is None else self.count_rows(scope, project_id=project_id)
+        if table is None or row_count == 0:
             return {}
-        arrow = table.to_arrow()
+        # Project the two columns: a full read pulls every vector into memory
+        # (about 5 KB per row) on every search.
+        columns = [name for name in (ITEM_ID_FIELD, "updated_at") if name in table.schema.names]
+        arrow = table.search().select(columns).limit(row_count).to_arrow()
         ids = arrow.column(ITEM_ID_FIELD).to_pylist()
         if "updated_at" in arrow.column_names:
             stamps: list[Any] = arrow.column("updated_at").to_pylist()

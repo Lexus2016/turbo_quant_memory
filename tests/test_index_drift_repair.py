@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from turbo_memory_mcp.retrieval_index import RetrievalIndex
 from turbo_memory_mcp.server import (
     _repair_global_retrieval_if_needed,
     _repair_project_retrieval_if_needed,
+    build_runtime_context,
+    index_paths_impl,
+    semantic_search_impl,
 )
-from turbo_memory_mcp.store import GLOBAL_SCOPE, PROJECT_SCOPE
+from turbo_memory_mcp.store import GLOBAL_SCOPE, PROJECT_SCOPE, MemoryStore
 
 _STAMP = "2026-01-01T00:00:00Z"
 
@@ -83,6 +90,9 @@ class _FakeStore:
 
     def list_markdown_blocks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
         return [{"block_id": bid} for bid in self._block_ids]
+
+    def list_markdown_block_ids(self, *_a: Any, **_k: Any) -> list[str]:
+        return sorted(self._block_ids)
 
 
 def test_repair_project_reconciles_missing_id_without_full_resync(
@@ -162,3 +172,74 @@ def test_repair_global_reembeds_note_whose_updated_at_drifted() -> None:
     assert index.full_resyncs == 0
     assert index.deleted == []
     assert index.note_upserts == ["g1"]
+
+
+# --- per-search cost (2026-10-17) ---
+# _project_retrieval_requires_rebuild read every block JSON to evaluate a bool
+# and the drift repair read them all again for their ids: two full reads per
+# search, about 4 s each at 40k blocks.
+
+
+def _search_env(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    project_root = tmp_path / "repo"
+    docs = project_root / "docs"
+    docs.mkdir(parents=True)
+    for index in range(5):
+        (docs / f"doc-{index}.md").write_text(f"# Doc {index}\n\nBody about topic {index}.", encoding="utf-8")
+    env = {
+        "TQMEMORY_HOME": str(tmp_path / "memory-home"),
+        "TQMEMORY_PROJECT_ROOT": str(project_root),
+        "TQMEMORY_PROJECT_ID": "project-alpha",
+        "TQMEMORY_PROJECT_NAME": "Alpha Project",
+    }
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    semantic_search_impl("topic", cwd=project_root, environ=env)
+    return project_root, env
+
+
+def test_search_on_unchanged_project_reads_no_block_files(tmp_path: Path) -> None:
+    project_root, env = _search_env(tmp_path)
+    real_load = MemoryStore._iter_json_records_skipping_corrupt
+    labels: list[str] = []
+
+    def spy(self: MemoryStore, directory: Path, *, label: str) -> Iterator[dict[str, Any]]:
+        labels.append(label)
+        return real_load(self, directory, label=label)
+
+    with patch.object(MemoryStore, "_iter_json_records_skipping_corrupt", autospec=True, side_effect=spy):
+        payload = semantic_search_impl("topic", cwd=project_root, environ=env)
+
+    assert payload["status"] == "ok"
+    assert labels.count("markdown block") == 0
+
+
+def test_corrupt_block_file_does_not_trigger_full_rebuild(tmp_path: Path) -> None:
+    """A block id that exists on disk but cannot be read must be skipped, not
+    turned into a full re-sync on every search."""
+    project_root, env = _search_env(tmp_path)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+    victim = store.list_markdown_block_ids()[0]
+    store.project_markdown_block_path(victim).write_text("{", encoding="utf-8")
+    RetrievalIndex(store).delete_items(PROJECT_SCOPE, [victim])
+
+    with patch.object(RetrievalIndex, "sync_project", side_effect=AssertionError("full re-sync")):
+        payload = semantic_search_impl("topic", cwd=project_root, environ=env)
+
+    assert payload["status"] == "ok"
+
+
+def test_mirror_timestamps_are_read_without_vectors(tmp_path: Path) -> None:
+    """existing_item_updated_at runs on every search; reading the whole table
+    pulled every 384-float vector into memory just to compare ids."""
+    project_root, env = _search_env(tmp_path)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+    index = RetrievalIndex(store)
+    expected = index.existing_item_updated_at(PROJECT_SCOPE)
+
+    from lancedb.table import LanceTable
+
+    with patch.object(LanceTable, "to_arrow", side_effect=AssertionError("full table read")):
+        stamps = index.existing_item_updated_at(PROJECT_SCOPE)
+
+    assert stamps == expected
+    assert set(stamps) == set(store.list_markdown_block_ids())

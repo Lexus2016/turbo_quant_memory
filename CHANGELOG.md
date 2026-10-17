@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout`. They now get `memory server busy: '<tool>' holds the dispatch
   lock` after `TQMEMORY_DISPATCH_LOCK_TIMEOUT` (30 s), naming the call that
   blocks them.
+- **A search no longer reads every markdown block file or every vector.**
+  The rebuild check read all block JSON files to evaluate a yes/no question,
+  and drift repair read them all again just for their ids. Block ids now come
+  from file names. The mirror's id and timestamp columns are read without
+  the 384-float vectors. On a 5k-block project a warm search dropped from
+  about 1.5 s; at 40k blocks each skipped read was about 4 s. Per-search
+  memory for the mirror read falls from about 5 KB to under 0.1 KB per row.
+- **A corrupt block file no longer forces a full re-sync on every search.**
+  The block sync now skips an unreadable block with a log line instead of
+  failing into the full-rebuild fallback.
+- **Indexing streams blocks.** Grouping block ids for an index run, and
+  dropping a root, iterate the block files one at a time. They no longer
+  hold every block's full JSON in memory.
 
 ## [0.31.1] - 2026-10-17
 

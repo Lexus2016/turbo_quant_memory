@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -392,14 +392,14 @@ def test_vanished_root_does_not_block_reindex_of_changed_live_root(tmp_path: Pat
 
 def _block_scans_during(store: MemoryStore, action: Callable[[], object]) -> int:
     """Count full reads of the project's block directory while *action* runs."""
-    real_load = store._load_json_records_skipping_corrupt
+    real_load = store._iter_json_records_skipping_corrupt
     labels: list[str] = []
 
-    def spy(directory: Path, *, label: str) -> list[dict[str, object]]:
+    def spy(directory: Path, *, label: str) -> Iterator[dict[str, object]]:
         labels.append(label)
         return real_load(directory, label=label)
 
-    with patch.object(store, "_load_json_records_skipping_corrupt", side_effect=spy):
+    with patch.object(store, "_iter_json_records_skipping_corrupt", side_effect=spy):
         action()
     return labels.count("markdown block")
 
@@ -465,3 +465,23 @@ def test_index_paths_skips_claude_agent_worktrees_by_default(tmp_path: Path) -> 
 
     source_paths = sorted(manifest["source_path"] for manifest in store.list_markdown_file_manifests())
     assert source_paths == [".claude/agents/reviewer.md", "README.md"]
+
+
+def test_index_run_streams_blocks_instead_of_listing_them(tmp_path: Path) -> None:
+    """Grouping block ids must not hold every block's full JSON in memory."""
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    for index in range(5):
+        (docs / f"n-{index}.md").write_text(f"# N{index}\n\nOriginal.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    (docs / "n-0.md").write_text("# N0\n\nEdited.", encoding="utf-8")
+    (docs / "n-1.md").unlink()
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    with patch.object(MemoryStore, "list_markdown_blocks", side_effect=AssertionError("materialized list")):
+        payload, _ = index_paths_with_sync_plan(store, mode="incremental", cwd=project_root)
+
+    assert payload["changed_files"] == 1
+    assert payload["deleted_files"] == 1
+    assert payload["block_count"] == len(store.list_markdown_block_ids())

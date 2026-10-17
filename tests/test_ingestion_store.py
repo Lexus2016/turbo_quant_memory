@@ -219,3 +219,49 @@ def test_delete_file_manifest_and_targeted_block_cleanup_preserves_unaffected_re
     assert not store.project_markdown_file_path(overview_key).exists()
     assert store.project_markdown_block_path("arch-new").exists()
     assert [block["block_id"] for block in store.list_markdown_blocks(root_id="docs-root")] == ["arch-new"]
+
+
+def _write_block(store: MemoryStore, block_id: str, source_path: str = "docs/a.md") -> None:
+    store.write_markdown_block(
+        {
+            "block_id": block_id,
+            "root_id": "docs-root",
+            "source_path": source_path,
+            "heading_path": ["A"],
+            "chunk_index": 0,
+            "content_raw": f"content of {block_id}",
+            "block_checksum": sha256_text(block_id),
+            "source_checksum": "source-checksum",
+        }
+    )
+
+
+def test_list_markdown_block_ids_matches_stored_blocks(tmp_path: Path) -> None:
+    """Block ids come from file names, so listing them reads no block file."""
+    store = _build_store(tmp_path)
+    assert store.has_markdown_blocks() is False
+    assert store.list_markdown_block_ids() == []
+
+    for block_id in ("block-c", "block-a", "block-b"):
+        _write_block(store, block_id)
+    blocks_dir = store.project_markdown_blocks_dir()
+    # Leftovers that are not block records: an atomic-write temp file and a stray.
+    (blocks_dir / "tmpabc123").write_text("{", encoding="utf-8")
+    (blocks_dir / "notes.txt").write_text("x", encoding="utf-8")
+
+    assert store.has_markdown_blocks() is True
+    assert store.list_markdown_block_ids() == ["block-a", "block-b", "block-c"]
+    assert store.list_markdown_block_ids() == sorted(block["block_id"] for block in store.list_markdown_blocks())
+
+
+def test_iter_markdown_blocks_yields_the_listed_blocks_and_skips_corrupt(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    for block_id in ("block-a", "block-b"):
+        _write_block(store, block_id)
+    (store.project_markdown_blocks_dir() / "block-bad.json").write_text("{", encoding="utf-8")
+
+    iterator = store.iter_markdown_blocks()
+
+    assert iter(iterator) is iterator  # a generator, not a materialized list
+    assert [block["block_id"] for block in iterator] == ["block-a", "block-b"]
+    assert [block["block_id"] for block in store.list_markdown_blocks()] == ["block-a", "block-b"]

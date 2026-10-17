@@ -234,7 +234,7 @@ def index_paths_with_sync_plan(
             store.delete_markdown_file_manifest(str(manifest["file_key"]))
             deleted_files += 1
 
-    block_count = len(store.list_markdown_blocks())
+    block_count = len(store.list_markdown_block_ids())
     payload = build_indexing_payload(
         mode=resolved_mode,
         registered_roots=[
@@ -530,7 +530,7 @@ def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -
 def _block_ids_by_file(store: MemoryStore) -> dict[tuple[str, str], set[str]]:
     """Group the project's block ids by ``(root_id, source_path)`` in one scan."""
     grouped: dict[tuple[str, str], set[str]] = {}
-    for block in store.list_markdown_blocks():
+    for block in store.iter_markdown_blocks():
         key = (str(block["root_id"]), str(block["source_path"]))
         grouped.setdefault(key, set()).add(str(block["block_id"]))
     return grouped
