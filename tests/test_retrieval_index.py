@@ -286,3 +286,52 @@ def test_sync_calls_return_counts_not_rows(tmp_path: Path) -> None:
 
     assert index.sync_project() == 300
     assert index.sync_project_blocks(["block-0000", "block-0001", "missing"]) == 2
+
+
+# --- explicit table schema (2026-10-17) ---
+# A table created from markdown rows alone got its schema inferred from the
+# data: note_kind/note_id as null and tags as list<null>. Every later note
+# upsert then failed ("Spill has sent an error") and fell back to a full
+# re-sync of the project.
+
+
+def test_table_created_from_blocks_only_accepts_notes_later(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    _write_blocks(store, 3)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    index.sync_project()
+    store.write_project_note("Auth", "Auth note body.", note_kind="pattern", tags=["auth"], note_id="auth-note")
+
+    assert index.sync_project_notes(["auth-note"]) == 1
+    types = {field.name: str(field.type) for field in index._open_scope_table("project").schema}
+    assert types["note_kind"] == "string"
+    assert types["tags"] == "list<item: string>"
+
+
+def test_null_typed_columns_of_an_existing_table_are_repaired_in_place(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import lancedb
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 3)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    rows = [
+        {**retrieval_index_mirror_block(store, block), "vector": StaticEmbedder().encode(["x"])[0]}
+        for block in store.list_markdown_blocks()
+    ]
+    index.project_db_path().mkdir(parents=True, exist_ok=True)
+    lancedb.connect(str(index.project_db_path())).create_table("items", rows, mode="overwrite")
+    assert str(index._open_scope_table("project").schema.field("note_kind").type) == "null"
+    store.write_project_note("Auth", "Auth note body.", note_kind="pattern", tags=["auth"], note_id="auth-note")
+
+    with patch.object(RetrievalIndex, "_overwrite_scope", side_effect=AssertionError("full rewrite")):
+        assert index.sync_project_notes(["auth-note"]) == 1
+
+    assert index.count_rows("project") == 4
+
+
+def retrieval_index_mirror_block(store: MemoryStore, block: dict[str, object]) -> dict[str, object]:
+    from turbo_memory_mcp.retrieval_index import mirror_markdown_block
+
+    return mirror_markdown_block(store, block, project_id=store.project.project_id)

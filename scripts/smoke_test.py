@@ -35,6 +35,11 @@ EXPECTED_TOOL_NAMES = [
     "list_secrets",
     "delete_secret",
     "recent_context",
+    "announce_work",
+    "finish_work",
+    "workspace_status",
+    "file_history",
+    "restore_file",
 ]
 EXPECTED_SCOPES = ["project", "global", "hybrid"]
 
@@ -86,6 +91,8 @@ async def run_smoke() -> list[str]:
             # storage. The vault round-trip below uses it; nothing is left
             # behind on the host keychain after the TemporaryDirectory exits.
             "TQMEMORY_SECRETS_PASSPHRASE": "tqmemory-smoke-passphrase-only",
+            # The docs fixture lives in the temp dir, outside the project tree.
+            "TQMEMORY_ALLOW_EXTERNAL_ROOTS": "1",
         }
         expected_project = build_current_project_payload(
             resolve_project_identity(cwd=PROJECT_ROOT, environ=server_env)
@@ -284,7 +291,7 @@ async def run_smoke() -> list[str]:
     expect(list_scopes["default_query_mode"] == "project", f"list_scopes.default_query_mode mismatch: {list_scopes}")
 
     expect(self_test["status"] == "ok", f"self_test.status mismatch: {self_test}")
-    expect(self_test["tool_count"] == 19, f"self_test.tool_count mismatch: {self_test}")
+    expect(self_test["tool_count"] == len(EXPECTED_TOOL_NAMES), f"self_test.tool_count mismatch: {self_test}")
     expect(self_test["tool_names"] == EXPECTED_TOOL_NAMES, f"self_test.tool_names mismatch: {self_test}")
     expect(
         self_test["namespace_contract"]["query_modes"] == EXPECTED_SCOPES,

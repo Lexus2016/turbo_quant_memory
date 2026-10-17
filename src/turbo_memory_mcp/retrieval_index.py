@@ -631,7 +631,7 @@ class RetrievalIndex:
             indexed = self._with_vectors(chunk)
             if table is None:
                 table = self._connect_scope(scope, project_id=project_id).create_table(
-                    RETRIEVAL_TABLE_NAME, indexed, mode="overwrite"
+                    RETRIEVAL_TABLE_NAME, indexed, schema=_schema_for(indexed), mode="overwrite"
                 )
             else:
                 table.add(indexed)
@@ -647,10 +647,14 @@ class RetrievalIndex:
         indexed = self._with_vectors(rows)
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:
+            # Declared schema, never inferred: a first chunk of markdown rows
+            # alone would type note_kind/note_id as null and tags as
+            # list<null>, and every later note upsert would then fail.
             self._connect_scope(scope, project_id=project_id).create_table(
-                RETRIEVAL_TABLE_NAME, indexed, mode="overwrite"
+                RETRIEVAL_TABLE_NAME, indexed, schema=_schema_for(indexed), mode="overwrite"
             )
             return
+        _repair_null_columns(table)
         table.merge_insert(ITEM_ID_FIELD).when_matched_update_all().when_not_matched_insert_all().execute(indexed)
 
     def _with_vectors(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -715,6 +719,46 @@ class RetrievalIndex:
             self.store.write_global_retrieval_manifest()
             return
         raise ValueError(f"Unsupported retrieval scope: {scope}")
+
+
+def _schema_for(indexed_rows: Sequence[Mapping[str, Any]]) -> pa.Schema:
+    """The declared table schema, sized to the rows' own vectors."""
+    return _table_schema(len(indexed_rows[0]["vector"]))
+
+
+def _is_null_type(data_type: Any) -> bool:
+    import pyarrow as pa
+
+    return bool(pa.types.is_null(data_type) or (pa.types.is_list(data_type) and pa.types.is_null(data_type.value_type)))
+
+
+def _repair_null_columns(table: Any) -> None:
+    """Give columns that were inferred as null their declared type.
+
+    Tables created from markdown rows alone (before 0.32.0) typed note_kind,
+    note_id and tags as null, and every note upsert then failed with "Spill
+    has sent an error", falling back to a full re-sync. Such columns hold no
+    data, so dropping and re-adding them with the declared type loses nothing
+    and needs no re-embedding.
+    """
+    import pyarrow as pa
+
+    schema = table.schema
+    vector_type = schema.field("vector").type if "vector" in schema.names else None
+    dimensions = getattr(vector_type, "list_size", None)
+    expected = _table_schema(dimensions if isinstance(dimensions, int) and dimensions > 0 else None)
+    broken = [
+        field.name
+        for field in schema
+        if field.name in expected.names
+        and _is_null_type(field.type)
+        and not _is_null_type(expected.field(field.name).type)
+    ]
+    if not broken:
+        return
+    print(f"[tqmemory] retyping null mirror columns {broken}", file=sys.stderr)
+    table.drop_columns(broken)
+    table.add_columns(pa.schema([expected.field(name) for name in broken]))
 
 
 def _chunked(items: Iterable[Any], size: int) -> Iterator[list[Any]]:

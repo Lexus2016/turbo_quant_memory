@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count instead of row lists that grew with the corpus.
 
 ### Fixed
+- **Note writes no longer force a full re-sync of the project index.** A
+  mirror table first created from markdown rows alone got its schema
+  inferred from that data: `note_kind`/`note_id` typed as null and `tags` as
+  `list<null>`. From then on every note upsert failed with LanceDB's `Spill
+  has sent an error` and fell back to re-embedding the whole project. Tables
+  are now created with the declared schema. Existing tables have their
+  null-typed columns, which hold no data, dropped and re-added with the
+  right type before the next write, with no re-embedding.
 - **Proxied calls honour the dispatch-lock bound.** The daemon listener took
   the dispatch lock with no time limit before handing a call to the
   dispatcher, which then re-entered the same lock for free. So the 30 s
