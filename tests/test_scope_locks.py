@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from turbo_memory_mcp import server
-from turbo_memory_mcp.locks import GLOBAL_LOCK_KEY, DispatchBusy, ScopeLocks
+from turbo_memory_mcp.locks import GLOBAL_LOCK_KEY, DispatchBusy, ScopeLocks, project_lock_key
 
 
 def _environ(tmp_path: Path, project: str) -> dict[str, str]:
@@ -152,11 +152,12 @@ def test_hold_rejects_global_before_project_and_two_projects() -> None:
 
 
 def test_lock_keys_put_project_first_and_global_only_when_needed() -> None:
-    assert server.lock_keys_for("index_paths", {}, "p1") == ["p1"]
-    assert server.lock_keys_for("semantic_search", {"scope": "project"}, "p1") == ["p1"]
-    assert server.lock_keys_for("semantic_search", {"scope": " Hybrid "}, "p1") == ["p1", GLOBAL_LOCK_KEY]
-    assert server.lock_keys_for("remember_note", {"scope": "global"}, "p1") == ["p1", GLOBAL_LOCK_KEY]
-    assert server.lock_keys_for("promote_note", {}, "p1") == ["p1", GLOBAL_LOCK_KEY]
+    p1 = project_lock_key("p1")
+    assert server.lock_keys_for("index_paths", {}, "p1") == [p1]
+    assert server.lock_keys_for("semantic_search", {"scope": "project"}, "p1") == [p1]
+    assert server.lock_keys_for("semantic_search", {"scope": " Hybrid "}, "p1") == [p1, GLOBAL_LOCK_KEY]
+    assert server.lock_keys_for("remember_note", {"scope": "global"}, "p1") == [p1, GLOBAL_LOCK_KEY]
+    assert server.lock_keys_for("promote_note", {}, "p1") == [p1, GLOBAL_LOCK_KEY]
 
 
 def test_unresolvable_project_still_reaches_the_handler(
@@ -174,3 +175,21 @@ def test_unresolvable_project_still_reaches_the_handler(
 
     with pytest.raises(FileNotFoundError, match="handler's own error"):
         dispatch("health", {"_cwd": str(tmp_path / "missing"), "_environ": {}})
+
+
+def test_project_named_global_does_not_collide_with_the_global_key() -> None:
+    """A project id may be any safe string, including the global key's name."""
+    keys = server.lock_keys_for("semantic_search", {"scope": "hybrid"}, "global")
+    assert len(set(keys)) == 2
+    assert keys[-1] == GLOBAL_LOCK_KEY
+    with ScopeLocks().hold(keys, timeout=0.1, tool="semantic_search"):
+        pass
+
+
+def test_missing_scope_uses_the_tool_default() -> None:
+    """get_related_entities defaults to hybrid, so a call without a scope
+    reads global relations and must hold the global lock."""
+    assert server.lock_keys_for("get_related_entities", {}, "p1")[-1] == GLOBAL_LOCK_KEY
+    assert server.lock_keys_for("semantic_search", {}, "p1") == server.lock_keys_for(
+        "semantic_search", {"scope": "project"}, "p1"
+    )

@@ -6,7 +6,9 @@ agent's tqmemory call time out. A call now takes the lock of its own
 project, and the global-scope lock only when it touches global memory.
 
 Deadlock freedom comes from a fixed order, enforced by ``hold``: at most one
-project key, always before ``GLOBAL_LOCK_KEY``.
+project key, always before ``GLOBAL_LOCK_KEY``. The locks guard writers; a
+read of another scope needs none, since every store write is an atomic file
+replace and LanceDB reads see a consistent version.
 """
 
 from __future__ import annotations
@@ -18,6 +20,13 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 
 GLOBAL_LOCK_KEY = "global"
+# Project keys live in their own namespace: a project id may be any safe
+# string, including "global".
+_PROJECT_KEY_PREFIX = "project:"
+
+
+def project_lock_key(project_id: str) -> str:
+    return f"{_PROJECT_KEY_PREFIX}{project_id}"
 
 
 class DispatchBusy(RuntimeError):
@@ -112,4 +121,5 @@ __all__ = [
     "GLOBAL_LOCK_KEY",
     "DispatchBusy",
     "ScopeLocks",
+    "project_lock_key",
 ]

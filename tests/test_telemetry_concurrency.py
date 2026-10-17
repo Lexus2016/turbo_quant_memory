@@ -49,3 +49,23 @@ def test_concurrent_usage_records_are_not_lost(tmp_path: Path) -> None:
         thread.join(30)
 
     assert load_usage_stats(stores[0])["totals"]["search_calls"] == 8 * calls_per_thread
+
+
+def test_usage_snapshot_waits_for_a_running_record(tmp_path: Path) -> None:
+    """load_usage_stats may rewrite the file (format migration), so the
+    snapshot path must not run inside another call's read-modify-write."""
+    from turbo_memory_mcp import telemetry
+
+    store = _store(tmp_path, "alphaproject0001")
+    done = threading.Event()
+
+    def _snapshot() -> None:
+        telemetry.build_usage_snapshot(store, project_id="alphaproject0001", project_name="alpha")
+        done.set()
+
+    with telemetry._USAGE_STATS_LOCK:
+        thread = threading.Thread(target=_snapshot, daemon=True)
+        thread.start()
+        assert not done.wait(0.3)
+    assert done.wait(5)
+    thread.join(5)

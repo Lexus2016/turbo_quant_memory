@@ -15,25 +15,28 @@ SEARCH_MILESTONES = (10, 25, 50, 100, 250, 500, 1_000)
 
 # Usage stats are one file shared by every project, and calls for different
 # projects now run in parallel: the read-modify-write must not interleave or
-# it loses counts. Writers in other processes are not covered.
-_USAGE_STATS_LOCK = threading.Lock()
+# it loses counts. Reentrant because load_usage_stats (which may rewrite the
+# file on a format migration) runs inside the record functions' hold. Writers
+# in other processes are not covered.
+_USAGE_STATS_LOCK = threading.RLock()
 
 
 def load_usage_stats(store: MemoryStore) -> dict[str, Any]:
-    payload = store.read_usage_stats()
-    if not payload or not isinstance(payload, dict):
-        return _new_usage_payload()
+    with _USAGE_STATS_LOCK:
+        payload = store.read_usage_stats()
+        if not payload or not isinstance(payload, dict):
+            return _new_usage_payload()
 
-    try:
-        format_version = int(payload.get("format_version", 0))
-    except (TypeError, ValueError):
-        format_version = 0
-    if format_version != USAGE_STATS_FORMAT_VERSION:
-        payload = _migrate_usage_stats(payload, from_version=format_version)
-        store.write_usage_stats(payload)
-    payload.setdefault("totals", _empty_counter())
-    payload.setdefault("projects", {})
-    return payload
+        try:
+            format_version = int(payload.get("format_version", 0))
+        except (TypeError, ValueError):
+            format_version = 0
+        if format_version != USAGE_STATS_FORMAT_VERSION:
+            payload = _migrate_usage_stats(payload, from_version=format_version)
+            store.write_usage_stats(payload)
+        payload.setdefault("totals", _empty_counter())
+        payload.setdefault("projects", {})
+        return payload
 
 
 def build_usage_snapshot(

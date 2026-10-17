@@ -60,7 +60,7 @@ from .identity import (
 )
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
-from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks
+from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks, project_lock_key
 from .migrations import format_pending_warning
 from .retrieval import MAX_SEMANTIC_LIMIT, semantic_search
 from .retrieval_index import RetrievalIndex
@@ -1030,28 +1030,33 @@ def _resolve_dispatch_lock_timeout(environ: Mapping[str, str] | None = None) -> 
 # Tools that write global memory whatever their arguments say.
 GLOBAL_SCOPE_TOOLS = frozenset({"promote_note", "self_test"})
 _GLOBAL_TOUCHING_SCOPES = frozenset({GLOBAL_SCOPE, "hybrid"})
+# Scope a tool falls back to when the call names none, where that is not
+# "project" (the default everywhere else).
+_TOOL_DEFAULT_SCOPES = {"get_related_entities": "hybrid"}
 # Lock key for a call whose project cannot be resolved; its handler then
-# reports the real error.
-_UNRESOLVED_PROJECT_KEY = "unresolved"
+# reports the real error. Outside the project namespace, so no project's key.
+_UNRESOLVED_LOCK_KEY = "unresolved"
 
 
-def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str) -> list[str]:
+def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str | None) -> list[str]:
     """Lock keys for one call: its project, then the global scope if touched."""
 
-    scope = str(kwargs.get("scope") or "").strip().lower()
+    project_key = project_lock_key(project_id) if project_id is not None else _UNRESOLVED_LOCK_KEY
+    raw_scope = kwargs.get("scope") or _TOOL_DEFAULT_SCOPES.get(tool, "")
+    scope = str(raw_scope).strip().lower()
     if tool in GLOBAL_SCOPE_TOOLS or scope in _GLOBAL_TOUCHING_SCOPES:
-        return [project_id, GLOBAL_LOCK_KEY]
-    return [project_id]
+        return [project_key, GLOBAL_LOCK_KEY]
+    return [project_key]
 
 
-def _lock_project_id(cwd: Path | str | None, environ: Mapping[str, str] | None) -> str:
+def _lock_project_id(cwd: Path | str | None, environ: Mapping[str, str] | None) -> str | None:
     """Resolve a call's project like build_runtime_context, minus the store."""
 
     try:
         candidate = resolve_project_identity(cwd=cwd, environ=environ)
         return reconcile_project_identity(candidate, resolve_storage_root(environ)).project_id
     except Exception:
-        return _UNRESOLVED_PROJECT_KEY
+        return None
 
 
 def make_local_dispatcher(
