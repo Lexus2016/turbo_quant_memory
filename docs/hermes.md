@@ -71,6 +71,20 @@ export TQMEMORY_DISPATCH_LOCK_TIMEOUT=0    # <= 0: wait without a bound (pre-0.2
 Keep the bound below the proxy's own `RPC_TIMEOUT_SECONDS` (120s) so the
 explicit "busy" error wins over an opaque RPC timeout.
 
+Since v0.32.0 the lock is per project. A busy error means another call in
+the **same** project is running, or, for `scope="global"` or `"hybrid"`, a
+call that holds the global-scope lock. Other projects are never blocked.
+
+A search no longer reindexes a large change before answering. It refreshes
+at most 25 changed files and 500 index rows, then finishes the rest in the
+background. Meanwhile its results carry `index_refresh`. To tune the inline
+budget:
+
+```bash
+export TQMEMORY_INLINE_REFRESH_FILES=25   # changed files a search reindexes before answering
+export TQMEMORY_INLINE_REFRESH_ITEMS=500  # index rows a search embeds before answering
+```
+
 ### Auto-Migration on Startup
 
 Set `TQMEMORY_MIGRATE_ON_STARTUP=1` in the environment to have the server automatically apply pending schema migrations (with a rolling snapshot) when it starts as primary or standalone:
