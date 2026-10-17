@@ -33,6 +33,11 @@ def _build_store(tmp_path: Path) -> MemoryStore:
     return MemoryStore(_project_identity(tmp_path / "repo"), storage_root=tmp_path / "central-store")
 
 
+def _mirror_rows(index: RetrievalIndex, scope: str) -> list[dict[str, object]]:
+    table = index._open_scope_table(scope)
+    return [] if table is None else table.to_arrow().to_pylist()
+
+
 def test_retrieval_layout_and_model_match_phase_4_contract(tmp_path: Path) -> None:
     store = _build_store(tmp_path)
     index = RetrievalIndex(store, embedder=StaticEmbedder())
@@ -73,7 +78,8 @@ def test_sync_project_mirrors_auth_architecture_markdown_and_note_rows(tmp_path:
         }
     )
 
-    rows = index.sync_project()
+    assert index.sync_project() == 2
+    rows = _mirror_rows(index, "project")
 
     assert index.project_db_path().exists()
     assert index.count_rows("project") == 2
@@ -99,17 +105,17 @@ def test_sync_global_prunes_stale_global_pattern_note_rows(tmp_path: Path) -> No
     )
     store.promote_note(stored["note_id"])
 
-    first_rows = index.sync_global()
+    assert index.sync_global() == 1
+    first_rows = _mirror_rows(index, "global")
     store.global_note_path("global-pattern-note").unlink()
-    second_rows = index.sync_global()
 
+    assert index.sync_global() == 0
     assert index.global_db_path().exists()
     assert len(first_rows) == 1
     assert first_rows[0]["note_id"] == "global-pattern-note"
     assert first_rows[0]["source_kind"] == "memory_note"
     assert first_rows[0]["note_kind"] == "pattern"
     assert index.count_rows("global") == 0
-    assert second_rows == []
 
 
 def test_incremental_project_note_sync_and_delete_keep_other_rows_intact(tmp_path: Path) -> None:
@@ -150,7 +156,8 @@ def test_incremental_project_note_sync_and_delete_keep_other_rows_intact(tmp_pat
         note_id="auth-note",
     )
 
-    updated_rows = index.sync_project_notes(["auth-note"])
+    assert index.sync_project_notes(["auth-note"]) == 1
+    updated_rows = [row for row in _mirror_rows(index, "project") if row["item_id"] == "auth-note"]
 
     assert index.count_rows("project") == 2
     assert len(updated_rows) == 1
@@ -224,13 +231,12 @@ def test_sync_project_merges_in_bounded_chunks(tmp_path: Path) -> None:
         return real_write(self, scope, rows, **kwargs)  # type: ignore[arg-type]
 
     with patch.object(RetrievalIndex, "_write_chunk", autospec=True, side_effect=spy):
-        rows = index.sync_project()
+        mirrored = index.sync_project()
 
     assert chunk_sizes and max(chunk_sizes) <= retrieval_index.SYNC_CHUNK_ROWS
     assert sum(chunk_sizes) == 600
     assert index.count_rows("project") == 600
-    assert len(rows) == 600
-    assert all("vector" not in row for row in rows)
+    assert mirrored == 600
 
 
 def test_sync_project_removes_rows_missing_from_the_store(tmp_path: Path) -> None:
@@ -270,3 +276,13 @@ def test_delete_items_batches_large_id_lists(tmp_path: Path) -> None:
     assert deleted == 1201
     assert len(calls) == 3
     assert index.count_rows("project") == 4
+
+
+def test_sync_calls_return_counts_not_rows(tmp_path: Path) -> None:
+    """Returned row lists grew with the corpus; no caller needs the rows."""
+    store = _build_store(tmp_path)
+    _write_blocks(store, 300)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+
+    assert index.sync_project() == 300
+    assert index.sync_project_blocks(["block-0000", "block-0001", "missing"]) == 2

@@ -537,3 +537,54 @@ def test_full_mode_rejects_a_file_budget(tmp_path: Path) -> None:
     project_root, store, _ = _ten_edited_docs(tmp_path)
     with pytest.raises(ValueError):
         index_paths_with_sync_plan(store, mode="full", cwd=project_root, max_changed_files=2)
+
+
+def test_index_run_reads_no_block_files(tmp_path: Path) -> None:
+    """A file's existing block ids come from its manifest, so an index run
+    never reads the whole block directory (about 4 s per run at 40k)."""
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    for index in range(5):
+        (docs / f"n-{index}.md").write_text(f"# N{index}\n\nOriginal.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    (docs / "n-0.md").write_text("# N0\n\nEdited.", encoding="utf-8")
+    (docs / "n-1.md").unlink()
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    scans = _block_scans_during(
+        store, lambda: index_paths_with_sync_plan(store, mode="incremental", cwd=project_root)
+    )
+
+    assert scans == 0
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {f"n-{i}.md" for i in (0, 2, 3, 4)}
+
+
+def test_index_run_removes_orphan_block_files(tmp_path: Path) -> None:
+    """A block file no manifest references (left by a crash between writing
+    blocks and writing the manifest) is removed by the next run."""
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("# A\n\nAlpha.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+    root_id = store.list_markdown_roots()[0]["root_id"]
+    store.write_markdown_block(
+        {
+            "block_id": "orphan-block",
+            "root_id": root_id,
+            "source_path": "a.md",
+            "heading_path": ["A"],
+            "chunk_index": 9,
+            "content_raw": "left behind",
+            "block_checksum": "x",
+            "source_checksum": "y",
+        }
+    )
+
+    payload, plan = index_paths_with_sync_plan(store, mode="incremental", cwd=project_root)
+
+    assert "orphan-block" not in store.list_markdown_block_ids()
+    assert "orphan-block" in plan["delete_block_ids"]
+    assert payload["block_count"] == len(store.list_markdown_block_ids())

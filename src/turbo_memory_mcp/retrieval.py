@@ -169,11 +169,11 @@ def semantic_search(
     )
 
 
-def sync_project_retrieval(store: MemoryStore) -> list[dict[str, Any]]:
+def sync_project_retrieval(store: MemoryStore) -> int:
     return RetrievalIndex(store).sync_project()
 
 
-def sync_global_retrieval(store: MemoryStore) -> list[dict[str, Any]]:
+def sync_global_retrieval(store: MemoryStore) -> int:
     return RetrievalIndex(store).sync_global()
 
 

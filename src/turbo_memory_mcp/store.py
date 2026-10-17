@@ -611,6 +611,12 @@ class MemoryStore:
             "mtime_ns": int(manifest_record["mtime_ns"]),
             "source_checksum": str(manifest_record["source_checksum"]),
             "block_ids": [str(block_id) for block_id in manifest_record.get("block_ids", [])],
+            # Blocks of this file not yet in the retrieval mirror. Written in
+            # the same atomic write as the new checksum, so a run that dies
+            # before the mirror update still leaves the work on record.
+            "mirror_pending_block_ids": [
+                str(block_id) for block_id in manifest_record.get("mirror_pending_block_ids", [])
+            ],
             "indexed_at": str(manifest_record.get("indexed_at", utc_now())),
         }
         self.write_markdown_manifest()
@@ -775,20 +781,17 @@ class MemoryStore:
         manifests = self.list_markdown_file_manifests(project_id=project_id, root_id=root_id)
         deleted_file_keys: list[str] = []
         deleted_block_ids: list[str] = []
-        # One block scan for the root, not one per file (O(files x blocks)).
-        block_ids_by_source: dict[str, list[str]] = {}
-        for block in self.iter_markdown_blocks(project_id):
-            if block["root_id"] == root_id:
-                block_ids_by_source.setdefault(str(block["source_path"]), []).append(str(block["block_id"]))
 
         for manifest in manifests:
             deleted_file_keys.append(str(manifest["file_key"]))
+            # A file's block ids are in its manifest; reading every block to
+            # find them cost O(files x blocks).
             deleted_block_ids.extend(
                 self.delete_blocks_for_file(
                     root_id,
                     str(manifest["source_path"]),
                     project_id=project_id,
-                    block_ids=block_ids_by_source.get(str(manifest["source_path"]), []),
+                    block_ids=manifest.get("block_ids", []),
                 )
             )
             self.delete_markdown_file_manifest(str(manifest["file_key"]), project_id=project_id)

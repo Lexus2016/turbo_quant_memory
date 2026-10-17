@@ -1003,3 +1003,50 @@ def test_proxied_call_gets_busy_error_naming_the_holder(
         blocker.join(10)
         client.close()
         listener.stop()
+
+
+@pytestmark_win_daemon
+def test_proxied_call_through_scope_locks_gets_busy_naming_the_holder(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The production wiring: a listener over a per-project scope-lock dispatcher."""
+
+    from turbo_memory_mcp import server
+    from turbo_memory_mcp.locks import ScopeLocks
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        entered.set()
+        release.wait(10)
+        return {"ok": True}
+
+    def _fast(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "index_paths", _slow)
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _fast)
+    project = {
+        "TQMEMORY_HOME": storage_env["TQMEMORY_HOME"],
+        "TQMEMORY_PROJECT_ROOT": str(tmp_path),
+        "TQMEMORY_PROJECT_ID": "project-alpha",
+    }
+    dispatch = server.make_local_dispatcher(scope_locks=ScopeLocks(), dispatch_lock_timeout=0.2)
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, dispatch)
+    listener.start()
+    blocker = threading.Thread(target=lambda: dispatch("index_paths", {"_environ": project}), daemon=True)
+    blocker.start()
+    client = DaemonClient(endpoint)
+    try:
+        assert entered.wait(5)
+        start = time.monotonic()
+        with pytest.raises(RuntimeError, match="'index_paths' holds the dispatch lock"):
+            client.call("health", {"_environ": project})
+        assert time.monotonic() - start < 5.0
+    finally:
+        release.set()
+        blocker.join(10)
+        client.close()
+        listener.stop()

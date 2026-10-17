@@ -72,8 +72,8 @@ Keep the bound below the proxy's own `RPC_TIMEOUT_SECONDS` (120s) so the
 explicit "busy" error wins over an opaque RPC timeout.
 
 Since v0.32.0 the lock is per project. A busy error means another call in
-the **same** project is running, or, for `scope="global"` or `"hybrid"`, a
-call that holds the global-scope lock. Other projects are never blocked.
+the **same** project is running, or, for a write to global memory, another
+global write. Other projects are never blocked.
 
 A search no longer reindexes a large change before answering. It refreshes
 at most 25 changed files and 500 index rows, then finishes the rest in the

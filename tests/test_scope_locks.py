@@ -13,6 +13,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -96,18 +97,20 @@ def test_global_scope_call_waits_only_for_global_holder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     slow = _SlowTool()
-    monkeypatch.setitem(server.TOOL_HANDLERS, "semantic_search", slow)
+    monkeypatch.setitem(server.TOOL_HANDLERS, "remember_note", slow)
+    monkeypatch.setitem(server.TOOL_HANDLERS, "deprecate_note", _fast)
     monkeypatch.setitem(server.TOOL_HANDLERS, "recent_context", _fast)
     dispatch = server.make_local_dispatcher(scope_locks=ScopeLocks(), dispatch_lock_timeout=0.2)
 
     holder = _hold_in_background(
-        dispatch, "semantic_search", {"scope": "global", "_environ": _environ(tmp_path, "alpha")}, slow
+        dispatch, "remember_note", {"scope": "global", "_environ": _environ(tmp_path, "alpha")}, slow
     )
     try:
         beta = _environ(tmp_path, "beta")
-        assert dispatch("recent_context", {"scope": "project", "_environ": beta}) == {"ok": True}
-        with pytest.raises(DispatchBusy, match="'semantic_search' holds the dispatch lock"):
-            dispatch("recent_context", {"scope": "hybrid", "_environ": beta})
+        # Reading global memory needs no lock; writing it waits for the holder.
+        assert dispatch("recent_context", {"scope": "hybrid", "_environ": beta}) == {"ok": True}
+        with pytest.raises(DispatchBusy, match="'remember_note' holds the dispatch lock"):
+            dispatch("deprecate_note", {"scope": "global", "_environ": beta})
     finally:
         slow.release.set()
         holder.join(10)
@@ -155,7 +158,7 @@ def test_lock_keys_put_project_first_and_global_only_when_needed() -> None:
     p1 = project_lock_key("p1")
     assert server.lock_keys_for("index_paths", {}, "p1") == [p1]
     assert server.lock_keys_for("semantic_search", {"scope": "project"}, "p1") == [p1]
-    assert server.lock_keys_for("semantic_search", {"scope": " Hybrid "}, "p1") == [p1, GLOBAL_LOCK_KEY]
+    assert server.lock_keys_for("remember_note", {"scope": " Global "}, "p1") == [p1, GLOBAL_LOCK_KEY]
     assert server.lock_keys_for("remember_note", {"scope": "global"}, "p1") == [p1, GLOBAL_LOCK_KEY]
     assert server.lock_keys_for("promote_note", {}, "p1") == [p1, GLOBAL_LOCK_KEY]
 
@@ -179,17 +182,34 @@ def test_unresolvable_project_still_reaches_the_handler(
 
 def test_project_named_global_does_not_collide_with_the_global_key() -> None:
     """A project id may be any safe string, including the global key's name."""
-    keys = server.lock_keys_for("semantic_search", {"scope": "hybrid"}, "global")
+    keys = server.lock_keys_for("remember_note", {"scope": "global"}, "global")
     assert len(set(keys)) == 2
     assert keys[-1] == GLOBAL_LOCK_KEY
-    with ScopeLocks().hold(keys, timeout=0.1, tool="semantic_search"):
+    with ScopeLocks().hold(keys, timeout=0.1, tool="remember_note"):
         pass
 
 
-def test_missing_scope_uses_the_tool_default() -> None:
-    """get_related_entities defaults to hybrid, so a call without a scope
-    reads global relations and must hold the global lock."""
-    assert server.lock_keys_for("get_related_entities", {}, "p1")[-1] == GLOBAL_LOCK_KEY
-    assert server.lock_keys_for("semantic_search", {}, "p1") == server.lock_keys_for(
-        "semantic_search", {"scope": "project"}, "p1"
-    )
+def test_reads_of_global_memory_take_only_the_project_lock() -> None:
+    """A hybrid search must not hold the global lock across its project's
+    refresh: other projects' global writes would wait on it."""
+    p1 = project_lock_key("p1")
+    assert server.lock_keys_for("semantic_search", {"scope": "hybrid"}, "p1") == [p1]
+    assert server.lock_keys_for("recent_context", {"scope": "global"}, "p1") == [p1]
+    assert server.lock_keys_for("get_related_entities", {}, "p1") == [p1]
+    assert server.lock_keys_for("hydrate", {"scope": "global"}, "p1") == [p1]
+    assert server.lock_keys_for("link_entities", {"scope": "global"}, "p1") == [p1, GLOBAL_LOCK_KEY]
+
+
+def test_hybrid_search_takes_the_global_lock_only_for_the_global_refresh(tmp_path: Path) -> None:
+    env = _environ(tmp_path, "alpha")
+    held: list[list[str]] = []
+    real_hold = server.DEFAULT_SCOPE_LOCKS.hold
+
+    def spy(keys: Any, *, timeout: float, tool: str) -> Any:
+        held.append(list(keys))
+        return real_hold(keys, timeout=timeout, tool=tool)
+
+    with patch.object(server.DEFAULT_SCOPE_LOCKS, "hold", side_effect=spy):
+        server.semantic_search_impl("anything", scope="hybrid", cwd=env["TQMEMORY_PROJECT_ROOT"], environ=env)
+
+    assert held == [[GLOBAL_LOCK_KEY]]

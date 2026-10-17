@@ -113,11 +113,16 @@ class IndexRefresher:
         stale), and a later ``schedule`` starts a fresh worker.
         """
         with self._cond:
+            thread = self._thread
+            if thread is None or not thread.is_alive():
+                # No worker to see the flag and reset it: stay usable.
+                self._jobs.clear()
+                self._thread = None
+                self._cond.notify_all()
+                return
             self._stopping = True
             self._cond.notify_all()
-            thread = self._thread
-        if thread is not None:
-            thread.join(timeout)
+        thread.join(timeout)
 
     def _work(self) -> None:
         while True:

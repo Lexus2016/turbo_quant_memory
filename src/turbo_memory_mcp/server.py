@@ -44,6 +44,7 @@ from .daemon import (
     ENV_MIGRATE_ON_STARTUP,
     BootstrapResult,
     DaemonClient,
+    DaemonEndpoint,
     DaemonListener,
     PrimaryUnreachable,
     _startup_log,
@@ -1030,10 +1031,13 @@ def _resolve_dispatch_lock_timeout(environ: Mapping[str, str] | None = None) -> 
 
 # Tools that write global memory whatever their arguments say.
 GLOBAL_SCOPE_TOOLS = frozenset({"promote_note", "self_test"})
-_GLOBAL_TOUCHING_SCOPES = frozenset({GLOBAL_SCOPE, "hybrid"})
-# Scope a tool falls back to when the call names none, where that is not
-# "project" (the default everywhere else).
-_TOOL_DEFAULT_SCOPES = {"get_related_entities": "hybrid"}
+# Tools that write global memory when called with scope="global". Reading
+# global memory (search, hydrate, recent_context, related entities) takes no
+# global lock: every store write is an atomic file replace and LanceDB reads
+# are versioned. A global or hybrid search takes the global lock itself, only
+# around its refresh of the global mirror, so it never holds it across its
+# project's refresh.
+_GLOBAL_WRITE_TOOLS = frozenset({"remember_note", "deprecate_note", "link_entities", "unlink_entities"})
 # Lock key for a call whose project cannot be resolved; its handler then
 # reports the real error. Outside the project namespace, so no project's key.
 _UNRESOLVED_LOCK_KEY = "unresolved"
@@ -1043,9 +1047,8 @@ def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str | None) 
     """Lock keys for one call: its project, then the global scope if touched."""
 
     project_key = project_lock_key(project_id) if project_id is not None else _UNRESOLVED_LOCK_KEY
-    raw_scope = kwargs.get("scope") or _TOOL_DEFAULT_SCOPES.get(tool, "")
-    scope = str(raw_scope).strip().lower()
-    if tool in GLOBAL_SCOPE_TOOLS or scope in _GLOBAL_TOUCHING_SCOPES:
+    scope = str(kwargs.get("scope") or "").strip().lower()
+    if tool in GLOBAL_SCOPE_TOOLS or (tool in _GLOBAL_WRITE_TOOLS and scope == GLOBAL_SCOPE):
         return [project_key, GLOBAL_LOCK_KEY]
     return [project_key]
 
@@ -1300,6 +1303,9 @@ class ProxyRuntime:
                 listener.stop()
             except Exception:
                 pass
+        # A promoted proxy may be running background index batches: finish
+        # them before another process can take the lock over.
+        DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
         if endpoint is not None:
             try:
                 release_daemon_lock(endpoint)
@@ -1479,13 +1485,31 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
+        _stop_primary(listener, endpoint, workspace)
+
+
+# How long shutdown waits for a running background index batch. The daemon
+# lock is released only after it, so it bounds how long a successor waits.
+REFRESHER_SHUTDOWN_TIMEOUT_SECONDS = 30.0
+
+
+def _stop_primary(listener: DaemonListener, endpoint: DaemonEndpoint, workspace: WorkspaceRuntime | None) -> None:
+    """Stop serving, finish the background batch, then hand the lock over.
+
+    Another process may become primary as soon as the lock is released; it
+    must not write the same project while this process's batch still runs.
+    """
+    try:
+        listener.stop()
+    finally:
         try:
-            listener.stop()
+            DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
         finally:
             try:
                 release_daemon_lock(endpoint)
             finally:
-                _shutdown_background(workspace)
+                if workspace is not None:
+                    workspace.shutdown()
 
 
 def _run_proxy(bootstrap: BootstrapResult) -> None:
@@ -1519,7 +1543,7 @@ def _run_standalone() -> None:
 
 def _shutdown_background(workspace: WorkspaceRuntime | None) -> None:
     try:
-        DEFAULT_REFRESHER.shutdown()
+        DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
     finally:
         if workspace is not None:
             workspace.shutdown()
@@ -1973,7 +1997,11 @@ def semantic_search_impl(
     if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
         index_refresh = _refresh_project_for_read(store, cwd=cwd, environ=environ)
     if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
-        _refresh_global_retrieval_if_needed(store)
+        # The only global write a search makes; see _GLOBAL_WRITE_TOOLS.
+        with DEFAULT_SCOPE_LOCKS.hold(
+            [GLOBAL_LOCK_KEY], timeout=_resolve_dispatch_lock_timeout(), tool="semantic_search"
+        ):
+            _refresh_global_retrieval_if_needed(store)
     payload = semantic_search(
         store, query, scope=scope, limit=limit, tier_filter=tier_filter,
         source_filter=source_filter, sync_empty_project=False,
@@ -2534,7 +2562,11 @@ def refresh_project_batch(
     index = RetrievalIndex(store)
     remaining_items = 0
     try:
-        remaining_items = _repair_project_retrieval_if_needed(store, index, max_items=max_items)
+        embedded, still_pending = _mirror_pending_blocks(store, index, max_items=max_items)
+        repair_budget = None if max_items is None else max(max_items - embedded, 0)
+        remaining_items = len(still_pending) + _repair_project_retrieval_if_needed(
+            store, index, max_items=repair_budget, skip_block_ids=still_pending
+        )
     except Exception as exc:
         _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
     return RefreshProgress(remaining_files=remaining_files, remaining_items=remaining_items)
@@ -2623,21 +2655,20 @@ def _apply_project_index_sync_plan(
     empty mirror and skips the repair: the caller runs a budgeted repair.
     """
     index = RetrievalIndex(store)
-    upsert_block_ids = [str(item_id) for item_id in sync_plan.get("upsert_block_ids", [])]
     delete_block_ids = [str(item_id) for item_id in sync_plan.get("delete_block_ids", [])]
 
     try:
         if not bounded and index.count_rows(PROJECT_SCOPE) == 0:
             if store.has_markdown_blocks() or store.list_notes(PROJECT_SCOPE):
-                index.sync_project()
+                _full_project_sync(store, index)
             return
 
         if delete_block_ids:
             index.delete_items(PROJECT_SCOPE, delete_block_ids)
-        if upsert_block_ids:
-            index.sync_project_blocks(upsert_block_ids)
-
+        # The changed blocks are in the manifests' pending lists; a bounded
+        # caller mirrors them within its budget.
         if not bounded:
+            _mirror_pending_blocks(store, index, max_items=None)
             _repair_project_retrieval_if_needed(store, index)
     except Exception as exc:
         _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
@@ -2694,7 +2725,7 @@ def _rebuild_scope_index_after_error(index: RetrievalIndex, scope: str, exc: Bas
     if scope == GLOBAL_SCOPE:
         index.sync_global()
     else:
-        index.sync_project()
+        _full_project_sync(index.store, index)
 
 
 def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> None:
@@ -2713,11 +2744,49 @@ def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> No
     if scope == GLOBAL_SCOPE:
         index.sync_global()
     else:
-        index.sync_project()
+        _full_project_sync(store, index)
+
+
+def _full_project_sync(store: MemoryStore, index: RetrievalIndex) -> None:
+    """Mirror the whole project, then clear what ingestion left pending."""
+    index.sync_project()
+    for manifest in store.list_markdown_file_manifests():
+        if manifest.get("mirror_pending_block_ids"):
+            store.write_markdown_file_manifest({**manifest, "mirror_pending_block_ids": []})
+
+
+def _mirror_pending_blocks(
+    store: MemoryStore, index: RetrievalIndex, *, max_items: int | None
+) -> tuple[int, set[str]]:
+    """Mirror the blocks ingestion recorded as pending, at most ``max_items``.
+
+    Each manifest is rewritten with what is still pending once its batch is
+    in the mirror, so a run that dies midway resumes where it stopped and a
+    huge file is split across batches. Returns how many rows were embedded
+    and the block ids still pending.
+    """
+    embedded = 0
+    still_pending: set[str] = set()
+    for manifest in store.list_markdown_file_manifests():
+        pending = [str(block_id) for block_id in manifest.get("mirror_pending_block_ids", [])]
+        if not pending:
+            continue
+        room = len(pending) if max_items is None else max(max_items - embedded, 0)
+        batch, rest = pending[:room], pending[room:]
+        if batch:
+            index.sync_project_blocks(batch)
+            embedded += len(batch)
+            store.write_markdown_file_manifest({**manifest, "mirror_pending_block_ids": rest})
+        still_pending.update(rest)
+    return embedded, still_pending
 
 
 def _repair_project_retrieval_if_needed(
-    store: MemoryStore, index: RetrievalIndex, *, max_items: int | None = None
+    store: MemoryStore,
+    index: RetrievalIndex,
+    *,
+    max_items: int | None = None,
+    skip_block_ids: set[str] | frozenset[str] = frozenset(),
 ) -> int:
     """Reconcile the project index against the store, cheaply.
 
@@ -2733,8 +2802,9 @@ def _repair_project_retrieval_if_needed(
     changes are already caught by the checksum-based staleness path.
 
     ``max_items`` bounds how many rows are embedded (notes first, then
-    blocks); stale rows are always deleted. Returns how many missing or
-    edited rows are left for a later call.
+    blocks); stale rows are always deleted. Blocks in ``skip_block_ids`` are
+    still pending from ingestion and counted there instead. Returns how many
+    missing or edited rows are left for a later call.
     """
     notes = store.list_notes(PROJECT_SCOPE)
     expected_note_ids = {str(note["note_id"]) for note in notes}
@@ -2753,7 +2823,9 @@ def _repair_project_retrieval_if_needed(
 
     stale_ids = existing_ids - expected_ids
     missing_notes = sorted((expected_note_ids - existing_ids) | changed_notes)
-    missing_blocks = sorted(expected_block_ids - existing_ids)
+    missing_blocks = sorted(expected_block_ids - existing_ids - skip_block_ids)
+    if not (stale_ids or missing_notes or missing_blocks):
+        return 0
     print(
         f"[tqmemory] project retrieval drift (have {len(existing_ids)}, expected "
         f"{len(expected_ids)}); reconciling by id "

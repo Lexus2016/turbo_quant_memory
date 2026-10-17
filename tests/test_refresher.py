@@ -209,3 +209,119 @@ def test_status_reports_the_scheduling_progress() -> None:
         release.set()
         assert refresher.wait_idle(5)
         refresher.shutdown()
+
+
+# --- final review fixes (2026-10-17) ---
+
+
+def _mirror_content(project_root: Path, env: dict[str, str], source_path: str) -> list[str]:
+    _, store = server.build_runtime_context(cwd=project_root, environ=env)
+    table = server.RetrievalIndex(store)._open_scope_table("project")
+    if table is None:
+        return []
+    return [
+        str(row["content_search"])
+        for row in table.to_arrow().to_pylist()
+        if row.get("source_path") == source_path
+    ]
+
+
+def test_inline_refresh_embeds_at_most_the_row_budget_of_one_huge_file(tmp_path: Path) -> None:
+    """The row budget must cover the blocks of changed files, not only the
+    repair: one file with hundreds of sections held the lock for minutes."""
+    project_root, env = _env(tmp_path, TQMEMORY_INLINE_REFRESH_ITEMS="40")
+    _write_docs(project_root, 1)
+    server.index_paths_impl(paths=[str(project_root / "docs")], mode="full", cwd=project_root, environ=env)
+    huge = project_root / "docs" / "huge.md"
+    huge.write_text("".join(f"## Section {index}\n\nBody {index}.\n\n" for index in range(200)), encoding="utf-8")
+    embedded: list[int] = []
+    real_write = server.RetrievalIndex._write_chunk
+
+    def spy(self: Any, scope: str, rows: list[dict[str, Any]], **kwargs: Any) -> Any:
+        # Only what the search itself embeds: the background worker it starts
+        # may already be running under this patch.
+        if threading.current_thread() is threading.main_thread():
+            embedded.append(len(rows))
+        return real_write(self, scope, rows, **kwargs)
+
+    with patch.object(server.RetrievalIndex, "_write_chunk", autospec=True, side_effect=spy):
+        payload = server.semantic_search_impl("section", cwd=project_root, environ=env)
+
+    assert sum(embedded) <= 40
+    assert payload["index_refresh"]["pending_items"] >= 160
+    assert server.DEFAULT_REFRESHER.wait_idle(60)
+    assert len(_mirror_content(project_root, env, "huge.md")) >= 200
+
+
+def test_interrupted_index_run_is_mirrored_by_a_later_refresh(tmp_path: Path) -> None:
+    """Manifests are written per file; if the run dies before the mirror is
+    updated, a later refresh must still mirror the new content."""
+    project_root, env = _env(tmp_path)
+    paths = _write_docs(project_root, 2)
+    server.index_paths_impl(paths=[str(project_root / "docs")], mode="full", cwd=project_root, environ=env)
+    paths[0].write_text("# doc-00\n\nEdited body that must reach the mirror.", encoding="utf-8")
+    _, store = server.build_runtime_context(cwd=project_root, environ=env)
+
+    # The process dies after ingestion wrote the manifests, before the mirror.
+    with (
+        patch.object(server, "_apply_project_index_sync_plan", side_effect=RuntimeError("killed")),
+        pytest.raises(RuntimeError),
+    ):
+        server.refresh_project_batch(store, max_files=None, max_items=None)
+
+    server.refresh_project_batch(store, max_files=None, max_items=None)
+
+    mirrored = _mirror_content(project_root, env, "doc-00.md")
+    assert mirrored and all("Edited body that must reach the mirror" in text for text in mirrored)
+
+
+def test_primary_stops_the_refresher_before_releasing_the_daemon_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Another process may become primary the moment the lock is released;
+    this process's background batch must be over by then."""
+    order: list[str] = []
+
+    class _Listener:
+        def stop(self) -> None:
+            order.append("listener.stop")
+
+    monkeypatch.setattr(server.DEFAULT_REFRESHER, "shutdown", lambda timeout=2.0: order.append("refresher.shutdown"))
+    monkeypatch.setattr(server, "release_daemon_lock", lambda endpoint: order.append("release_daemon_lock"))
+
+    server._stop_primary(_Listener(), object(), None)  # type: ignore[arg-type]
+
+    assert order == ["listener.stop", "refresher.shutdown", "release_daemon_lock"]
+
+
+def test_promoted_proxy_stops_the_refresher_before_releasing_the_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+
+    class _Listener:
+        def stop(self) -> None:
+            order.append("listener.stop")
+
+    monkeypatch.setattr(server.DEFAULT_REFRESHER, "shutdown", lambda timeout=2.0: order.append("refresher.shutdown"))
+    monkeypatch.setattr(server, "release_daemon_lock", lambda endpoint: order.append("release_daemon_lock"))
+    runtime = server.ProxyRuntime(object())  # type: ignore[arg-type]
+    runtime._listener = _Listener()  # type: ignore[assignment]
+    runtime._endpoint = object()  # type: ignore[assignment]
+    runtime._client = None
+
+    runtime.shutdown()
+
+    assert order == ["listener.stop", "refresher.shutdown", "release_daemon_lock"]
+
+
+def test_refresher_restarts_after_a_shutdown_without_a_worker() -> None:
+    ran = threading.Event()
+
+    def _done(cwd: Any, environ: Any, files: int, items: int) -> RefreshProgress:
+        ran.set()
+        return RefreshProgress()
+
+    refresher = IndexRefresher(ScopeLocks(), _done)
+    refresher.shutdown()
+    refresher.schedule("alpha", cwd=None, environ=None)
+
+    assert ran.wait(5)
+    assert refresher.wait_idle(5)
+    refresher.shutdown()

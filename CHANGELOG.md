@@ -11,9 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Calls for different projects no longer wait on each other.** The daemon
   had one dispatch lock for the whole machine. A long reindex in one project
   therefore made every other agent's tqmemory call fail. Each call now takes
-  the lock of its own project. Calls with `scope="global"` or `"hybrid"`,
-  plus `promote_note` and `self_test`, also take one global-scope lock,
-  always after the project lock. The busy error still names the call that
+  the lock of its own project. Only writes to global memory also take one
+  global-scope lock, always after the project lock: `promote_note`,
+  `self_test`, and `remember_note`, `deprecate_note`, `link_entities` and
+  `unlink_entities` with `scope="global"`. A global or hybrid search takes
+  it only around its refresh of the global index, so it never holds it
+  across its own project's refresh. Reads need no lock, because every store
+  write is an atomic file replace. The busy error still names the call that
   blocks.
 - The shared embedding model is now loaded once under a lock. It encodes in
   chunks of 64 texts, so a bulk re-embed in one project delays another
@@ -32,15 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   large change, such as a new agent worktree or a first index, then took
   minutes and timed out that call and every other call of the project.
   Now the inline refresh does at most 25 changed files and 500 mirror rows
-  (`TQMEMORY_INLINE_REFRESH_FILES`, `TQMEMORY_INLINE_REFRESH_ITEMS`). A
-  background worker finishes the rest in batches of 50 files and 1,000 rows,
-  each batch under the project's lock. While that runs, results carry
+  (`TQMEMORY_INLINE_REFRESH_FILES`, `TQMEMORY_INLINE_REFRESH_ITEMS`). The
+  row budget includes the blocks of changed files, so even one file with
+  thousands of sections is split across batches. A background worker
+  finishes the rest in batches of 50 files and 1,000 rows, each batch under
+  the project's lock. While that runs, results carry
   `index_refresh: {"state": "refreshing", "pending_files": N,
   "pending_items": M}`.
   - Files past the budget are never mistaken for deleted ones.
   - A job that stops making progress, such as one blocked by unreadable
     blocks, ends instead of looping.
+  - On shutdown the background batch finishes before the daemon lock is
+    handed to another process.
   - `index_paths` payloads gain `remaining_files`.
+- **Index runs no longer read every block file.** A file's existing block
+  ids come from its manifest. Block files no manifest references, left
+  behind by a crash, are deleted by the next run.
+- **An interrupted index run can no longer leave the index stale for good.**
+  Before, a run that died after writing manifests but before updating the
+  mirror left old content searchable indefinitely. Each manifest now records
+  which of its blocks still have to reach the mirror, in the same atomic
+  write as its new checksum, and the next refresh mirrors them.
+- Mirror sync calls (`sync_project`, `sync_global`, `sync_project_notes`,
+  `sync_global_notes`, `sync_project_blocks`, `upsert_rows`) return a row
+  count instead of row lists that grew with the corpus.
 
 ### Fixed
 - **Proxied calls honour the dispatch-lock bound.** The daemon listener took

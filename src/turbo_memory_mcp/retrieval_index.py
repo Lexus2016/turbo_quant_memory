@@ -277,11 +277,11 @@ class RetrievalIndex:
     def global_db_path(self) -> Path:
         return self.store.global_retrieval_dir()
 
-    def sync_project(self, project_id: str | None = None) -> list[dict[str, Any]]:
+    def sync_project(self, project_id: str | None = None) -> int:
         """Mirror every block and project note, streamed in chunks.
 
-        Returns the mirrored rows without vectors or content, so a rebuild's
-        memory stays bounded by one chunk however large the project is.
+        Returns how many rows were mirrored; memory stays bounded by one
+        chunk however large the project is.
         """
         resolved_project_id = project_id or self.store.project.project_id
 
@@ -292,7 +292,7 @@ class RetrievalIndex:
 
         return self._sync_scope(PROJECT_SCOPE, _rows, project_id=resolved_project_id)
 
-    def sync_global(self) -> list[dict[str, Any]]:
+    def sync_global(self) -> int:
         """Mirror every global note (see ``sync_project``)."""
         return self._sync_scope(GLOBAL_SCOPE, lambda: iter(self._build_note_rows(GLOBAL_SCOPE)))
 
@@ -301,7 +301,7 @@ class RetrievalIndex:
         note_ids: Sequence[str],
         *,
         project_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> int:
         resolved_project_id = project_id or self.store.project.project_id
         rows: list[dict[str, Any]] = []
         for note_id in _dedupe_ids(note_ids):
@@ -314,7 +314,7 @@ class RetrievalIndex:
             rows.append(mirror_note_record(self.store, note))
         return self.upsert_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id)
 
-    def sync_global_notes(self, note_ids: Sequence[str]) -> list[dict[str, Any]]:
+    def sync_global_notes(self, note_ids: Sequence[str]) -> int:
         rows: list[dict[str, Any]] = []
         for note_id in _dedupe_ids(note_ids):
             try:
@@ -331,7 +331,7 @@ class RetrievalIndex:
         block_ids: Sequence[str],
         *,
         project_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> int:
         resolved_project_id = project_id or self.store.project.project_id
 
         def _rows() -> Iterator[dict[str, Any]]:
@@ -358,12 +358,12 @@ class RetrievalIndex:
         rows: Iterable[Mapping[str, Any]],
         *,
         project_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Insert or update rows in ``SYNC_CHUNK_ROWS`` chunks; returns them without vectors."""
-        written: list[dict[str, Any]] = []
+    ) -> int:
+        """Insert or update rows in ``SYNC_CHUNK_ROWS`` chunks; returns how many."""
+        written = 0
         for chunk in _chunked((dict(row) for row in rows), SYNC_CHUNK_ROWS):
             self._write_chunk(scope, chunk, project_id=project_id)
-            written.extend(chunk)
+            written += len(chunk)
         if written:
             self._write_scope_manifest(scope, project_id=project_id)
         return written
@@ -589,7 +589,7 @@ class RetrievalIndex:
         row_source: Callable[[], Iterable[dict[str, Any]]],
         *,
         project_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> int:
         """Make the scope table hold exactly the rows of ``row_source``.
 
         Rows are embedded and merged ``SYNC_CHUNK_ROWS`` at a time; rows the
@@ -599,12 +599,10 @@ class RetrievalIndex:
         """
         existing_ids = set(self.existing_item_updated_at(scope, project_id=project_id))
         seen_ids: set[str] = set()
-        summaries: list[dict[str, Any]] = []
         try:
             for chunk in _chunked(row_source(), SYNC_CHUNK_ROWS):
                 self._write_chunk(scope, chunk, project_id=project_id)
                 seen_ids.update(str(row[ITEM_ID_FIELD]) for row in chunk)
-                summaries.extend(_row_summary(row) for row in chunk)
         except Exception as exc:
             print(
                 f"[tqmemory] {scope} mirror merge failed ({type(exc).__name__}: {exc}); rewriting the table",
@@ -613,12 +611,12 @@ class RetrievalIndex:
             return self._overwrite_scope(scope, row_source, project_id=project_id)
         if not seen_ids:
             self.reset_scope(scope, project_id=project_id)
-            return []
+            return 0
         stale_ids = existing_ids - seen_ids
         if stale_ids:
             self.delete_items(scope, sorted(stale_ids), project_id=project_id)
         self._write_scope_manifest(scope, project_id=project_id)
-        return summaries
+        return len(seen_ids)
 
     def _overwrite_scope(
         self,
@@ -626,9 +624,9 @@ class RetrievalIndex:
         row_source: Callable[[], Iterable[dict[str, Any]]],
         *,
         project_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> int:
         table: Any = None
-        summaries: list[dict[str, Any]] = []
+        written = 0
         for chunk in _chunked(row_source(), SYNC_CHUNK_ROWS):
             indexed = self._with_vectors(chunk)
             if table is None:
@@ -637,12 +635,12 @@ class RetrievalIndex:
                 )
             else:
                 table.add(indexed)
-            summaries.extend(_row_summary(row) for row in chunk)
+            written += len(chunk)
         if table is None:
             self.reset_scope(scope, project_id=project_id)
-            return []
+            return 0
         self._write_scope_manifest(scope, project_id=project_id)
-        return summaries
+        return written
 
     def _write_chunk(self, scope: str, rows: list[dict[str, Any]], *, project_id: str | None = None) -> None:
         """Embed one chunk and insert or update it, creating the table if missing."""
@@ -717,14 +715,6 @@ class RetrievalIndex:
             self.store.write_global_retrieval_manifest()
             return
         raise ValueError(f"Unsupported retrieval scope: {scope}")
-
-
-_ROW_CONTENT_FIELDS = ("vector", "content_search", "content_summary_seed")
-
-
-def _row_summary(row: Mapping[str, Any]) -> dict[str, Any]:
-    """A mirrored row without its vector and content, for full-sync results."""
-    return {key: value for key, value in row.items() if key not in _ROW_CONTENT_FIELDS}
 
 
 def _chunked(items: Iterable[Any], size: int) -> Iterator[list[Any]]:

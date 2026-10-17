@@ -130,11 +130,6 @@ def index_paths_with_sync_plan(
         deleted_files += int(prune_result["deleted_files"])
         deleted_block_ids.update(str(block_id) for block_id in prune_result["deleted_block_ids"])
 
-    # One block scan for the whole run. Asking the store per file re-read every
-    # block JSON for each changed or deleted file: O(files x blocks), hours of
-    # dispatch-lock time on a large project.
-    block_ids_by_file = _block_ids_by_file(store)
-
     missing_roots: list[dict[str, str]] = []
     for root_record in registered_roots:
         root_id = str(root_record["root_id"])
@@ -154,12 +149,15 @@ def index_paths_with_sync_plan(
         seen_source_paths: set[str] = set()
 
         for file_path in _iter_markdown_files(root_path, storage_root=store.storage_root):
-            indexed_files += 1
             source_path = file_path.relative_to(root_path).as_posix()
-            seen_source_paths.add(source_path)
             existing_manifest = existing_manifests.get(source_path)
-
-            stat = file_path.stat()
+            try:
+                stat = file_path.stat()
+            except FileNotFoundError:
+                # Removed since the directory walk: handled as deleted below.
+                continue
+            indexed_files += 1
+            seen_source_paths.add(source_path)
             size = int(stat.st_size)
             mtime_ns = int(stat.st_mtime_ns)
 
@@ -172,7 +170,12 @@ def index_paths_with_sync_plan(
                 skipped_files += 1
                 continue
 
-            source_text = _read_source_text(file_path, size)
+            try:
+                source_text = _read_source_text(file_path, size)
+            except FileNotFoundError:
+                indexed_files -= 1
+                seen_source_paths.discard(source_path)
+                continue
             if source_text is None:
                 skipped_files += 1
                 continue
@@ -194,6 +197,7 @@ def index_paths_with_sync_plan(
                         "mtime_ns": mtime_ns,
                         "source_checksum": source_checksum,
                         "block_ids": existing_manifest.get("block_ids", []),
+                        "mirror_pending_block_ids": existing_manifest.get("mirror_pending_block_ids", []),
                         "indexed_at": indexed_at,
                     }
                 )
@@ -205,7 +209,11 @@ def index_paths_with_sync_plan(
                 continue
 
             parsed_blocks = parse_markdown_blocks(source_text)
-            existing_block_ids = block_ids_by_file.get((root_id, source_path), set())
+            existing_block_ids = (
+                {str(block_id) for block_id in existing_manifest.get("block_ids", [])}
+                if existing_manifest is not None
+                else set()
+            )
             block_records = [
                 {
                     "block_id": build_block_id(root_id, source_path, block.heading_path, block.chunk_index),
@@ -234,6 +242,7 @@ def index_paths_with_sync_plan(
                     "mtime_ns": mtime_ns,
                     "source_checksum": source_checksum,
                     "block_ids": block_ids,
+                    "mirror_pending_block_ids": block_ids,
                     "indexed_at": indexed_at,
                 }
             )
@@ -243,15 +252,12 @@ def index_paths_with_sync_plan(
         for source_path in deleted_source_paths:
             manifest = existing_manifests[source_path]
             deleted_block_ids.update(
-                store.delete_blocks_for_file(
-                    root_id,
-                    source_path,
-                    block_ids=block_ids_by_file.get((root_id, source_path), set()),
-                )
+                store.delete_blocks_for_file(root_id, source_path, block_ids=manifest.get("block_ids", []))
             )
             store.delete_markdown_file_manifest(str(manifest["file_key"]))
             deleted_files += 1
 
+    deleted_block_ids.update(_delete_orphan_blocks(store))
     block_count = len(store.list_markdown_block_ids())
     payload = build_indexing_payload(
         mode=resolved_mode,
@@ -546,13 +552,22 @@ def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -
     return sorted(files)
 
 
-def _block_ids_by_file(store: MemoryStore) -> dict[tuple[str, str], set[str]]:
-    """Group the project's block ids by ``(root_id, source_path)`` in one scan."""
-    grouped: dict[tuple[str, str], set[str]] = {}
-    for block in store.iter_markdown_blocks():
-        key = (str(block["root_id"]), str(block["source_path"]))
-        grouped.setdefault(key, set()).add(str(block["block_id"]))
-    return grouped
+def _delete_orphan_blocks(store: MemoryStore) -> list[str]:
+    """Delete block files no manifest references and return their ids.
+
+    A run that dies between writing a file's blocks and its manifest leaves
+    such blocks behind. Ids come from file names and manifests, so this reads
+    no block file.
+    """
+    referenced = {
+        str(block_id)
+        for manifest in store.list_markdown_file_manifests()
+        for block_id in manifest.get("block_ids", [])
+    }
+    orphans = sorted(set(store.list_markdown_block_ids()) - referenced)
+    for block_id in orphans:
+        store.delete_markdown_block(block_id)
+    return orphans
 
 
 def _prune_removed_roots(

@@ -17,8 +17,16 @@ from turbo_memory_mcp.store import GLOBAL_SCOPE, PROJECT_SCOPE
 # post-error rebuild fallback.
 
 
+class _FakeStore:
+    """A store with no file manifests, so no pending mirror work to clear."""
+
+    def list_markdown_file_manifests(self) -> list[dict[str, Any]]:
+        return []
+
+
 class _FakeIndex:
     def __init__(self, count: int) -> None:
+        self.store = _FakeStore()
         self._count = count
         self.project_synced = 0
         self.global_synced = 0
@@ -50,13 +58,13 @@ def test_format_change_rebuild_logs_and_syncs_scope(
 
     monkeypatch.setattr(server_module, "RetrievalIndex", _FakeRetrievalIndex)
 
-    _rebuild_scope_index_for_format_change(object(), PROJECT_SCOPE)
+    _rebuild_scope_index_for_format_change(_FakeStore(), PROJECT_SCOPE)  # type: ignore[arg-type]
     assert calls == {"project": 1, "global": 0}
     err = capsys.readouterr().err
     assert "project retrieval index out of date" in err
     assert "full re-embed" in err
 
-    _rebuild_scope_index_for_format_change(object(), GLOBAL_SCOPE)
+    _rebuild_scope_index_for_format_change(_FakeStore(), GLOBAL_SCOPE)  # type: ignore[arg-type]
     assert calls == {"project": 1, "global": 1}
     assert "global retrieval index out of date" in capsys.readouterr().err
 
