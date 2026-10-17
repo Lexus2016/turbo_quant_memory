@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Proxied calls honour the dispatch-lock bound.** The daemon listener took
+  the dispatch lock with no time limit before handing a call to the
+  dispatcher, which then re-entered the same lock for free. So the 30 s
+  bound from issue #103 never applied to calls from other sessions. They
+  waited out the 120 s RPC deadline and failed with `daemon connection
+  timeout`. They now get `memory server busy: '<tool>' holds the dispatch
+  lock` after `TQMEMORY_DISPATCH_LOCK_TIMEOUT` (30 s), naming the call that
+  blocks them.
+
 ## [0.31.1] - 2026-10-17
 
 ### Fixed

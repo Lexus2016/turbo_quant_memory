@@ -1211,7 +1211,6 @@ class ProxyRuntime:
                 listener = DaemonListener(
                     bootstrap.endpoint,
                     _listener_handler,
-                    dispatch_lock=self._dispatch_lock,
                     ready_event=ready,
                 )
                 listener.start()
@@ -1432,7 +1431,6 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     listener = DaemonListener(
         endpoint,
         _listener_handler,
-        dispatch_lock=dispatch_lock,
         ready_event=ready,
     )
     listener.start()

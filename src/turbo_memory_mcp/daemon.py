@@ -450,8 +450,10 @@ class DaemonListener:
     """Accept proxy RPC calls in a background thread and dispatch via handler.
 
     The handler receives (tool_name, kwargs) and must return a JSON-serializable
-    payload or raise an exception. All handler invocations are serialized under
-    a single RLock so MemoryStore / LanceDB access stays single-writer.
+    payload or raise an exception. The listener takes no lock of its own: the
+    handler (the local dispatcher) serializes calls, with a bounded wait. An
+    unbounded acquire here re-entered the dispatcher's RLock for free, so
+    proxied calls skipped the bound and waited out the 120 s RPC timeout.
     """
 
     def __init__(
@@ -459,12 +461,10 @@ class DaemonListener:
         endpoint: DaemonEndpoint,
         handler: Callable[[str, Mapping[str, Any]], Any],
         *,
-        dispatch_lock: threading.RLock | None = None,
         ready_event: threading.Event | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._handler = handler
-        self._dispatch_lock = dispatch_lock or threading.RLock()
         self._ready_event = ready_event
         self._listener: Listener | None = None
         self._accept_thread: threading.Thread | None = None
@@ -473,10 +473,6 @@ class DaemonListener:
     @property
     def endpoint(self) -> DaemonEndpoint:
         return self._endpoint
-
-    @property
-    def dispatch_lock(self) -> threading.RLock:
-        return self._dispatch_lock
 
     def start(self) -> None:
         self._listener = Listener(
@@ -562,16 +558,15 @@ class DaemonListener:
                     while not self._ready_event.wait(0.5):
                         if self._stop_event.is_set():
                             return
-                with self._dispatch_lock:
-                    try:
-                        result = self._handler(tool, kwargs)
-                        reply: dict[str, Any] = {"kind": MESSAGE_OK, "result": result}
-                    except Exception as exc:
-                        reply = {
-                            "kind": MESSAGE_ERROR,
-                            "error_type": type(exc).__name__,
-                            "message": str(exc),
-                        }
+                try:
+                    result = self._handler(tool, kwargs)
+                    reply: dict[str, Any] = {"kind": MESSAGE_OK, "result": result}
+                except Exception as exc:
+                    reply = {
+                        "kind": MESSAGE_ERROR,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    }
                 try:
                     _send(conn, reply)
                 except (OSError, BrokenPipeError):

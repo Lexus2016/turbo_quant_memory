@@ -321,18 +321,23 @@ def test_client_propagates_key_error(storage_env: dict[str, str]) -> None:
 
 
 @pytestmark_win_daemon
-def test_listener_serializes_concurrent_calls(storage_env: dict[str, str]) -> None:
-    """Two clients calling in parallel must not execute concurrently.
+def test_local_dispatcher_serializes_proxied_calls(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two proxied calls must not execute concurrently.
 
-    The listener's dispatch_lock guarantees single-writer semantics for the
-    underlying store. We verify by tracking overlapping handler executions.
+    The listener takes no lock of its own; the local dispatcher it hands calls
+    to keeps single-writer semantics for the store. We verify by tracking
+    overlapping handler executions across four clients.
     """
+
+    from turbo_memory_mcp import server
 
     active = 0
     peak = 0
     lock = threading.Lock()
 
-    def _handler(tool: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    def _handler(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
         nonlocal active, peak
         with lock:
             active += 1
@@ -344,13 +349,16 @@ def test_listener_serializes_concurrent_calls(storage_env: dict[str, str]) -> No
             with lock:
                 active -= 1
 
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _handler)
+    dispatch = server.make_local_dispatcher(dispatch_lock=threading.RLock(), dispatch_lock_timeout=0.0)
+
     endpoint = make_primary_endpoint(environ=dict(os.environ))
-    listener = DaemonListener(endpoint, _handler)
+    listener = DaemonListener(endpoint, dispatch)
     listener.start()
     try:
         clients = [DaemonClient(endpoint) for _ in range(4)]
         threads = [
-            threading.Thread(target=client.call, args=("work", {}))
+            threading.Thread(target=client.call, args=("health", {}))
             for client in clients
         ]
         for thread in threads:
@@ -947,3 +955,51 @@ def test_proxy_runtime_concurrent_failover_promotes_once(
         assert current.pid == os.getpid()
     finally:
         runtime.shutdown()
+
+
+@pytestmark_win_daemon
+def test_proxied_call_gets_busy_error_naming_the_holder(
+    storage_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A proxied call must hit the dispatch-lock bound like a local one.
+
+    The listener used to wrap the handler in its own unbounded acquire of the
+    same RLock, so the bounded acquire inside the dispatcher re-entered for
+    free and proxies waited out the 120 s RPC timeout instead.
+    """
+
+    from turbo_memory_mcp import server
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        entered.set()
+        release.wait(10)
+        return {"ok": True}
+
+    def _fast(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setitem(server.TOOL_HANDLERS, "index_paths", _slow)
+    monkeypatch.setitem(server.TOOL_HANDLERS, "health", _fast)
+
+    shared = threading.RLock()
+    dispatch = server.make_local_dispatcher(dispatch_lock=shared, dispatch_lock_timeout=0.2)
+    endpoint = make_primary_endpoint(environ=dict(os.environ))
+    listener = DaemonListener(endpoint, dispatch)
+    listener.start()
+    blocker = threading.Thread(target=lambda: dispatch("index_paths", {}), daemon=True)
+    blocker.start()
+    client = DaemonClient(endpoint)
+    try:
+        assert entered.wait(5)
+        start = time.monotonic()
+        with pytest.raises(RuntimeError, match="'index_paths' holds the dispatch lock"):
+            client.call("health", {})
+        assert time.monotonic() - start < 5.0
+    finally:
+        release.set()
+        blocker.join(10)
+        client.close()
+        listener.stop()
