@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -163,6 +164,30 @@ class TextEmbedder(Protocol):
         """Return one embedding vector per text item."""
 
 
+# One model per process serves every project. Loading and encoding take this
+# lock: two threads loading at once would build the model twice, and the
+# tokenizer must not run on two threads at once. Encoding releases it between
+# chunks, so a bulk re-embed in one project delays another project's query by
+# at most one chunk.
+EMBED_CHUNK_SIZE = 64
+_EMBED_LOCK = threading.Lock()
+
+
+def encode_texts(texts: Sequence[str], *, embedder: TextEmbedder | None = None) -> list[list[float]]:
+    """Embed ``texts`` in ``EMBED_CHUNK_SIZE`` chunks, each under the embed lock."""
+
+    items = list(texts)
+    if not items:
+        return []
+    active = embedder or build_default_embedder()
+    vectors: list[list[float]] = []
+    for start in range(0, len(items), EMBED_CHUNK_SIZE):
+        with _EMBED_LOCK:
+            encoded = active.encode(items[start : start + EMBED_CHUNK_SIZE])
+        vectors.extend([float(value) for value in vector] for vector in encoded)
+    return vectors
+
+
 def build_default_embedder() -> TextEmbedder:
     """Return the active embedder, selected by the TQMEMORY_EMBEDDING_BACKEND env:
     'fastembed' (default, ONNX Runtime) or 'sentence-transformers' (PyTorch).
@@ -176,9 +201,10 @@ def build_default_embedder() -> TextEmbedder:
     default model, so switching needs no reindex.
     """
     backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "fastembed").strip().lower()
-    if backend == "sentence-transformers":
-        return _load_torch_embedder()
-    return _load_fastembed_embedder()
+    with _EMBED_LOCK:
+        if backend == "sentence-transformers":
+            return _load_torch_embedder()
+        return _load_fastembed_embedder()
 
 
 class _TorchEmbedder:
@@ -532,8 +558,7 @@ class RetrievalIndex:
 
         embedder = self._embedder or build_default_embedder()
         self._embedder = embedder
-        vectors = embedder.encode(list(texts))
-        return [[float(value) for value in vector] for vector in vectors]
+        return encode_texts(texts, embedder=embedder)
 
     def _build_markdown_rows(self, *, project_id: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -920,8 +945,8 @@ def _resolve_vector_dimensions() -> int:
     DEFAULT_VECTOR_DIMENSIONS if the model cannot be probed.
     """
     try:
-        probe = build_default_embedder().encode(["dimension probe"])
-        return len(list(probe[0]))
+        probe = encode_texts(["dimension probe"])
+        return len(probe[0])
     except Exception:
         return DEFAULT_VECTOR_DIMENSIONS
 

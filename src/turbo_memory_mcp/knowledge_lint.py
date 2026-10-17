@@ -74,9 +74,9 @@ def _scan_near_duplicate_notes(store: MemoryStore) -> list[dict[str, object]]:
 
         import numpy as np
 
-        from .retrieval_index import build_default_embedder
+        from .retrieval_index import encode_texts
 
-        vectors = build_default_embedder().encode([probe for _, probe in probed])
+        vectors = encode_texts([probe for _, probe in probed])
         matrix = np.asarray([list(map(float, v)) for v in vectors], dtype=np.float32)
         if matrix.ndim != 2 or matrix.shape[0] != len(probed) or not np.isfinite(matrix).all():
             return []

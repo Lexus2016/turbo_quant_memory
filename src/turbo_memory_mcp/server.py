@@ -60,6 +60,7 @@ from .identity import (
 )
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
+from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks
 from .migrations import format_pending_warning
 from .retrieval import MAX_SEMANTIC_LIMIT, semantic_search
 from .retrieval_index import RetrievalIndex
@@ -984,8 +985,6 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
 }
 
 
-_DEFAULT_LOCAL_LOCK = threading.RLock()
-
 # Bounded wait for the shared dispatch lock before failing fast (issue #103).
 #
 # Without a bound, a slow or runaway operation (e.g. a hydration stuck on a
@@ -1028,17 +1027,50 @@ def _resolve_dispatch_lock_timeout(environ: Mapping[str, str] | None = None) -> 
         return DISPATCH_LOCK_TIMEOUT_SECONDS
 
 
+# Tools that write global memory whatever their arguments say.
+GLOBAL_SCOPE_TOOLS = frozenset({"promote_note", "self_test"})
+_GLOBAL_TOUCHING_SCOPES = frozenset({GLOBAL_SCOPE, "hybrid"})
+# Lock key for a call whose project cannot be resolved; its handler then
+# reports the real error.
+_UNRESOLVED_PROJECT_KEY = "unresolved"
+
+
+def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str) -> list[str]:
+    """Lock keys for one call: its project, then the global scope if touched."""
+
+    scope = str(kwargs.get("scope") or "").strip().lower()
+    if tool in GLOBAL_SCOPE_TOOLS or scope in _GLOBAL_TOUCHING_SCOPES:
+        return [project_id, GLOBAL_LOCK_KEY]
+    return [project_id]
+
+
+def _lock_project_id(cwd: Path | str | None, environ: Mapping[str, str] | None) -> str:
+    """Resolve a call's project like build_runtime_context, minus the store."""
+
+    try:
+        candidate = resolve_project_identity(cwd=cwd, environ=environ)
+        return reconcile_project_identity(candidate, resolve_storage_root(environ)).project_id
+    except Exception:
+        return _UNRESOLVED_PROJECT_KEY
+
+
 def make_local_dispatcher(
     *,
     dispatch_lock: threading.RLock | None = None,
+    scope_locks: ScopeLocks | None = None,
     dispatch_lock_timeout: float | None = None,
     default_cwd: Path | str | None = None,
     default_environ: Mapping[str, str] | None = None,
 ) -> Dispatcher:
     """Return a dispatcher that runs tools in-process.
 
-    The lock is shared between the primary's stdio handler and its daemon
-    listener workers so MemoryStore / LanceDB access remains single-writer.
+    Each call takes the lock of the project it acts on, plus the global-scope
+    lock when it touches global memory, so MemoryStore / LanceDB access stays
+    single-writer per scope while different projects run in parallel. The
+    locks are shared by the primary's stdio handler and its daemon listener
+    workers (``DEFAULT_SCOPE_LOCKS`` unless ``scope_locks`` is given).
+    Passing ``dispatch_lock`` instead serializes every call on that one lock.
+
     Lock acquisition is bounded by ``dispatch_lock_timeout``: if another
     operation still holds the lock after that, the call fails fast with an
     explicit "server busy" error instead of queueing until the MCP host's
@@ -1046,7 +1078,7 @@ def make_local_dispatcher(
     ``TQMEMORY_DISPATCH_LOCK_TIMEOUT``; a value <= 0 waits without a bound.
     """
 
-    lock = dispatch_lock or _DEFAULT_LOCAL_LOCK
+    locks = scope_locks or DEFAULT_SCOPE_LOCKS
     timeout = (
         _resolve_dispatch_lock_timeout() if dispatch_lock_timeout is None else dispatch_lock_timeout
     )
@@ -1072,6 +1104,11 @@ def make_local_dispatcher(
             resolved_environ.update({str(k): str(v) for k, v in environ_override.items()})
         else:
             resolved_environ = default_environ
+        if dispatch_lock is None:
+            keys = lock_keys_for(tool, merged_kwargs, _lock_project_id(resolved_cwd, resolved_environ))
+            with locks.hold(keys, timeout=timeout, tool=tool):
+                return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
+        lock = dispatch_lock
         acquired = lock.acquire(timeout=timeout) if timeout > 0 else lock.acquire()
         if not acquired:
             with _DISPATCH_HOLDER_LOCK:
@@ -1146,7 +1183,6 @@ class ProxyRuntime:
 
     def __init__(self, initial_client: DaemonClient) -> None:
         self._state_lock = threading.RLock()
-        self._dispatch_lock = threading.RLock()
         self._client: DaemonClient | None = initial_client
         self._active_dispatcher: Dispatcher = make_proxy_dispatcher(initial_client)
         self._listener: DaemonListener | None = None
@@ -1199,9 +1235,7 @@ class ProxyRuntime:
             bootstrap = acquire_daemon_role()
 
             if bootstrap.role == "primary" and bootstrap.endpoint is not None:
-                local_dispatcher = make_local_dispatcher(
-                    dispatch_lock=self._dispatch_lock,
-                )
+                local_dispatcher = make_local_dispatcher(scope_locks=DEFAULT_SCOPE_LOCKS)
 
                 def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
                     return local_dispatcher(tool, kwargs)
@@ -1242,9 +1276,7 @@ class ProxyRuntime:
                 self._active_dispatcher = make_proxy_dispatcher(bootstrap.client)
             else:
                 # Standalone fallback (retries exhausted or daemon disabled).
-                self._active_dispatcher = make_local_dispatcher(
-                    dispatch_lock=self._dispatch_lock,
-                )
+                self._active_dispatcher = make_local_dispatcher(scope_locks=DEFAULT_SCOPE_LOCKS)
 
     def shutdown(self) -> None:
         """Release network/file resources. Safe to call multiple times."""
@@ -1415,8 +1447,7 @@ def _gate_primary_ready(ready: threading.Event) -> None:
 def _run_primary(bootstrap: BootstrapResult) -> None:
     endpoint = bootstrap.endpoint
     assert endpoint is not None  # guarded by run_stdio_server
-    dispatch_lock = threading.RLock()
-    dispatcher = make_local_dispatcher(dispatch_lock=dispatch_lock)
+    dispatcher = make_local_dispatcher(scope_locks=DEFAULT_SCOPE_LOCKS)
     ready = threading.Event()
 
     def _listener_handler(tool: str, kwargs: Mapping[str, Any]) -> Any:
@@ -2803,6 +2834,7 @@ def _max_timestamp(values: list[object]) -> str | None:
 __all__ = [
     "DISPATCH_LOCK_TIMEOUT_SECONDS",
     "ENV_DISPATCH_LOCK_TIMEOUT",
+    "GLOBAL_SCOPE_TOOLS",
     "PRODUCT_NAME",
     "SERVER_ID",
     "TOOL_HANDLERS",
@@ -2819,6 +2851,7 @@ __all__ = [
     "hydrate_impl",
     "index_paths_impl",
     "lint_knowledge_base_impl",
+    "lock_keys_for",
     "make_local_dispatcher",
     "make_proxy_dispatcher",
     "promote_note_impl",

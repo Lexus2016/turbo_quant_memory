@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Calls for different projects no longer wait on each other.** The daemon
+  had one dispatch lock for the whole machine. A long reindex in one project
+  therefore made every other agent's tqmemory call fail. Each call now takes
+  the lock of its own project. Calls with `scope="global"` or `"hybrid"`,
+  plus `promote_note` and `self_test`, also take one global-scope lock,
+  always after the project lock. The busy error still names the call that
+  blocks.
+- The shared embedding model is now loaded once under a lock. It encodes in
+  chunks of 64 texts, so a bulk re-embed in one project delays another
+  project's query by at most one chunk.
+- Usage statistics take a lock around their read-modify-write. With
+  parallel projects, concurrent searches lost counts: 170 of 200 updates in
+  a test.
+
 ### Fixed
 - **Proxied calls honour the dispatch-lock bound.** The daemon listener took
   the dispatch lock with no time limit before handing a call to the

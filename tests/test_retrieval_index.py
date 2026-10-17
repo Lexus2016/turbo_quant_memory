@@ -160,3 +160,25 @@ def test_incremental_project_note_sync_and_delete_keep_other_rows_intact(tmp_pat
     index.delete_items("project", ["auth-note"])
 
     assert index.count_rows("project") == 1
+
+
+def test_embed_texts_encodes_in_chunks_under_lock() -> None:
+    """Embedding shares one model across projects: a bulk re-embed must hand
+    the model back between small chunks so another project's query waits for
+    at most one chunk, and the tokenizer never runs on two threads at once."""
+    from turbo_memory_mcp import retrieval_index
+
+    batches: list[int] = []
+
+    class _RecordingEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            assert retrieval_index._EMBED_LOCK.locked()
+            batches.append(len(texts))
+            return [[float(len(text))] for text in texts]
+
+    texts = [f"text-{index}" for index in range(150)]
+    vectors = retrieval_index.encode_texts(texts, embedder=_RecordingEmbedder())
+
+    assert batches == [64, 64, 22]
+    assert vectors == [[float(len(text))] for text in texts]
+    assert not retrieval_index._EMBED_LOCK.locked()

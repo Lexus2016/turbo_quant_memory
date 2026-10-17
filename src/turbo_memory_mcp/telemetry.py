@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -11,6 +12,11 @@ from .store import USAGE_STATS_FORMAT_VERSION, MemoryStore, utc_now
 INPUT_COST_ENV = "TQMEMORY_INPUT_COST_PER_1M_TOKENS_USD"
 TOKEN_MILESTONES = (1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000)
 SEARCH_MILESTONES = (10, 25, 50, 100, 250, 500, 1_000)
+
+# Usage stats are one file shared by every project, and calls for different
+# projects now run in parallel: the read-modify-write must not interleave or
+# it loses counts. Writers in other processes are not covered.
+_USAGE_STATS_LOCK = threading.Lock()
 
 
 def load_usage_stats(store: MemoryStore) -> dict[str, Any]:
@@ -63,32 +69,33 @@ def record_semantic_search_usage(
     raw_source_bytes: int,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    stats = load_usage_stats(store)
-    total_counter = _get_project_counter(stats, None, None)
-    project_counter = _get_project_counter(stats, project_id, project_name)
+    with _USAGE_STATS_LOCK:
+        stats = load_usage_stats(store)
+        total_counter = _get_project_counter(stats, None, None)
+        project_counter = _get_project_counter(stats, project_id, project_name)
 
-    compact_context_bytes = _estimate_compact_context_bytes(response_payload)
-    items = response_payload.get("items", [])
-    estimated_bytes_saved = max(int(raw_source_bytes) - compact_context_bytes, 0)
-    estimated_tokens_saved = math.ceil(estimated_bytes_saved / 4) if estimated_bytes_saved else 0
+        compact_context_bytes = _estimate_compact_context_bytes(response_payload)
+        items = response_payload.get("items", [])
+        estimated_bytes_saved = max(int(raw_source_bytes) - compact_context_bytes, 0)
+        estimated_tokens_saved = math.ceil(estimated_bytes_saved / 4) if estimated_bytes_saved else 0
 
-    for counter in (total_counter, project_counter):
-        counter["search_calls"] += 1
-        counter["compact_items_served"] += len(items)
-        counter["raw_source_bytes"] += int(raw_source_bytes)
-        counter["compact_context_bytes"] += compact_context_bytes
-        counter["estimated_bytes_saved"] += estimated_bytes_saved
-        counter["estimated_input_tokens_saved"] += estimated_tokens_saved
+        for counter in (total_counter, project_counter):
+            counter["search_calls"] += 1
+            counter["compact_items_served"] += len(items)
+            counter["raw_source_bytes"] += int(raw_source_bytes)
+            counter["compact_context_bytes"] += compact_context_bytes
+            counter["estimated_bytes_saved"] += estimated_bytes_saved
+            counter["estimated_input_tokens_saved"] += estimated_tokens_saved
 
-    stats["updated_at"] = utc_now()
-    cost_basis = _resolve_cost_basis(environ)
-    # Emit the milestone BEFORE persisting: _maybe_emit_milestone bumps the
-    # last_announced_* markers on total_counter (an alias into stats["totals"]),
-    # and those bumps must be in the payload we write or the same milestone
-    # re-fires on every subsequent search.
-    milestone = _maybe_emit_milestone(total_counter, cost_basis)
-    store.write_usage_stats(stats)
-    return milestone
+        stats["updated_at"] = utc_now()
+        cost_basis = _resolve_cost_basis(environ)
+        # Emit the milestone BEFORE persisting: _maybe_emit_milestone bumps the
+        # last_announced_* markers on total_counter (an alias into stats["totals"]),
+        # and those bumps must be in the payload we write or the same milestone
+        # re-fires on every subsequent search.
+        milestone = _maybe_emit_milestone(total_counter, cost_basis)
+        store.write_usage_stats(stats)
+        return milestone
 
 
 def record_hydration_usage(
@@ -98,18 +105,19 @@ def record_hydration_usage(
     project_name: str,
     response_payload: Mapping[str, Any],
 ) -> None:
-    stats = load_usage_stats(store)
-    total_counter = _get_project_counter(stats, None, None)
-    project_counter = _get_project_counter(stats, project_id, project_name)
-    hydrated_context_bytes = _estimate_hydrated_context_bytes(response_payload)
+    with _USAGE_STATS_LOCK:
+        stats = load_usage_stats(store)
+        total_counter = _get_project_counter(stats, None, None)
+        project_counter = _get_project_counter(stats, project_id, project_name)
+        hydrated_context_bytes = _estimate_hydrated_context_bytes(response_payload)
 
-    for counter in (total_counter, project_counter):
-        counter["hydrate_calls"] += 1
-        counter["hydrated_items_served"] += 1
-        counter["hydrated_context_bytes"] += hydrated_context_bytes
+        for counter in (total_counter, project_counter):
+            counter["hydrate_calls"] += 1
+            counter["hydrated_items_served"] += 1
+            counter["hydrated_context_bytes"] += hydrated_context_bytes
 
-    stats["updated_at"] = utc_now()
-    store.write_usage_stats(stats)
+        stats["updated_at"] = utc_now()
+        store.write_usage_stats(stats)
 
 
 def _empty_counter() -> dict[str, Any]:
