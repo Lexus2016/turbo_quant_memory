@@ -182,3 +182,91 @@ def test_embed_texts_encodes_in_chunks_under_lock() -> None:
     assert batches == [64, 64, 22]
     assert vectors == [[float(len(text))] for text in texts]
     assert not retrieval_index._EMBED_LOCK.locked()
+
+
+# --- streamed full syncs (2026-10-17) ---
+# sync_project built every row, embedded every text in one call and returned
+# every row with its vector: several hundred MB at 40k blocks.
+
+
+def _write_blocks(store: MemoryStore, count: int) -> list[str]:
+    block_ids = [f"block-{index:04d}" for index in range(count)]
+    for block_id in block_ids:
+        content = f"Body of {block_id}."
+        store.write_markdown_block(
+            {
+                "block_id": block_id,
+                "root_id": "docs-root",
+                "source_path": f"docs/{block_id}.md",
+                "heading_path": [block_id],
+                "chunk_index": 0,
+                "content_raw": content,
+                "block_checksum": sha256_text(content),
+                "source_checksum": sha256_text(content),
+            }
+        )
+    return block_ids
+
+
+def test_sync_project_merges_in_bounded_chunks(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 600)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    chunk_sizes: list[int] = []
+    real_write = RetrievalIndex._write_chunk
+
+    def spy(self: RetrievalIndex, scope: str, rows: list[dict[str, object]], **kwargs: object) -> object:
+        chunk_sizes.append(len(rows))
+        return real_write(self, scope, rows, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(RetrievalIndex, "_write_chunk", autospec=True, side_effect=spy):
+        rows = index.sync_project()
+
+    assert chunk_sizes and max(chunk_sizes) <= retrieval_index.SYNC_CHUNK_ROWS
+    assert sum(chunk_sizes) == 600
+    assert index.count_rows("project") == 600
+    assert len(rows) == 600
+    assert all("vector" not in row for row in rows)
+
+
+def test_sync_project_removes_rows_missing_from_the_store(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    block_ids = _write_blocks(store, 300)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    index.sync_project()
+    removed = block_ids[:3]
+    for block_id in removed:
+        store.project_markdown_block_path(block_id).unlink()
+
+    index.sync_project()
+
+    assert index.count_rows("project") == 297
+    assert not set(removed) & set(index.existing_item_updated_at("project"))
+
+
+def test_delete_items_batches_large_id_lists(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from lancedb.table import LanceTable
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 5)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    index.sync_project()
+    real_delete = LanceTable.delete
+    calls: list[str] = []
+
+    def spy(self: LanceTable, where: str) -> object:
+        calls.append(where)
+        return real_delete(self, where)
+
+    with patch.object(LanceTable, "delete", autospec=True, side_effect=spy):
+        deleted = index.delete_items("project", [f"missing-{index}" for index in range(1200)] + ["block-0000"])
+
+    assert deleted == 1201
+    assert len(calls) == 3
+    assert index.count_rows("project") == 4

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -170,6 +170,10 @@ class TextEmbedder(Protocol):
 # chunks, so a bulk re-embed in one project delays another project's query by
 # at most one chunk.
 EMBED_CHUNK_SIZE = 64
+# Rows embedded and merged per LanceDB write, and ids per delete statement:
+# a full rebuild holds one chunk in memory, never the whole corpus.
+SYNC_CHUNK_ROWS = 256
+DELETE_CHUNK_IDS = 500
 _EMBED_LOCK = threading.Lock()
 
 
@@ -274,16 +278,23 @@ class RetrievalIndex:
         return self.store.global_retrieval_dir()
 
     def sync_project(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        """Mirror every block and project note, streamed in chunks.
+
+        Returns the mirrored rows without vectors or content, so a rebuild's
+        memory stays bounded by one chunk however large the project is.
+        """
         resolved_project_id = project_id or self.store.project.project_id
-        rows = [
-            *self._build_markdown_rows(project_id=resolved_project_id),
-            *self._build_note_rows(PROJECT_SCOPE),
-        ]
-        return self._merge_scope_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id, delete_missing=True)
+
+        def _rows() -> Iterator[dict[str, Any]]:
+            for block in self.store.iter_markdown_blocks(resolved_project_id):
+                yield mirror_markdown_block(self.store, block, project_id=resolved_project_id)
+            yield from self._build_note_rows(PROJECT_SCOPE)
+
+        return self._sync_scope(PROJECT_SCOPE, _rows, project_id=resolved_project_id)
 
     def sync_global(self) -> list[dict[str, Any]]:
-        rows = self._build_note_rows(GLOBAL_SCOPE)
-        return self._merge_scope_rows(GLOBAL_SCOPE, rows, delete_missing=True)
+        """Mirror every global note (see ``sync_project``)."""
+        return self._sync_scope(GLOBAL_SCOPE, lambda: iter(self._build_note_rows(GLOBAL_SCOPE)))
 
     def sync_project_notes(
         self,
@@ -322,34 +333,40 @@ class RetrievalIndex:
         project_id: str | None = None,
     ) -> list[dict[str, Any]]:
         resolved_project_id = project_id or self.store.project.project_id
-        rows: list[dict[str, Any]] = []
-        for block_id in _dedupe_ids(block_ids):
-            try:
-                block = self.store.read_markdown_block(block_id, resolved_project_id)
-            except FileNotFoundError:
-                continue
-            except (OSError, ValueError) as exc:
-                # A corrupt block must not fail the sync: the caller would fall
-                # back to a full re-sync, and the next search would do it again.
-                print(
-                    f"[tqmemory] skipping unreadable markdown block {block_id}: {type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
-                continue
-            rows.append(mirror_markdown_block(self.store, block, project_id=resolved_project_id))
-        return self.upsert_rows(PROJECT_SCOPE, rows, project_id=resolved_project_id)
+
+        def _rows() -> Iterator[dict[str, Any]]:
+            for block_id in _dedupe_ids(block_ids):
+                try:
+                    block = self.store.read_markdown_block(block_id, resolved_project_id)
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError) as exc:
+                    # A corrupt block must not fail the sync: the caller would fall
+                    # back to a full re-sync, and the next search would do it again.
+                    print(
+                        f"[tqmemory] skipping unreadable markdown block {block_id}: {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+                    continue
+                yield mirror_markdown_block(self.store, block, project_id=resolved_project_id)
+
+        return self.upsert_rows(PROJECT_SCOPE, _rows(), project_id=resolved_project_id)
 
     def upsert_rows(
         self,
         scope: str,
-        rows: Sequence[Mapping[str, Any]],
+        rows: Iterable[Mapping[str, Any]],
         *,
         project_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        normalized_rows = [dict(row) for row in rows]
-        if not normalized_rows:
-            return []
-        return self._merge_scope_rows(scope, normalized_rows, project_id=project_id, delete_missing=False)
+        """Insert or update rows in ``SYNC_CHUNK_ROWS`` chunks; returns them without vectors."""
+        written: list[dict[str, Any]] = []
+        for chunk in _chunked((dict(row) for row in rows), SYNC_CHUNK_ROWS):
+            self._write_chunk(scope, chunk, project_id=project_id)
+            written.extend(chunk)
+        if written:
+            self._write_scope_manifest(scope, project_id=project_id)
+        return written
 
     def delete_items(
         self,
@@ -366,12 +383,15 @@ class RetrievalIndex:
         if table is None:
             return 0
 
-        if len(normalized_ids) == 1:
-            where = f"{ITEM_ID_FIELD} = {_quote_sql_string(normalized_ids[0])}"
-        else:
-            values = ", ".join(_quote_sql_string(item_id) for item_id in normalized_ids)
-            where = f"{ITEM_ID_FIELD} IN ({values})"
-        table.delete(where)
+        # Bounded IN lists: a stale-row cleanup can name tens of thousands of ids.
+        for start in range(0, len(normalized_ids), DELETE_CHUNK_IDS):
+            batch = normalized_ids[start : start + DELETE_CHUNK_IDS]
+            if len(batch) == 1:
+                where = f"{ITEM_ID_FIELD} = {_quote_sql_string(batch[0])}"
+            else:
+                values = ", ".join(_quote_sql_string(item_id) for item_id in batch)
+                where = f"{ITEM_ID_FIELD} IN ({values})"
+            table.delete(where)
         self._write_scope_manifest(scope, project_id=project_id)
         return len(normalized_ids)
 
@@ -560,61 +580,91 @@ class RetrievalIndex:
         self._embedder = embedder
         return encode_texts(texts, embedder=embedder)
 
-    def _build_markdown_rows(self, *, project_id: str) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for block in self.store.list_markdown_blocks(project_id=project_id):
-            rows.append(mirror_markdown_block(self.store, block, project_id=project_id))
-        return rows
-
     def _build_note_rows(self, scope: str) -> list[dict[str, Any]]:
         return [mirror_note_record(self.store, note) for note in self.store.list_notes(scope)]
 
-    def _merge_scope_rows(
+    def _sync_scope(
         self,
         scope: str,
-        rows: list[dict[str, Any]],
+        row_source: Callable[[], Iterable[dict[str, Any]]],
         *,
         project_id: str | None = None,
-        delete_missing: bool,
     ) -> list[dict[str, Any]]:
-        db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
-        db_path.mkdir(parents=True, exist_ok=True)
-        vectors = self._embed_texts([row["content_search"] for row in rows])
-        indexed_rows: list[dict[str, Any]] = []
-        for row, vector in zip(rows, vectors, strict=True):
-            indexed_row = dict(row)
-            indexed_row["vector"] = vector
-            indexed_rows.append(indexed_row)
+        """Make the scope table hold exactly the rows of ``row_source``.
 
-        import lancedb
+        Rows are embedded and merged ``SYNC_CHUNK_ROWS`` at a time; rows the
+        source no longer has are deleted afterwards. If a merge fails, the
+        table is rewritten from a fresh pass over the source, streamed the
+        same way.
+        """
+        existing_ids = set(self.existing_item_updated_at(scope, project_id=project_id))
+        seen_ids: set[str] = set()
+        summaries: list[dict[str, Any]] = []
+        try:
+            for chunk in _chunked(row_source(), SYNC_CHUNK_ROWS):
+                self._write_chunk(scope, chunk, project_id=project_id)
+                seen_ids.update(str(row[ITEM_ID_FIELD]) for row in chunk)
+                summaries.extend(_row_summary(row) for row in chunk)
+        except Exception as exc:
+            print(
+                f"[tqmemory] {scope} mirror merge failed ({type(exc).__name__}: {exc}); rewriting the table",
+                file=sys.stderr,
+            )
+            return self._overwrite_scope(scope, row_source, project_id=project_id)
+        if not seen_ids:
+            self.reset_scope(scope, project_id=project_id)
+            return []
+        stale_ids = existing_ids - seen_ids
+        if stale_ids:
+            self.delete_items(scope, sorted(stale_ids), project_id=project_id)
+        self._write_scope_manifest(scope, project_id=project_id)
+        return summaries
 
-        database = lancedb.connect(str(db_path))
+    def _overwrite_scope(
+        self,
+        scope: str,
+        row_source: Callable[[], Iterable[dict[str, Any]]],
+        *,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        table: Any = None
+        summaries: list[dict[str, Any]] = []
+        for chunk in _chunked(row_source(), SYNC_CHUNK_ROWS):
+            indexed = self._with_vectors(chunk)
+            if table is None:
+                table = self._connect_scope(scope, project_id=project_id).create_table(
+                    RETRIEVAL_TABLE_NAME, indexed, mode="overwrite"
+                )
+            else:
+                table.add(indexed)
+            summaries.extend(_row_summary(row) for row in chunk)
+        if table is None:
+            self.reset_scope(scope, project_id=project_id)
+            return []
+        self._write_scope_manifest(scope, project_id=project_id)
+        return summaries
+
+    def _write_chunk(self, scope: str, rows: list[dict[str, Any]], *, project_id: str | None = None) -> None:
+        """Embed one chunk and insert or update it, creating the table if missing."""
+        indexed = self._with_vectors(rows)
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:
-            if indexed_rows:
-                database.create_table(RETRIEVAL_TABLE_NAME, indexed_rows, mode="overwrite")
-            else:
-                database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
-            self._write_scope_manifest(scope, project_id=project_id)
-            return indexed_rows
+            self._connect_scope(scope, project_id=project_id).create_table(
+                RETRIEVAL_TABLE_NAME, indexed, mode="overwrite"
+            )
+            return
+        table.merge_insert(ITEM_ID_FIELD).when_matched_update_all().when_not_matched_insert_all().execute(indexed)
 
-        if not indexed_rows:
-            if delete_missing:
-                database.create_table(RETRIEVAL_TABLE_NAME, schema=_table_schema(), mode="overwrite")
-                self._write_scope_manifest(scope, project_id=project_id)
-            return []
+    def _with_vectors(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        vectors = self._embed_texts([row["content_search"] for row in rows])
+        return [{**row, "vector": vector} for row, vector in zip(rows, vectors, strict=True)]
 
-        builder = table.merge_insert(ITEM_ID_FIELD).when_matched_update_all().when_not_matched_insert_all()
-        if delete_missing:
-            builder = builder.when_not_matched_by_source_delete()
-        try:
-            builder.execute(indexed_rows)
-        except Exception:
-            if not delete_missing:
-                raise
-            database.create_table(RETRIEVAL_TABLE_NAME, indexed_rows, mode="overwrite")
-        self._write_scope_manifest(scope, project_id=project_id)
-        return indexed_rows
+    def _connect_scope(self, scope: str, *, project_id: str | None = None) -> Any:
+        db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
+        db_path.mkdir(parents=True, exist_ok=True)
+        import lancedb
+
+        return lancedb.connect(str(db_path))
 
     def reset_scope(self, scope: str, *, project_id: str | None = None) -> None:
         db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
@@ -667,6 +717,25 @@ class RetrievalIndex:
             self.store.write_global_retrieval_manifest()
             return
         raise ValueError(f"Unsupported retrieval scope: {scope}")
+
+
+_ROW_CONTENT_FIELDS = ("vector", "content_search", "content_summary_seed")
+
+
+def _row_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A mirrored row without its vector and content, for full-sync results."""
+    return {key: value for key, value in row.items() if key not in _ROW_CONTENT_FIELDS}
+
+
+def _chunked(items: Iterable[Any], size: int) -> Iterator[list[Any]]:
+    chunk: list[Any] = []
+    for item in items:
+        chunk.append(item)
+        if len(chunk) >= size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
 
 
 def _dedupe_ids(item_ids: Sequence[str]) -> list[str]:

@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Usage statistics take a lock around their read-modify-write. With
   parallel projects, concurrent searches lost counts: 170 of 200 updates in
   a test.
+- **A full index rebuild streams in chunks.** It used to build every row,
+  embed every text in one call and keep every row with its 384-float vector
+  in memory, which reached several hundred MB at 40k blocks. It now embeds
+  and merges 256 rows at a time, then deletes rows the store no longer has,
+  with at most 500 ids per delete statement. The rows it returns carry no
+  vectors or content. Incremental block syncs stream the same way.
 
 ### Fixed
 - **Proxied calls honour the dispatch-lock bound.** The daemon listener took
