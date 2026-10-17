@@ -34,6 +34,21 @@ DEFAULT_IGNORED_DIR_NAMES = frozenset(
         "venv",
     }
 )
+# Multi-component directories skipped wherever they appear. Claude Code keeps
+# agent worktrees (full copies of the repository) under .claude/worktrees.
+DEFAULT_IGNORED_DIR_PATHS = frozenset({(".claude", "worktrees")})
+
+
+def is_default_ignored_dir(relative_parts: Sequence[str]) -> bool:
+    """True when a file's directory parts fall under a default-ignored directory."""
+    parts = tuple(relative_parts)
+    if any(part in DEFAULT_IGNORED_DIR_NAMES for part in parts):
+        return True
+    return any(
+        parts[start : start + len(path)] == path
+        for path in DEFAULT_IGNORED_DIR_PATHS
+        for start in range(len(parts) - len(path) + 1)
+    )
 
 
 def index_paths(
@@ -101,6 +116,11 @@ def index_paths_with_sync_plan(
         deleted_files += int(prune_result["deleted_files"])
         deleted_block_ids.update(str(block_id) for block_id in prune_result["deleted_block_ids"])
 
+    # One block scan for the whole run. Asking the store per file re-read every
+    # block JSON for each changed or deleted file: O(files x blocks), hours of
+    # dispatch-lock time on a large project.
+    block_ids_by_file = _block_ids_by_file(store)
+
     missing_roots: list[dict[str, str]] = []
     for root_record in registered_roots:
         root_id = str(root_record["root_id"])
@@ -167,10 +187,7 @@ def index_paths_with_sync_plan(
                 continue
 
             parsed_blocks = parse_markdown_blocks(source_text)
-            existing_block_ids = {
-                str(block["block_id"])
-                for block in store.list_markdown_blocks(project_id=store.project.project_id, root_id=root_id, source_path=source_path)
-            }
+            existing_block_ids = block_ids_by_file.get((root_id, source_path), set())
             block_records = [
                 {
                     "block_id": build_block_id(root_id, source_path, block.heading_path, block.chunk_index),
@@ -185,7 +202,9 @@ def index_paths_with_sync_plan(
                 }
                 for block in parsed_blocks
             ]
-            block_ids = store.replace_blocks_for_file(root_id, source_path, block_records)
+            block_ids = store.replace_blocks_for_file(
+                root_id, source_path, block_records, existing_ids=existing_block_ids
+            )
             changed_block_ids.update(str(block_id) for block_id in block_ids)
             deleted_block_ids.update(existing_block_ids.difference(block_ids))
             store.write_markdown_file_manifest(
@@ -205,7 +224,13 @@ def index_paths_with_sync_plan(
         deleted_source_paths = sorted(set(existing_manifests).difference(seen_source_paths))
         for source_path in deleted_source_paths:
             manifest = existing_manifests[source_path]
-            deleted_block_ids.update(store.delete_blocks_for_file(root_id, source_path))
+            deleted_block_ids.update(
+                store.delete_blocks_for_file(
+                    root_id,
+                    source_path,
+                    block_ids=block_ids_by_file.get((root_id, source_path), set()),
+                )
+            )
             store.delete_markdown_file_manifest(str(manifest["file_key"]))
             deleted_files += 1
 
@@ -434,18 +459,35 @@ def _load_ignore_patterns(root_path: Path) -> list[str]:
 
 
 def _matches_ignore(relative_posix: str, patterns: list[str]) -> bool:
-    """Check if a relative POSIX path matches any ignore pattern."""
+    """Check if a relative POSIX path matches any ignore pattern.
+
+    A trailing slash marks a directory pattern, as in .gitignore: ``.data/``
+    skips any ``.data`` directory and ``.claude/worktrees/`` that path from the
+    root. A pattern with an inner slash also matches a directory path, so
+    ``.claude/worktrees`` skips the files under it.
+    """
     parts = relative_posix.split("/")
+    directories = parts[:-1]
     for pattern in patterns:
-        if fnmatch.fnmatch(relative_posix, pattern):
+        directory_only = pattern.endswith("/")
+        directory_pattern = pattern.rstrip("/")
+        if not directory_pattern:
+            continue
+        if not directory_only and fnmatch.fnmatch(relative_posix, pattern):
             return True
-        # also match against each directory component individually
-        for part in parts[:-1]:  # directories only
-            if fnmatch.fnmatch(part, pattern):
-                return True
+        if "/" in directory_pattern:
+            # A path pattern is anchored to the root: match directory prefixes.
+            for depth in range(1, len(directories) + 1):
+                if fnmatch.fnmatch("/".join(directories[:depth]), directory_pattern):
+                    return True
+        else:
+            # A name pattern matches any directory component.
+            for part in directories:
+                if fnmatch.fnmatch(part, directory_pattern):
+                    return True
         # A slash-less pattern also matches the bare filename, so `secrets.md`
         # excludes sub/dir/secrets.md too (gitignore semantics; audit S3).
-        if "/" not in pattern and fnmatch.fnmatch(parts[-1], pattern):
+        if not directory_only and "/" not in pattern and fnmatch.fnmatch(parts[-1], pattern):
             return True
     return False
 
@@ -475,7 +517,7 @@ def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -
         ):
             continue
         relative_parts = file_path.relative_to(root_path).parts[:-1]
-        if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):
+        if is_default_ignored_dir(relative_parts):
             continue
         if ignore_patterns:
             relative_posix = file_path.relative_to(root_path).as_posix()
@@ -483,6 +525,15 @@ def _iter_markdown_files(root_path: Path, *, storage_root: Path | None = None) -
                 continue
         files.append(file_path)
     return sorted(files)
+
+
+def _block_ids_by_file(store: MemoryStore) -> dict[tuple[str, str], set[str]]:
+    """Group the project's block ids by ``(root_id, source_path)`` in one scan."""
+    grouped: dict[tuple[str, str], set[str]] = {}
+    for block in store.list_markdown_blocks():
+        key = (str(block["root_id"]), str(block["source_path"]))
+        grouped.setdefault(key, set()).add(str(block["block_id"]))
+    return grouped
 
 
 def _prune_removed_roots(
@@ -510,9 +561,11 @@ def _prune_removed_roots(
 
 __all__ = [
     "DEFAULT_IGNORED_DIR_NAMES",
+    "DEFAULT_IGNORED_DIR_PATHS",
     "assess_project_index_freshness",
     "build_file_key",
     "build_root_id",
     "index_paths",
     "index_paths_with_sync_plan",
+    "is_default_ignored_dir",
 ]

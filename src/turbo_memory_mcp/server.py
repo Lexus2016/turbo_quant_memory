@@ -546,7 +546,9 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         directory) with glob patterns to exclude paths from indexing.
         One pattern per line, # for comments.  Example patterns:
         ``workspace-*`` skips any directory matching the glob;
-        ``data/reports/*.md`` skips files matching a path pattern.
+        ``data/reports/*.md`` skips files matching a path pattern;
+        ``backups/`` (trailing slash, as in .gitignore) skips a directory.
+        Agent worktrees under ``.claude/worktrees`` are skipped by default.
         """
         return _memory_call("index_paths", {"paths": paths, "mode": mode})
 

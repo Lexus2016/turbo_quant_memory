@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .ingestion import DEFAULT_IGNORED_DIR_NAMES, build_root_id
+from .ingestion import build_root_id, is_default_ignored_dir
 from .secrets.paths import is_inside_secrets_storage
 from .store import NOTE_TIER_EPISODIC, PROJECT_SCOPE, MemoryStore, utc_now
 
@@ -391,7 +391,7 @@ def _iter_markdown_files(
         ):
             continue
         relative_parts = file_path.relative_to(root_path).parts[:-1]
-        if any(part in DEFAULT_IGNORED_DIR_NAMES for part in relative_parts):
+        if is_default_ignored_dir(relative_parts):
             continue
         files.append(file_path)
     return sorted(files)

@@ -106,3 +106,27 @@ def test_matches_ignore_basename_nested() -> None:
     assert _matches_ignore("sub/dir/keep.md", ["secrets.md"]) is False
     # A pattern WITH a slash still anchors to the full relative path.
     assert _matches_ignore("a/b.md", ["x/b.md"]) is False
+
+
+# --- directory patterns (2026-10-17) ---
+# The trailing slash was matched literally, so `.data/` or `backups/` silently
+# skipped nothing, and `.claude/worktrees` matched no file under it.
+
+
+def test_matches_ignore_directory_name_with_trailing_slash() -> None:
+    assert _matches_ignore(".data/raw.md", [".data/"]) is True
+    assert _matches_ignore("sub/.data/raw.md", [".data/"]) is True
+    assert _matches_ignore("docs/raw.md", [".data/"]) is False
+
+
+def test_matches_ignore_directory_path() -> None:
+    nested = ".claude/worktrees/agent-x/docs/a.md"
+    assert _matches_ignore(nested, [".claude/worktrees/"]) is True
+    assert _matches_ignore(nested, [".claude/worktrees"]) is True
+    assert _matches_ignore(".claude/agents/reviewer.md", [".claude/worktrees/"]) is False
+    # A path pattern stays anchored to the indexed root.
+    assert _matches_ignore("sub/.claude/worktrees/a.md", [".claude/worktrees/"]) is False
+
+
+def test_matches_ignore_directory_pattern_never_matches_a_file() -> None:
+    assert _matches_ignore("docs/notes.md", ["notes.md/"]) is False

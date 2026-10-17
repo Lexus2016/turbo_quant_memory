@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Markdown indexing no longer rereads every block once per file.** For each
+  changed or deleted file, an index run read all of the project's block JSON
+  files to find that file's blocks, so one run cost O(files × blocks). In a
+  project with 40k blocks, the search-time reindex ran for hours under the
+  daemon's dispatch lock. Every other client's call then failed with
+  `daemon RPC ... mid-call failure after send: TimeoutError: daemon connection
+  timeout`. A run now scans the blocks a fixed number of times, however many
+  files changed, and dropping a root scans them once per root.
+- **Directory patterns in `.tqmemoryignore` work.** A trailing slash
+  (`.data/`, `backups/`) was matched literally, so those patterns skipped
+  nothing. It now marks a directory, as in `.gitignore`. A pattern with an
+  inner slash (`.claude/worktrees`) also matches the files under that
+  directory.
+- **Agent worktrees are skipped by default.** Claude Code keeps full copies of
+  the repository for its agents under `.claude/worktrees`. Indexing and
+  linting now skip that directory, so the corpus no longer grows with every
+  agent.
+
 ## [0.31.0] - 2026-10-16
 
 ### Added

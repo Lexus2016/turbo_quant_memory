@@ -202,3 +202,17 @@ def test_near_duplicate_scan_cap_skips_entirely(tmp_path: Path) -> None:
             assert kl._scan_near_duplicate_notes(store) == []
         with patch.object(kl, "_NEAR_DUPLICATE_SCAN_CAP", 3):
             assert kl._scan_near_duplicate_notes(store) != []
+
+
+def test_lint_skips_claude_agent_worktrees(tmp_path: Path) -> None:
+    """Every agent worktree is a copy of the repository; linting them reported
+    each document once per agent as a duplicate title."""
+    project_root, env = _test_env(tmp_path)
+    (project_root / "guide.md").write_text("# Guide\n\nThe original.", encoding="utf-8")
+    worktree = project_root / ".claude" / "worktrees" / "agent-a1b2c3"
+    worktree.mkdir(parents=True)
+    (worktree / "guide.md").write_text("# Guide\n\nAn agent's copy.", encoding="utf-8")
+
+    payload = lint_knowledge_base_impl(paths=[str(project_root)], max_issues=50, cwd=project_root, environ=env)
+
+    assert payload["summary"]["duplicate_title_count"] == 0

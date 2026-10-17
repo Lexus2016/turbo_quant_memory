@@ -726,14 +726,19 @@ class MemoryStore:
         source_path: str,
         *,
         project_id: str | None = None,
+        block_ids: Iterable[str] | None = None,
     ) -> list[str]:
-        block_ids = [
-            str(block["block_id"])
-            for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
-        ]
-        for block_id in block_ids:
+        """Delete a file's blocks. Pass ``block_ids`` when the caller already
+        knows them; otherwise every block in the project is read to find them."""
+        if block_ids is None:
+            block_ids = [
+                str(block["block_id"])
+                for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
+            ]
+        resolved_ids = sorted({str(block_id) for block_id in block_ids})
+        for block_id in resolved_ids:
             self.delete_markdown_block(block_id, project_id=project_id)
-        return sorted(block_ids)
+        return resolved_ids
 
     def delete_markdown_root_data(
         self,
@@ -744,6 +749,10 @@ class MemoryStore:
         manifests = self.list_markdown_file_manifests(project_id=project_id, root_id=root_id)
         deleted_file_keys: list[str] = []
         deleted_block_ids: list[str] = []
+        # One block scan for the root, not one per file (O(files x blocks)).
+        block_ids_by_source: dict[str, list[str]] = {}
+        for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id):
+            block_ids_by_source.setdefault(str(block["source_path"]), []).append(str(block["block_id"]))
 
         for manifest in manifests:
             deleted_file_keys.append(str(manifest["file_key"]))
@@ -752,6 +761,7 @@ class MemoryStore:
                     root_id,
                     str(manifest["source_path"]),
                     project_id=project_id,
+                    block_ids=block_ids_by_source.get(str(manifest["source_path"]), []),
                 )
             )
             self.delete_markdown_file_manifest(str(manifest["file_key"]), project_id=project_id)
@@ -770,11 +780,17 @@ class MemoryStore:
         block_records: Iterable[Mapping[str, Any]],
         *,
         project_id: str | None = None,
+        existing_ids: Iterable[str] | None = None,
     ) -> list[str]:
-        existing_ids = {
-            str(block["block_id"])
-            for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
-        }
+        """Write a file's blocks and drop its stale ones. Pass ``existing_ids``
+        when the caller already knows them; otherwise every block in the
+        project is read to find them."""
+        if existing_ids is None:
+            existing_ids = [
+                str(block["block_id"])
+                for block in self.list_markdown_blocks(project_id=project_id, root_id=root_id, source_path=source_path)
+            ]
+        stale_candidates = {str(block_id) for block_id in existing_ids}
         next_ids: list[str] = []
         for block_record in block_records:
             if str(block_record["root_id"]) != root_id:
@@ -784,7 +800,7 @@ class MemoryStore:
             block = self.write_markdown_block(block_record)
             next_ids.append(str(block["block_id"]))
 
-        for stale_block_id in sorted(existing_ids.difference(next_ids)):
+        for stale_block_id in sorted(stale_candidates.difference(next_ids)):
             self.delete_markdown_block(stale_block_id, project_id=project_id)
         return next_ids
 

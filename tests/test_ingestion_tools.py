@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from turbo_memory_mcp.ingestion import assess_project_index_freshness
+from turbo_memory_mcp.ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from turbo_memory_mcp.server import _refresh_project_markdown_if_stale, build_runtime_context, index_paths_impl
+from turbo_memory_mcp.store import MemoryStore
 
 
 def _test_env(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -379,3 +381,87 @@ def test_vanished_root_does_not_block_reindex_of_changed_live_root(tmp_path: Pat
 
     contents = [block["content_raw"] for block in store.list_markdown_blocks()]
     assert any("edited after the root vanished" in content for content in contents)
+
+
+# --- block scans per index run (2026-10-17) ---
+# Each changed or deleted file re-read every block JSON in the project to find
+# its own blocks, so one run cost O(files x blocks). In a project with 40k
+# blocks, a search-time reindex ran for hours under the daemon's dispatch lock,
+# and every other client's call timed out.
+
+
+def _block_scans_during(store: MemoryStore, action: Callable[[], object]) -> int:
+    """Count full reads of the project's block directory while *action* runs."""
+    real_load = store._load_json_records_skipping_corrupt
+    labels: list[str] = []
+
+    def spy(directory: Path, *, label: str) -> list[dict[str, object]]:
+        labels.append(label)
+        return real_load(directory, label=label)
+
+    with patch.object(store, "_load_json_records_skipping_corrupt", side_effect=spy):
+        action()
+    return labels.count("markdown block")
+
+
+def test_incremental_index_scans_blocks_a_fixed_number_of_times(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    files = [docs / f"note-{index:02d}.md" for index in range(20)]
+    for path in files:
+        path.write_text(f"# {path.stem}\n\nOriginal body.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    for path in files[:10]:
+        path.write_text(f"# {path.stem}\n\nEdited body.", encoding="utf-8")
+    for path in files[10:]:
+        path.unlink()
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    scans = _block_scans_during(
+        store, lambda: index_paths_with_sync_plan(store, mode="incremental", cwd=project_root)
+    )
+
+    assert scans <= 2
+    blocks = store.list_markdown_blocks()
+    assert {block["source_path"] for block in blocks} == {path.name for path in files[:10]}
+    assert all("Edited body." in block["content_raw"] for block in blocks)
+
+
+def test_pruning_a_removed_root_scans_blocks_a_fixed_number_of_times(tmp_path: Path) -> None:
+    project_root, env = _test_env(tmp_path)
+    docs_a = project_root / "docs-a"
+    docs_b = project_root / "docs-b"
+    docs_a.mkdir()
+    docs_b.mkdir()
+    for index in range(20):
+        (docs_a / f"a-{index:02d}.md").write_text(f"# A{index}\n\nAlpha text.", encoding="utf-8")
+    (docs_b / "b.md").write_text("# B\n\nBeta text.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs_a), str(docs_b)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    scans = _block_scans_during(
+        store, lambda: index_paths_with_sync_plan(store, paths=[str(docs_b)], mode="full", cwd=project_root)
+    )
+
+    assert scans <= 3
+    assert {block["source_path"] for block in store.list_markdown_blocks()} == {"b.md"}
+
+
+def test_index_paths_skips_claude_agent_worktrees_by_default(tmp_path: Path) -> None:
+    """Claude Code keeps agent worktrees, full copies of the repository, under
+    .claude/worktrees; indexing them multiplied the corpus by the agent count."""
+    project_root, env = _test_env(tmp_path)
+    (project_root / "README.md").write_text("# README\n\nMain doc.", encoding="utf-8")
+    agents = project_root / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "reviewer.md").write_text("# Reviewer\n\nAgent definition.", encoding="utf-8")
+    worktree_docs = project_root / ".claude" / "worktrees" / "agent-a1b2c3" / "docs"
+    worktree_docs.mkdir(parents=True)
+    (worktree_docs / "guide.md").write_text("# Guide\n\nA copy of the repository.", encoding="utf-8")
+
+    index_paths_impl(paths=[str(project_root)], mode="full", cwd=project_root, environ=env)
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+
+    source_paths = sorted(manifest["source_path"] for manifest in store.list_markdown_file_manifests())
+    assert source_paths == [".claude/agents/reviewer.md", "README.md"]
