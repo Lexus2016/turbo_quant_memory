@@ -485,3 +485,55 @@ def test_index_run_streams_blocks_instead_of_listing_them(tmp_path: Path) -> Non
     assert payload["changed_files"] == 1
     assert payload["deleted_files"] == 1
     assert payload["block_count"] == len(store.list_markdown_block_ids())
+
+
+# --- file budget for search-time refresh (2026-10-17) ---
+# A search refreshes at most a budget of changed files inline; the rest goes
+# to a background worker. Files past the budget must stay "seen": counting
+# them as deleted would drop their blocks.
+
+
+def _ten_edited_docs(tmp_path: Path) -> tuple[Path, MemoryStore, list[Path]]:
+    project_root, env = _test_env(tmp_path)
+    docs = project_root / "docs"
+    docs.mkdir()
+    files = [docs / f"doc-{index:02d}.md" for index in range(10)]
+    for path in files:
+        path.write_text(f"# {path.stem}\n\nOriginal body.", encoding="utf-8")
+    index_paths_impl(paths=[str(docs)], mode="full", cwd=project_root, environ=env)
+    for path in files:
+        path.write_text(f"# {path.stem}\n\nEdited body, longer than before.", encoding="utf-8")
+    _, store = build_runtime_context(cwd=project_root, environ=env)
+    return project_root, store, files
+
+
+def test_budgeted_index_never_treats_unprocessed_files_as_deleted(tmp_path: Path) -> None:
+    project_root, store, files = _ten_edited_docs(tmp_path)
+
+    payload, plan = index_paths_with_sync_plan(store, mode="incremental", cwd=project_root, max_changed_files=2)
+
+    assert payload["deleted_files"] == 0
+    assert payload["changed_files"] == 2
+    assert payload["remaining_files"] == 8
+    assert plan["delete_block_ids"] == []
+    assert sorted(m["source_path"] for m in store.list_markdown_file_manifests()) == [p.name for p in files]
+
+
+def test_budgeted_index_converges_over_repeated_batches(tmp_path: Path) -> None:
+    project_root, store, _ = _ten_edited_docs(tmp_path)
+
+    calls = 0
+    remaining = None
+    while remaining != 0:
+        calls += 1
+        assert calls <= 5
+        payload, _ = index_paths_with_sync_plan(store, mode="incremental", cwd=project_root, max_changed_files=2)
+        remaining = payload["remaining_files"]
+
+    assert all("Edited body" in block["content_raw"] for block in store.list_markdown_blocks())
+
+
+def test_full_mode_rejects_a_file_budget(tmp_path: Path) -> None:
+    project_root, store, _ = _ten_edited_docs(tmp_path)
+    with pytest.raises(ValueError):
+        index_paths_with_sync_plan(store, mode="full", cwd=project_root, max_changed_files=2)

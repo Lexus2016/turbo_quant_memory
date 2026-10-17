@@ -68,7 +68,15 @@ def semantic_search(
     limit: int,
     tier_filter: Sequence[str] | None = None,
     source_filter: str | None = None,
+    sync_empty_project: bool = True,
 ) -> dict[str, Any]:
+    """Search the mirror.
+
+    ``sync_empty_project=False`` is for callers that already refreshed the
+    project index within a budget: an empty project mirror then means a
+    background job is still filling it, and a full sync here would undo the
+    budget.
+    """
     query_text = query.strip()
     if not query_text:
         raise ValueError("semantic_search requires a non-empty query.")
@@ -116,6 +124,7 @@ def semantic_search(
         ranked = _query_scope(
             index, store, PROJECT_SCOPE, query_text, normalized_limit,
             tier_filter=resolved_tiers, source_kinds=source_kinds,
+            sync_empty_project=sync_empty_project,
         )
     elif resolved_scope == GLOBAL_SCOPE:
         ranked = _query_scope(
@@ -129,6 +138,7 @@ def semantic_search(
                     index, store, PROJECT_SCOPE, query_text,
                     max(5, normalized_limit * 2), hybrid=True,
                     tier_filter=resolved_tiers, source_kinds=source_kinds,
+                    sync_empty_project=sync_empty_project,
                 ),
                 *_query_scope(
                     index, store, GLOBAL_SCOPE, query_text,
@@ -177,8 +187,9 @@ def _query_scope(
     hybrid: bool = False,
     tier_filter: Sequence[str] | None = None,
     source_kinds: Sequence[str] | None = None,
+    sync_empty_project: bool = True,
 ) -> list[dict[str, Any]]:
-    _ensure_scope_synced(index, store, scope)
+    _ensure_scope_synced(index, store, scope, sync_empty_project=sync_empty_project)
     rows = index.search(
         query, scope, limit=max(limit, 5), tier_filter=tier_filter, source_kinds=source_kinds
     )
@@ -227,9 +238,11 @@ def _query_scope(
     return _rank_candidates(candidates)
 
 
-def _ensure_scope_synced(index: RetrievalIndex, store: MemoryStore, scope: str) -> None:
+def _ensure_scope_synced(
+    index: RetrievalIndex, store: MemoryStore, scope: str, *, sync_empty_project: bool = True
+) -> None:
     if scope == PROJECT_SCOPE:
-        if index.count_rows(PROJECT_SCOPE) == 0 and (
+        if sync_empty_project and index.count_rows(PROJECT_SCOPE) == 0 and (
             store.has_markdown_blocks(project_id=store.project.project_id) or store.list_notes(PROJECT_SCOPE)
         ):
             index.sync_project()

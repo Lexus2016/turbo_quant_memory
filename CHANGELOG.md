@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and merges 256 rows at a time, then deletes rows the store no longer has,
   with at most 500 ids per delete statement. The rows it returns carry no
   vectors or content. Incremental block syncs stream the same way.
+- **A search no longer waits for a large reindex.** Before answering, a
+  search or hydrate used to bring its project's index fully up to date. A
+  large change, such as a new agent worktree or a first index, then took
+  minutes and timed out that call and every other call of the project.
+  Now the inline refresh does at most 25 changed files and 500 mirror rows
+  (`TQMEMORY_INLINE_REFRESH_FILES`, `TQMEMORY_INLINE_REFRESH_ITEMS`). A
+  background worker finishes the rest in batches of 50 files and 1,000 rows,
+  each batch under the project's lock. While that runs, results carry
+  `index_refresh: {"state": "refreshing", "pending_files": N,
+  "pending_items": M}`.
+  - Files past the budget are never mistaken for deleted ones.
+  - A job that stops making progress, such as one blocked by unreadable
+    blocks, ends instead of looping.
+  - `index_paths` payloads gain `remaining_files`.
 
 ### Fixed
 - **Proxied calls honour the dispatch-lock bound.** The daemon listener took

@@ -89,12 +89,25 @@ def index_paths_with_sync_plan(
     *,
     mode: str = "incremental",
     cwd: Path | str | None = None,
+    max_changed_files: int | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """Register Markdown roots and index them into the current project store."""
+    """Register Markdown roots and index them into the current project store.
+
+    ``max_changed_files`` bounds how many files are parsed and rewritten in
+    this run; the rest are left for a later run and counted in the payload's
+    ``remaining_files``. They still count as seen, so they are never mistaken
+    for deleted files. Only incremental runs can be bounded: a full run
+    ignores manifests, so a later run could not tell what was done.
+    """
 
     resolved_mode = mode.strip().lower()
     if resolved_mode not in INDEX_MODES:
         raise ValueError(f"Unsupported indexing mode: {mode}")
+    if max_changed_files is not None:
+        if resolved_mode != "incremental":
+            raise ValueError("max_changed_files needs mode='incremental'")
+        if max_changed_files < 1:
+            raise ValueError("max_changed_files must be at least 1")
 
     base_dir = Path(cwd or store.project.project_root).expanduser().resolve()
     registered_roots = _resolve_roots(store, paths, base_dir=base_dir)
@@ -105,6 +118,7 @@ def index_paths_with_sync_plan(
     changed_files = 0
     skipped_files = 0
     deleted_files = 0
+    remaining_files = 0
     changed_block_ids: set[str] = set()
     deleted_block_ids: set[str] = set()
 
@@ -186,6 +200,10 @@ def index_paths_with_sync_plan(
                 skipped_files += 1
                 continue
 
+            if max_changed_files is not None and changed_files >= max_changed_files:
+                remaining_files += 1
+                continue
+
             parsed_blocks = parse_markdown_blocks(source_text)
             existing_block_ids = block_ids_by_file.get((root_id, source_path), set())
             block_records = [
@@ -247,6 +265,7 @@ def index_paths_with_sync_plan(
         deleted_files=deleted_files,
         block_count=block_count,
         missing_roots=missing_roots,
+        remaining_files=remaining_files,
     )
     return payload, {
         "upsert_block_ids": sorted(changed_block_ids),

@@ -62,6 +62,7 @@ from .ingestion import assess_project_index_freshness, index_paths_with_sync_pla
 from .knowledge_lint import lint_knowledge_base
 from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks, project_lock_key
 from .migrations import format_pending_warning
+from .refresher import IndexRefresher, RefreshProgress
 from .retrieval import MAX_SEMANTIC_LIMIT, semantic_search
 from .retrieval_index import RetrievalIndex
 from .secrets import (
@@ -1484,7 +1485,7 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
             try:
                 release_daemon_lock(endpoint)
             finally:
-                _shutdown_workspace(workspace)
+                _shutdown_background(workspace)
 
 
 def _run_proxy(bootstrap: BootstrapResult) -> None:
@@ -1501,7 +1502,7 @@ def _run_proxy(bootstrap: BootstrapResult) -> None:
         try:
             runtime.shutdown()
         finally:
-            _shutdown_workspace(workspace)
+            _shutdown_background(workspace)
 
 
 def _run_standalone() -> None:
@@ -1513,12 +1514,15 @@ def _run_standalone() -> None:
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
-        _shutdown_workspace(workspace)
+        _shutdown_background(workspace)
 
 
-def _shutdown_workspace(workspace: WorkspaceRuntime | None) -> None:
-    if workspace is not None:
-        workspace.shutdown()
+def _shutdown_background(workspace: WorkspaceRuntime | None) -> None:
+    try:
+        DEFAULT_REFRESHER.shutdown()
+    finally:
+        if workspace is not None:
+            workspace.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -1965,14 +1969,17 @@ def semantic_search_impl(
 ) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
     resolved_scope = scope.strip().lower()
+    index_refresh: dict[str, Any] | None = None
     if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
-        _refresh_project_indexes_if_needed(store)
+        index_refresh = _refresh_project_for_read(store, cwd=cwd, environ=environ)
     if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
         _refresh_global_retrieval_if_needed(store)
     payload = semantic_search(
         store, query, scope=scope, limit=limit, tier_filter=tier_filter,
-        source_filter=source_filter,
+        source_filter=source_filter, sync_empty_project=False,
     )
+    if index_refresh is not None:
+        payload["index_refresh"] = index_refresh
     milestone = record_semantic_search_usage(
         store,
         project_id=store.project.project_id,
@@ -1995,9 +2002,12 @@ def hydrate_impl(
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     _, store = build_runtime_context(cwd=cwd, environ=environ)
+    index_refresh: dict[str, Any] | None = None
     if scope.strip().lower() == PROJECT_SCOPE:
-        _refresh_project_indexes_if_needed(store)
+        index_refresh = _refresh_project_for_read(store, cwd=cwd, environ=environ)
     payload = hydrate(store, item_id, scope=scope, mode=mode)
+    if index_refresh is not None:
+        payload["index_refresh"] = index_refresh
     record_hydration_usage(
         store,
         project_id=store.project.project_id,
@@ -2459,6 +2469,120 @@ def _sync_with_warning(action: Callable[[], None]) -> str | None:
     return None
 
 
+# Search-time refresh budget: what one search or hydrate does inline before it
+# answers. The rest goes to DEFAULT_REFRESHER, in batches under the project
+# lock. Overridable per deployment; unparseable or non-positive values fall
+# back to the defaults.
+INLINE_REFRESH_FILES = 25
+INLINE_REFRESH_ITEMS = 500
+ENV_INLINE_REFRESH_FILES = "TQMEMORY_INLINE_REFRESH_FILES"
+ENV_INLINE_REFRESH_ITEMS = "TQMEMORY_INLINE_REFRESH_ITEMS"
+
+
+def _inline_refresh_budget(environ: Mapping[str, str] | None, name: str, default: int) -> int:
+    env = os.environ if environ is None else environ
+    try:
+        value = int(str(env.get(name, "")).strip())
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def refresh_project_batch(
+    store: MemoryStore, *, max_files: int | None, max_items: int | None
+) -> RefreshProgress:
+    """Bring the project index up to date, doing at most the given work.
+
+    ``None`` budgets mean "everything". With budgets, the markdown pass parses
+    at most ``max_files`` changed files and the mirror repair embeds at most
+    ``max_items`` rows; the rest is reported for a later batch. A markdown or
+    retrieval format change still rebuilds in one go: those are rare, and a
+    full markdown pass cannot be split (it ignores the manifests).
+    """
+
+    bounded = max_files is not None or max_items is not None
+    remaining_files = 0
+    root = store.project.project_root
+    markdown_roots = store.list_markdown_roots()
+    markdown_manifest = store.read_markdown_manifest()
+    if markdown_roots and (
+        markdown_manifest is None or int(markdown_manifest.get("format_version", 0)) != MARKDOWN_FORMAT_VERSION
+    ):
+        try:
+            _, sync_plan = index_paths_with_sync_plan(store, mode="full", cwd=root)
+        except FileNotFoundError:
+            pass
+        else:
+            _apply_project_index_sync_plan(store, sync_plan, bounded=bounded)
+    elif assess_project_index_freshness(store, cwd=root)["needs_reindex"]:
+        try:
+            payload, sync_plan = index_paths_with_sync_plan(
+                store, mode="incremental", cwd=root, max_changed_files=max_files
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            remaining_files = int(str(payload.get("remaining_files", 0)))
+            _apply_project_index_sync_plan(store, sync_plan, bounded=bounded)
+
+    if _project_retrieval_requires_rebuild(store):
+        _rebuild_scope_index_for_format_change(store, PROJECT_SCOPE)
+
+    # Notes-only projects never enter the markdown branch above, so drift
+    # repair must also run here: catches added/removed notes AND on-disk
+    # content edits (updated_at drift) before they surface as stale results.
+    index = RetrievalIndex(store)
+    remaining_items = 0
+    try:
+        remaining_items = _repair_project_retrieval_if_needed(store, index, max_items=max_items)
+    except Exception as exc:
+        _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
+    return RefreshProgress(remaining_files=remaining_files, remaining_items=remaining_items)
+
+
+def _run_refresh_batch(
+    cwd: str | None, environ: Mapping[str, str] | None, max_files: int, max_items: int
+) -> RefreshProgress:
+    _, store = build_runtime_context(cwd=cwd, environ=environ)
+    return refresh_project_batch(store, max_files=max_files, max_items=max_items)
+
+
+DEFAULT_REFRESHER = IndexRefresher(DEFAULT_SCOPE_LOCKS, _run_refresh_batch)
+
+
+def _refresh_project_for_read(
+    store: MemoryStore, *, cwd: Path | str | None, environ: Mapping[str, str] | None
+) -> dict[str, Any] | None:
+    """Refresh inline within budget; hand the rest to the background worker.
+
+    Returns the ``index_refresh`` status while work is pending, else None.
+    While a background job runs for the project, a read does no refresh of
+    its own and only reports the job.
+    """
+
+    project_id = store.project.project_id
+    if DEFAULT_REFRESHER.is_active(project_id):
+        return DEFAULT_REFRESHER.status(project_id)
+    progress = refresh_project_batch(
+        store,
+        max_files=_inline_refresh_budget(environ, ENV_INLINE_REFRESH_FILES, INLINE_REFRESH_FILES),
+        max_items=_inline_refresh_budget(environ, ENV_INLINE_REFRESH_ITEMS, INLINE_REFRESH_ITEMS),
+    )
+    if not progress.pending:
+        return None
+    DEFAULT_REFRESHER.schedule(
+        project_id,
+        cwd=str(cwd) if cwd is not None else None,
+        environ=environ,
+        progress=progress,
+    )
+    return DEFAULT_REFRESHER.status(project_id) or {
+        "state": "refreshing",
+        "pending_files": progress.remaining_files,
+        "pending_items": progress.remaining_items,
+    }
+
+
 def _refresh_project_markdown_if_stale(store: MemoryStore) -> None:
     freshness = assess_project_index_freshness(store, cwd=store.project.project_root)
     if not freshness["needs_reindex"]:
@@ -2476,35 +2600,7 @@ def _refresh_project_markdown_if_stale(store: MemoryStore) -> None:
 
 
 def _refresh_project_indexes_if_needed(store: MemoryStore) -> None:
-    markdown_roots = store.list_markdown_roots()
-    markdown_manifest = store.read_markdown_manifest()
-    if markdown_roots and (
-        markdown_manifest is None or int(markdown_manifest.get("format_version", 0)) != MARKDOWN_FORMAT_VERSION
-    ):
-        try:
-            _, sync_plan = index_paths_with_sync_plan(
-                store,
-                mode="full",
-                cwd=store.project.project_root,
-            )
-        except FileNotFoundError:
-            pass
-        else:
-            _apply_project_index_sync_plan(store, sync_plan)
-    else:
-        _refresh_project_markdown_if_stale(store)
-
-    if _project_retrieval_requires_rebuild(store):
-        _rebuild_scope_index_for_format_change(store, PROJECT_SCOPE)
-
-    # Notes-only projects never enter the markdown branch above, so drift
-    # repair must also run here: catches added/removed notes AND on-disk
-    # content edits (updated_at drift) before they surface as stale results.
-    index = RetrievalIndex(store)
-    try:
-        _repair_project_retrieval_if_needed(store, index)
-    except Exception as exc:
-        _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
+    refresh_project_batch(store, max_files=None, max_items=None)
 
 
 def _refresh_global_retrieval_if_needed(store: MemoryStore) -> None:
@@ -2518,13 +2614,20 @@ def _refresh_global_retrieval_if_needed(store: MemoryStore) -> None:
         _rebuild_scope_index_after_error(index, GLOBAL_SCOPE, exc)
 
 
-def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, Any]) -> None:
+def _apply_project_index_sync_plan(
+    store: MemoryStore, sync_plan: Mapping[str, Any], *, bounded: bool = False
+) -> None:
+    """Mirror one index run's block changes.
+
+    ``bounded`` (a budgeted refresh) never falls back to a full sync of an
+    empty mirror and skips the repair: the caller runs a budgeted repair.
+    """
     index = RetrievalIndex(store)
     upsert_block_ids = [str(item_id) for item_id in sync_plan.get("upsert_block_ids", [])]
     delete_block_ids = [str(item_id) for item_id in sync_plan.get("delete_block_ids", [])]
 
     try:
-        if index.count_rows(PROJECT_SCOPE) == 0:
+        if not bounded and index.count_rows(PROJECT_SCOPE) == 0:
             if store.has_markdown_blocks() or store.list_notes(PROJECT_SCOPE):
                 index.sync_project()
             return
@@ -2534,7 +2637,8 @@ def _apply_project_index_sync_plan(store: MemoryStore, sync_plan: Mapping[str, A
         if upsert_block_ids:
             index.sync_project_blocks(upsert_block_ids)
 
-        _repair_project_retrieval_if_needed(store, index)
+        if not bounded:
+            _repair_project_retrieval_if_needed(store, index)
     except Exception as exc:
         _rebuild_scope_index_after_error(index, PROJECT_SCOPE, exc)
 
@@ -2612,7 +2716,9 @@ def _rebuild_scope_index_for_format_change(store: MemoryStore, scope: str) -> No
         index.sync_project()
 
 
-def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:
+def _repair_project_retrieval_if_needed(
+    store: MemoryStore, index: RetrievalIndex, *, max_items: int | None = None
+) -> int:
     """Reconcile the project index against the store, cheaply.
 
     The old contract here was ``count != expected -> sync_project()``, i.e. a
@@ -2625,6 +2731,10 @@ def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalInde
     existing note_id leaves the id set unchanged but the mirror row stale
     (embedded from the pre-edit text). Blocks skip this — markdown content
     changes are already caught by the checksum-based staleness path.
+
+    ``max_items`` bounds how many rows are embedded (notes first, then
+    blocks); stale rows are always deleted. Returns how many missing or
+    edited rows are left for a later call.
     """
     notes = store.list_notes(PROJECT_SCOPE)
     expected_note_ids = {str(note["note_id"]) for note in notes}
@@ -2639,11 +2749,11 @@ def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalInde
         and str(note.get("updated_at") or "") != mirror_updated[str(note["note_id"])]
     }
     if existing_ids == expected_ids and not changed_notes:
-        return
+        return 0
 
     stale_ids = existing_ids - expected_ids
-    missing_notes = (expected_note_ids - existing_ids) | changed_notes
-    missing_blocks = expected_block_ids - existing_ids
+    missing_notes = sorted((expected_note_ids - existing_ids) | changed_notes)
+    missing_blocks = sorted(expected_block_ids - existing_ids)
     print(
         f"[tqmemory] project retrieval drift (have {len(existing_ids)}, expected "
         f"{len(expected_ids)}); reconciling by id "
@@ -2653,10 +2763,15 @@ def _repair_project_retrieval_if_needed(store: MemoryStore, index: RetrievalInde
     )
     if stale_ids:
         index.delete_items(PROJECT_SCOPE, sorted(stale_ids))
+    pending = len(missing_notes) + len(missing_blocks)
+    if max_items is not None:
+        missing_notes = missing_notes[:max_items]
+        missing_blocks = missing_blocks[: max(max_items - len(missing_notes), 0)]
     if missing_notes:
-        index.sync_project_notes(sorted(missing_notes))
+        index.sync_project_notes(missing_notes)
     if missing_blocks:
-        index.sync_project_blocks(sorted(missing_blocks))
+        index.sync_project_blocks(missing_blocks)
+    return pending - len(missing_notes) - len(missing_blocks)
 
 
 def _repair_global_retrieval_if_needed(store: MemoryStore, index: RetrievalIndex) -> None:

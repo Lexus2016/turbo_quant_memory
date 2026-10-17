@@ -243,3 +243,14 @@ def test_mirror_timestamps_are_read_without_vectors(tmp_path: Path) -> None:
 
     assert stamps == expected
     assert set(stamps) == set(store.list_markdown_block_ids())
+
+
+def test_repair_embeds_at_most_the_item_budget() -> None:
+    store = _FakeStore(note_ids=[f"n{index:02d}" for index in range(30)], block_ids=["b1", "b2"])
+    index = _FakeIndex(project=set())
+
+    remaining = _repair_project_retrieval_if_needed(store, index, max_items=10)  # type: ignore[arg-type]
+
+    assert remaining == 22
+    assert len(index.note_upserts) + len(index.block_upserts) == 10
+    assert index.full_resyncs == 0

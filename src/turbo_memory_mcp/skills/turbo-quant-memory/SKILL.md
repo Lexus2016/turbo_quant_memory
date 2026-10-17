@@ -77,6 +77,7 @@ This skill's `version:` (frontmatter) always equals the package version it shipp
 1. Call `health()` + `server_info()` (migrations check — see §1).
 2. Call `recent_context()` FIRST — a query-free bootstrap, **including session `handoff` notes** that a plain `semantic_search` hides by default. Ordering: `project`/`global` scopes are pure recency (newest first); in `hybrid` the current project's notes fill the window first and other projects' promoted notes only backfill leftover slots. `recent_context(format="text")` returns the same window as one line per note plus a short summary, about 5× smaller than the JSON.
 3. For a specific task: `semantic_search(query="<task topic>", scope="hybrid")`. Asking "what did we decide/learn about X"? Pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks. Recovering a handoff by query? Pass `tier_filter=["episodic"]`.
+4. A `semantic_search` or `hydrate` result that carries `index_refresh` (`{"state": "refreshing", "pending_files": N, "pending_items": M}`) means the project's index is still catching up in the background after a large change. Results can miss very recent doc edits. Carry on, and repeat the search later if those edits matter.
 
 ### 3.2 Memory writing discipline
 
