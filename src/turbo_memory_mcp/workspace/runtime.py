@@ -271,10 +271,13 @@ class WorkspaceRuntime:
         """Coordination state for health and server_info. Reads rows only; never raises."""
 
         live: int | None
+        idle: int | None
         try:
-            live = len(self.live_sessions())
+            rows = self.live_sessions()
+            idle = len(status_views.split_peers(_peers(rows, self.session_id), time.time())[1])
+            live = len(rows) - idle
         except Exception:
-            live = None
+            live = idle = None
         # Read after the rows: a failed read sets degraded_reason, and the state must then say so.
         state = "degraded" if self.degraded_reason else "ok"
         db_path: str | None
@@ -290,6 +293,7 @@ class WorkspaceRuntime:
             "workspace": self.workspace.root_key,
             "db_path": db_path,
             "live_sessions": live,
+            "idle_sessions": idle,
             "journal": self.journal_state(),
             "coverage": status_views.COVERAGE_TEXT,
         }
@@ -344,7 +348,9 @@ class WorkspaceRuntime:
                 "status": "ok",
                 "feature": feature,
                 "areas": list(normalized),
-                "overlaps": status_views.overlap_views(normalized, _peers(rows, self.session_id)),
+                "overlaps": status_views.overlap_views(
+                    normalized, status_views.split_peers(_peers(rows, self.session_id), now)[0]
+                ),
                 "recent_changes_in_areas": status_views.change_views(changes, _by_id(rows)),
             }
         except Exception as exc:
@@ -381,7 +387,7 @@ class WorkspaceRuntime:
             rows = db.list_sessions(root_key)
             changes, watermark = _recent_changes(db, root_key, now, areas=None)
             areas = own.areas if own is not None else ()
-            peers = _peers(rows, self.session_id)
+            active, idle = status_views.split_peers(_peers(rows, self.session_id), now)
             response: dict[str, Any] = {
                 "status": "ok",
                 "workspace": root_key,
@@ -391,12 +397,15 @@ class WorkspaceRuntime:
                     "feature": own.feature if own is not None else None,
                     "areas": list(areas),
                 },
-                "sessions": [status_views.session_view(row) for row in peers],
+                "sessions": [status_views.session_view(row) for row in active],
+                "idle_sessions": [status_views.idle_session_view(row, now) for row in idle],
                 "recent_changes": status_views.change_views(changes, _by_id(rows)),
-                "overlaps": status_views.overlap_views(areas, peers),
+                "overlaps": status_views.overlap_views(areas, active),
                 "journal": self.journal_state(),
                 "coverage": status_views.COVERAGE_TEXT,
             }
+            if idle:
+                response["idle_note"] = status_views.IDLE_NOTE
             # Last step: a response that failed to build must not move the cursor past unseen events.
             self._advance_cursor(db, watermark)
         except Exception as exc:

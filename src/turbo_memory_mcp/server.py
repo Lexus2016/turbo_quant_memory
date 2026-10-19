@@ -145,7 +145,9 @@ _WORKSPACE_INSTRUCTIONS = (
     "file_history and restore_file recover overwritten files. Call workspace_status before editing a file "
     "another session may have touched, and before every commit while other sessions are live. While other "
     "sessions are live, never run destructive git commands (checkout -- ., reset --hard, stash, clean, branch "
-    "switch) without the human's explicit confirmation."
+    "switch) without the human's explicit confirmation. A session under `idle_sessions` made no tqmemory call "
+    "for a long time and is not an active peer; a session's mere presence or old last_activity_at is never a "
+    "reason to postpone work, only `overlaps` and `recent_changes` are."
 )
 
 
@@ -185,6 +187,7 @@ def _fallback_workspace_block(*, enabled: bool, state: str, reason: str) -> dict
         "workspace": None,
         "db_path": None,
         "live_sessions": None,
+        "idle_sessions": None,
         "journal": {
             "state": "off",
             "reason": None,
@@ -729,6 +732,8 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         """Overview of the sessions sharing this working tree: peers, overlaps and recent file changes.
 
         Call it at session start. Inferred writers are guesses from announced areas, never facts.
+        Peers that made no tqmemory call for a long time are listed under `idle_sessions`, not in
+        `sessions`, and their announced areas are left out of `overlaps`.
         """
         return _workspace_call(lambda ws: ws.status())
 

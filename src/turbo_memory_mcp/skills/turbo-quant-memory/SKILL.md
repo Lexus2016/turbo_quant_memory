@@ -121,6 +121,7 @@ Several agent sessions may share one working tree. tqmemory shows them to each o
 - While other sessions are live: call `workspace_status` before editing a file you have not touched recently, before every commit, and every few edits.
 - When any tqmemory response carries a `workspace` field, read it. Before writing a file another session changed since you read it, re-read it.
 - While other sessions are live, do not run destructive git commands (`checkout -- .`, `reset --hard`, `stash`, `clean`, branch switch) without the human's explicit confirmation.
+- "Live" means listed in `sessions`. A session under `idle_sessions` made no tqmemory call for 30+ minutes: it is not an active peer and its areas are not in `overlaps`. A session's presence or old `last_activity_at` is never a reason to postpone work; only `overlaps` and `recent_changes` are.
 - If your edit overwrote someone's work, or theirs overwrote yours: `file_history(path)` then `restore_file(path, version)`; a restore is itself undoable.
 
 ## 4. Troubleshoot

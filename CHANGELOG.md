@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **An idle session no longer counts as an active peer.** A session whose
+  process was alive but that made no tqmemory call for 30 minutes stayed in
+  `workspace_status.sessions` and its announced areas stayed in `overlaps`,
+  so an agent that had been quiet for an hour could still make another
+  agent hold back. Such a session now appears under `idle_sessions` (with
+  `idle_for_s`) and an `idle_note`, and its areas are left out of
+  `overlaps` in `workspace_status` and `announce_work`. `health` and
+  `server_info` report `live_sessions` for active sessions only, plus a new
+  `idle_sessions` count. The row is kept: the session's next call makes it
+  active again, and journaling and the process-liveness pruning are
+  unchanged. A session that edits files without calling tqmemory looks
+  idle; its file changes still show under `recent_changes`.
+
 ## [0.32.0] - 2026-10-17
 
 ### Changed

@@ -6,6 +6,7 @@ import os
 import subprocess
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +19,16 @@ from turbo_memory_mcp.workspace.models import EventRow, SessionRow
 from turbo_memory_mcp.workspace.runtime import WorkspaceRuntime
 from turbo_memory_mcp.workspace.status import (
     COVERAGE_TEXT,
+    PEER_IDLE_AFTER_S,
     STATUS_RECENT_WINDOW_S,
     area_matches,
     areas_overlap,
     change_views,
     collect_changes,
+    idle_session_view,
     infer_attribution,
     shared_areas,
+    split_peers,
     writer_hint,
 )
 
@@ -484,3 +488,124 @@ def test_status_finds_recent_change_behind_stale_event_with_higher_id(
     paths = [change["path"] for change in runtime.status()["recent_changes"]]
 
     assert paths == ["src/recent.py"]
+
+
+# Idle peers -----------------------------------------------------------------
+
+
+def _idle_row(session_id: str, last_activity_at: float) -> SessionRow:
+    return replace(_row(session_id, "codex", "docs", ("docs",)), last_activity_at=last_activity_at)
+
+
+def test_split_peers_divides_by_time_since_last_activity() -> None:
+    now = 100_000.0
+    fresh = _idle_row("fresh", now - 60.0)
+    edge = _idle_row("edge", now - PEER_IDLE_AFTER_S)
+    stale = _idle_row("stale", now - PEER_IDLE_AFTER_S - 1.0)
+
+    active, idle = split_peers([fresh, edge, stale], now)
+
+    assert [row.session_id for row in active] == ["fresh", "edge"]
+    assert [row.session_id for row in idle] == ["stale"]
+
+
+def test_split_peers_reads_a_clock_step_backwards_as_active() -> None:
+    now = 100_000.0
+    ahead = _idle_row("ahead", now + 500.0)
+
+    active, idle = split_peers([ahead], now)
+
+    assert [row.session_id for row in active] == ["ahead"]
+    assert idle == []
+    assert idle_session_view(ahead, now)["idle_for_s"] == 0
+
+
+def test_idle_session_view_reports_whole_seconds_idle() -> None:
+    now = 100_000.0
+
+    view = idle_session_view(_idle_row("stale", now - 3600.4), now)
+
+    assert view["idle_for_s"] == 3600
+    assert view["feature"] == "docs"
+    assert view["areas"] == ["docs"]
+
+
+def test_status_moves_an_idle_peer_out_of_sessions_and_overlaps(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env)
+    second.note_client("codex", "1.0")
+    second.announce_work("docs", ["docs"])
+    first.announce_work("docs", ["docs"])
+    assert first.db is not None
+    first.db.touch_session(second.session_id, time.time() - PEER_IDLE_AFTER_S - 600.0)
+
+    status = first.status()
+
+    assert status["sessions"] == []
+    assert status["overlaps"] == []
+    assert [(view["client"], view["feature"]) for view in status["idle_sessions"]] == [("codex", "docs")]
+    assert status["idle_sessions"][0]["idle_for_s"] >= PEER_IDLE_AFTER_S + 600
+    assert status["idle_note"]
+
+
+def test_status_omits_the_idle_note_when_nobody_is_idle(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    _start(runtimes, repo, env)
+
+    status = first.status()
+
+    assert len(status["sessions"]) == 1
+    assert status["idle_sessions"] == []
+    assert "idle_note" not in status
+
+
+def test_announce_ignores_the_areas_of_an_idle_peer(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env)
+    second.announce_work("docs", ["docs"])
+    assert first.db is not None
+    first.db.touch_session(second.session_id, time.time() - PEER_IDLE_AFTER_S - 600.0)
+
+    result = first.announce_work("docs again", ["docs"])
+
+    assert result["overlaps"] == []
+
+
+def test_an_idle_peer_is_kept_and_returns_to_active_on_its_next_touch(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env)
+    second.announce_work("docs", ["docs"])
+    assert first.db is not None
+    first.db.touch_session(second.session_id, time.time() - PEER_IDLE_AFTER_S - 600.0)
+
+    assert first.status()["sessions"] == []
+    assert second.session_id in {row.session_id for row in first.live_sessions()}
+
+    second.touch()
+    status = first.status()
+
+    assert [view["feature"] for view in status["sessions"]] == ["docs"]
+    assert status["idle_sessions"] == []
+
+
+def test_describe_counts_only_active_sessions_as_live(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env)
+    assert first.db is not None
+    assert first.describe()["live_sessions"] == 2
+    first.db.touch_session(second.session_id, time.time() - PEER_IDLE_AFTER_S - 600.0)
+
+    block = first.describe()
+
+    assert block["live_sessions"] == 1
+    assert block["idle_sessions"] == 1

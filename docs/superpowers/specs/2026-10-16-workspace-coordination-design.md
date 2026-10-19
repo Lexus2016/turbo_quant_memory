@@ -118,6 +118,15 @@ Text never presents an inferred writer as fact ("changed — inside Codex's anno
 - `TQMEMORY_WORKSPACE_DISABLE=1` (name is my call) turns the whole feature off; independent of `TQMEMORY_DAEMON_DISABLE`.
 - `health()` / `server_info()` report: feature on/off, database path and state, watcher owner per active workspace, coverage.
 
+### Amendment 2026-10-19: idle peers
+
+The approved design pruned sessions only when their process died. A process can outlive its agent's activity by hours (a client window left open), and such a session kept appearing in `sessions` and `overlaps`, which led another agent to hold back work for no reason.
+
+- A peer whose `last_activity_at` is older than `PEER_IDLE_AFTER_S` (30 minutes) is *idle*. `last_activity_at` is refreshed by every tqmemory tool response.
+- This is a view-layer split only. `workspace_status` lists idle peers under `idle_sessions` (with `idle_for_s`) and an `idle_note`, and leaves them out of `sessions` and `overlaps`; `announce_work` ignores their areas. `health` and `server_info` report `live_sessions` for active sessions and add `idle_sessions`.
+- The session row is never deleted for idleness. The peer's next call makes it active again, journaling and lease decisions still follow process liveness, and the digest's "alone" check is unchanged.
+- Known limit: an agent that edits files without calling tqmemory looks idle. Its changes still show in `recent_changes`, with the writer unknown.
+
 ## Why no client hooks
 
 Considered and rejected by the maintainer. Hooks would add write blocking and exact attribution, but each client has its own hook system, several require the human to trust or approve every hook (Codex `/hooks`, Hermes consent), and installing them means editing other tools' configs. This feature relies on MCP alone: what tqmemory can see and say through its own tools, responses and instructions.

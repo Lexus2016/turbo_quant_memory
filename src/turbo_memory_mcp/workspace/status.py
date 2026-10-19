@@ -24,6 +24,15 @@ from turbo_memory_mcp.workspace.models import (
 )
 
 STATUS_RECENT_WINDOW_S: Final = 7200.0
+# A peer whose process lives but that has not touched the workspace for this long is idle: it is listed apart
+# from active peers and its announced areas stop counting as overlaps. Its row is kept, so its next call
+# makes it active again.
+PEER_IDLE_AFTER_S: Final = 1800.0
+IDLE_NOTE: Final = (
+    "idle_sessions are processes that are still running but made no tqmemory call for "
+    f"{int(PEER_IDLE_AFTER_S // 60)}+ minutes. They are not counted as active peers, their announced areas are "
+    "not in overlaps, and they never block your work."
+)
 CHANGE_KINDS: Final = (FILE_CHANGED, FILE_DELETED)
 CHANGE_PAGE_SIZE: Final = 200
 # Hard bound on events scanned for one response, so a noisy workspace cannot make a read unbounded.
@@ -132,6 +141,26 @@ def session_view(row: SessionRow) -> dict[str, Any]:
         "started_at": iso_time(row.started_at),
         "last_activity_at": iso_time(row.last_activity_at),
     }
+
+
+def idle_seconds(row: SessionRow, now: float) -> float:
+    """Seconds since the session last touched the workspace; a clock stepped backwards reads as 0."""
+
+    return max(0.0, now - row.last_activity_at)
+
+
+def split_peers(peers: Iterable[SessionRow], now: float) -> tuple[list[SessionRow], list[SessionRow]]:
+    """Peers divided into (active, idle) by ``PEER_IDLE_AFTER_S``, keeping their order."""
+
+    active: list[SessionRow] = []
+    idle: list[SessionRow] = []
+    for peer in peers:
+        (idle if idle_seconds(peer, now) > PEER_IDLE_AFTER_S else active).append(peer)
+    return active, idle
+
+
+def idle_session_view(row: SessionRow, now: float) -> dict[str, Any]:
+    return {**session_view(row), "idle_for_s": int(idle_seconds(row, now))}
 
 
 def collect_changes(
