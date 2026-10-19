@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idle_for_s`) and an `idle_note`, and its areas are left out of
   `overlaps` in `workspace_status` and `announce_work`. `health` and
   `server_info` report `live_sessions` for active sessions only, plus a new
-  `idle_sessions` count. The row is kept: the session's next call makes it
+  `idle_sessions` count; the calling session always counts as active. The row is kept: the session's next call makes it
   active again, and journaling and the process-liveness pruning are
   unchanged. A session that edits files without calling tqmemory looks
   idle; its file changes still show under `recent_changes`.

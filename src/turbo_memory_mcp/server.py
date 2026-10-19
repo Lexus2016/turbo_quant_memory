@@ -91,7 +91,7 @@ from .telemetry import build_usage_snapshot, record_hydration_usage, record_sema
 from .workspace.models import FILE_CHANGED, FILE_DELETED, SessionRow, VersionRecord
 from .workspace.paths import to_relative
 from .workspace.runtime import WorkspaceRuntime
-from .workspace.status import iso_time, writer_hint
+from .workspace.status import PEER_IDLE_AFTER_S, iso_time, writer_hint
 
 _cached_bootstrap: BootstrapResult | None = None
 _auto_migration_result: str | None = None
@@ -146,8 +146,8 @@ _WORKSPACE_INSTRUCTIONS = (
     "another session may have touched, and before every commit while other sessions are live. While other "
     "sessions are live, never run destructive git commands (checkout -- ., reset --hard, stash, clean, branch "
     "switch) without the human's explicit confirmation. A session under `idle_sessions` made no tqmemory call "
-    "for a long time and is not an active peer; a session's mere presence or old last_activity_at is never a "
-    "reason to postpone work, only `overlaps` and `recent_changes` are."
+    f"for {int(PEER_IDLE_AFTER_S // 60)}+ minutes and is not an active peer; a session's mere presence or old "
+    "last_activity_at is never a reason to postpone work, only `overlaps` and `recent_changes` are."
 )
 
 

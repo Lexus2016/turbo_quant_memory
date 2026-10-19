@@ -274,6 +274,7 @@ class WorkspaceRuntime:
         idle: int | None
         try:
             rows = self.live_sessions()
+            # The caller is active by definition (it is making this call), so only its peers can be idle.
             idle = len(status_views.split_peers(_peers(rows, self.session_id), time.time())[1])
             live = len(rows) - idle
         except Exception:

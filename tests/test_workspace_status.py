@@ -609,3 +609,38 @@ def test_describe_counts_only_active_sessions_as_live(
 
     assert block["live_sessions"] == 1
     assert block["idle_sessions"] == 1
+
+
+def test_describe_counts_the_caller_as_active_even_when_its_own_row_is_stale(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    first = _start(runtimes, repo, env)
+    second = _start(runtimes, repo, env)
+    assert first.db is not None
+    stale = time.time() - PEER_IDLE_AFTER_S - 600.0
+    first.db.touch_session(first.session_id, stale)
+    first.db.touch_session(second.session_id, stale)
+
+    # The caller made this call, so it is active; only its peer is idle.
+    assert (first.describe()["live_sessions"], first.describe()["idle_sessions"]) == (1, 1)
+    assert (second.describe()["live_sessions"], second.describe()["idle_sessions"]) == (1, 1)
+
+
+def test_describe_reports_a_lone_session_as_live_however_old_its_row_is(
+    repo: Path, env: dict[str, str], runtimes: list[WorkspaceRuntime]
+) -> None:
+    only = _start(runtimes, repo, env)
+    assert only.db is not None
+    only.db.touch_session(only.session_id, time.time() - PEER_IDLE_AFTER_S - 600.0)
+
+    block = only.describe()
+
+    assert block["live_sessions"] == 1
+    assert block["idle_sessions"] == 0
+
+
+def test_server_instructions_state_the_idle_threshold_from_the_constant() -> None:
+    from turbo_memory_mcp.server import _WORKSPACE_INSTRUCTIONS
+
+    assert f"{int(PEER_IDLE_AFTER_S // 60)}+ minutes" in _WORKSPACE_INSTRUCTIONS
+    assert "for a long time" not in _WORKSPACE_INSTRUCTIONS
