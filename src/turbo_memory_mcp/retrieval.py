@@ -200,42 +200,54 @@ def _query_scope(
         # tables without a source_kind column, and the lexical fallback never
         # applies it — the API contract must hold on every path.
         rows = [row for row in rows if row.get("source_kind") in set(source_kinds)]
-    candidates: list[dict[str, Any]] = []
     now_epoch = datetime.now(UTC).timestamp()
-    for row in rows:
-        base_score = _distance_to_score(float(row.get("_distance", 1.0)))
-        lexical_bonus = _lexical_bonus(row, query)
-        project_bias = HYBRID_PROJECT_BIAS if hybrid and scope == PROJECT_SCOPE else 0.0
-        kind_bonus = MARKDOWN_KIND_BONUS if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 0.0
-        # Read the canonical note JSON (the LanceDB mirror has no provenance
-        # column) to learn if the user explicitly flagged this note. Cheap on
-        # our scale (hundreds of small JSONs); advisory, never breaks search.
-        is_human_flagged = False
-        if row.get("source_kind") == NOTE_SOURCE_KIND:
-            try:
-                cand_note = store.read_note(str(row["note_id"]), scope)
-                is_human_flagged = cand_note.get("provenance") == NOTE_PROVENANCE_HUMAN
-            except Exception:
-                is_human_flagged = False
-        provenance_bonus = PROVENANCE_HUMAN_BONUS if is_human_flagged else 0.0
-        updated_epoch = _updated_epoch(str(row["updated_at"]))
-        recency_bonus = _recency_bonus(updated_epoch, now_epoch=now_epoch)
-        score = min(base_score + lexical_bonus, 1.0)
-        effective_score = min(score + project_bias + kind_bonus + provenance_bonus + recency_bonus, 1.0)
-        candidates.append(
-            {
-                **row,
-                "score": round(score, 3),
-                "confidence": round(score, 3),
-                "effective_score": effective_score,
-                "scope_priority": 0 if scope == PROJECT_SCOPE else 1,
-                "source_priority": 0 if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 1,
-                "provenance_priority": 0 if is_human_flagged else 1,
-                "updated_epoch": updated_epoch,
-                "item_identity": str(row["item_id"]),
-            }
-        )
+    candidates = [
+        _row_to_candidate(row, store=store, scope=scope, query=query, hybrid=hybrid, now_epoch=now_epoch)
+        for row in rows
+    ]
     return _rank_candidates(candidates)
+
+
+def _row_to_candidate(
+    row: Mapping[str, Any],
+    *,
+    store: MemoryStore,
+    scope: str,
+    query: str,
+    hybrid: bool,
+    now_epoch: float,
+) -> dict[str, Any]:
+    """Score one index row. Shared by search and by the self_test read probe."""
+    base_score = _distance_to_score(float(row.get("_distance", 1.0)))
+    lexical_bonus = _lexical_bonus(row, query)
+    project_bias = HYBRID_PROJECT_BIAS if hybrid and scope == PROJECT_SCOPE else 0.0
+    kind_bonus = MARKDOWN_KIND_BONUS if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 0.0
+    # Read the canonical note JSON (the LanceDB mirror has no provenance
+    # column) to learn if the user explicitly flagged this note. Cheap on
+    # our scale (hundreds of small JSONs); advisory, never breaks search.
+    is_human_flagged = False
+    if row.get("source_kind") == NOTE_SOURCE_KIND:
+        try:
+            cand_note = store.read_note(str(row["note_id"]), scope)
+            is_human_flagged = cand_note.get("provenance") == NOTE_PROVENANCE_HUMAN
+        except Exception:
+            is_human_flagged = False
+    provenance_bonus = PROVENANCE_HUMAN_BONUS if is_human_flagged else 0.0
+    updated_epoch = _updated_epoch(str(row["updated_at"]))
+    recency_bonus = _recency_bonus(updated_epoch, now_epoch=now_epoch)
+    score = min(base_score + lexical_bonus, 1.0)
+    effective_score = min(score + project_bias + kind_bonus + provenance_bonus + recency_bonus, 1.0)
+    return {
+        **row,
+        "score": round(score, 3),
+        "confidence": round(score, 3),
+        "effective_score": effective_score,
+        "scope_priority": 0 if scope == PROJECT_SCOPE else 1,
+        "source_priority": 0 if row.get("source_kind") == MARKDOWN_SOURCE_KIND else 1,
+        "provenance_priority": 0 if is_human_flagged else 1,
+        "updated_epoch": updated_epoch,
+        "item_identity": str(row["item_id"]),
+    }
 
 
 def _ensure_scope_synced(
