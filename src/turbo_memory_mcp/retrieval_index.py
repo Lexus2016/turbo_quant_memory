@@ -520,6 +520,26 @@ class RetrievalIndex:
             return []
         return [_normalize_row(row) for row in table.to_arrow().to_pylist()]
 
+    def sample_rows(self, scope: str, *, per_kind: int, project_id: str | None = None) -> list[dict[str, Any]]:
+        """Up to ``per_kind`` rows of each source kind, read-only and without an embedder.
+
+        For the self_test read probe. Sampling by kind matters: a sync writes
+        every markdown block before the notes, so the first rows of a
+        doc-heavy table are all blocks and never reach a damaged note. Rows are
+        normalized like those of a search.
+        """
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return []
+        if _table_has_column(table, "source_kind"):
+            arrows = [
+                table.search().where(f"source_kind = {_quote_sql_string(kind)}").limit(per_kind).to_arrow()
+                for kind in (MARKDOWN_SOURCE_KIND, NOTE_SOURCE_KIND)
+            ]
+        else:  # a legacy table without the column has no kinds to tell apart
+            arrows = [table.search().limit(per_kind).to_arrow()]
+        return [_normalize_row(row) for arrow in arrows for row in arrow.to_pylist()]
+
     def existing_item_ids(self, scope: str, *, project_id: str | None = None) -> set[str]:
         """Set of ``item_id`` currently materialized in the scope table.
 

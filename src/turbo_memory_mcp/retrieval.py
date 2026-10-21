@@ -54,6 +54,10 @@ PROVENANCE_HUMAN_BONUS = 0.06
 RECENCY_BONUS_MAX = 0.05
 RECENCY_WINDOW_DAYS = 30.0
 MAX_SEMANTIC_LIMIT = 20
+# self_test read probe: rows sampled per source kind and scope, and how much of an error to keep.
+READ_PROBE_ROWS_PER_KIND = 10
+_PROBE_QUERY = "probe"
+_PROBE_ERROR_CHARS = 300
 AMBIGUOUS_SCORE_DELTA = 0.03
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -516,10 +520,59 @@ def _tokenize(value: str) -> list[str]:
     return [match.group(0).casefold() for match in _TOKEN_RE.finditer(value)]
 
 
+def probe_read_path(store: MemoryStore, *, per_kind: int = READ_PROBE_ROWS_PER_KIND) -> dict[str, Any]:
+    """Run a sample of the real index rows through the code a search runs on them.
+
+    For self_test. It is read-only and needs no embedder: it never syncs, heals
+    or builds an index, so it cannot change what it checks. A missing or empty
+    table is ok, there is nothing to read.
+    """
+    index = RetrievalIndex(store)
+    return {scope: _probe_scope(index, store, scope, per_kind) for scope in (PROJECT_SCOPE, GLOBAL_SCOPE)}
+
+
+def _probe_scope(index: RetrievalIndex, store: MemoryStore, scope: str, per_kind: int) -> dict[str, Any]:
+    try:
+        rows = index.sample_rows(scope, per_kind=per_kind)
+    except Exception as exc:
+        return {"state": "failed", "rows_checked": 0, "error": format_probe_error(exc)}
+    now_epoch = datetime.now(UTC).timestamp()
+    checked = skipped = 0
+    for row in rows:
+        try:
+            candidate = _row_to_candidate(
+                row, store=store, scope=scope, query=_PROBE_QUERY, hybrid=False, now_epoch=now_epoch
+            )
+            decorated = _decorate_candidate(candidate, store=store, query=_PROBE_QUERY, overall_state=None)
+            if decorated is None:
+                skipped += 1  # an unreadable note: a search skips it too, so the index is not broken
+                continue
+            build_semantic_item_payload(decorated)
+        except Exception as exc:
+            return {
+                "state": "failed",
+                "rows_checked": checked,
+                "item_id": str(row.get("item_id")),
+                "error": format_probe_error(exc),
+            }
+        checked += 1
+    result: dict[str, Any] = {"state": "ok", "rows_checked": checked}
+    if skipped:
+        result["rows_skipped"] = skipped
+    return result
+
+
+def format_probe_error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"[:_PROBE_ERROR_CHARS]
+
+
 __all__ = [
     "HYBRID_PROJECT_BIAS",
     "MARKDOWN_KIND_BONUS",
     "MAX_SEMANTIC_LIMIT",
+    "READ_PROBE_ROWS_PER_KIND",
+    "format_probe_error",
+    "probe_read_path",
     "semantic_search",
     "sync_global_retrieval",
     "sync_project_retrieval",

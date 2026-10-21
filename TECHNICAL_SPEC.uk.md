@@ -105,7 +105,7 @@
 | `health()` | базова перевірка стану |
 | `server_info()` | runtime, project, storage та install contract |
 | `list_scopes()` | доступні scopes і режими за замовчуванням |
-| `self_test()` | швидка перевірка контракту |
+| `self_test()` | швидка перевірка контракту та read-only перевірка вибірки рядків індексу (`read_probe`; статус `degraded`, якщо пошук не зміг їх прочитати) |
 | `remember_note(...)` | зберегти типізовану нотатку |
 | `promote_note(note_id)` | скопіювати project-note в reusable global memory |
 | `deprecate_note(...)` | вивести застаріле знання з активного обігу |

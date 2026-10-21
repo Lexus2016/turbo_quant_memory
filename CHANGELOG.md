@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`self_test` now reads the index and reports `degraded` when a search could
+  not** (#6). It returned a static snapshot of the contract and never opened
+  the index, so a table that `semantic_search` could not read (#5) still
+  reported ok. It now runs up to 10 rows of each source kind, per scope,
+  through the code a search runs on a row (scoring, the result card and its
+  payload) and returns `read_probe` with a `state` of `ok` or `failed` for
+  `project` and `global`. A failed scope names the first row that broke
+  (`item_id`) and the error, and sets `status` to `degraded`. The probe is
+  read-only and needs no embedder: it never syncs, backfills or builds an
+  index. Rows are sampled by kind because a sync writes every markdown block
+  before the notes, so a plain head sample would never reach a damaged note.
+  A note whose JSON is gone is counted in `rows_skipped`, as a search skips
+  it. If the probe itself crashes, `read_probe` is `{"state": "unavailable"}`
+  with the error and `status` stays `ok`. `health` is unchanged on purpose: it
+  is a liveness check with no access to the store.
+
 ## [0.33.1] - 2026-10-21
 
 ### Fixed

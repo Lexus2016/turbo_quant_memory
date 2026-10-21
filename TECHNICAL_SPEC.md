@@ -105,7 +105,7 @@ The server should reduce repeated token usage by:
 | `health()` | basic health check |
 | `server_info()` | runtime, project, storage, and install contract |
 | `list_scopes()` | available scopes and write/read defaults |
-| `self_test()` | quick contract validation |
+| `self_test()` | quick contract validation, plus a read-only probe of a sample of index rows (`read_probe`; status `degraded` when search could not read them) |
 | `remember_note(...)` | store a typed note |
 | `promote_note(note_id)` | copy a project note into reusable global memory |
 | `deprecate_note(...)` | retire outdated knowledge |

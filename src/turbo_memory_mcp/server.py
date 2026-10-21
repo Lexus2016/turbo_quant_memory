@@ -64,7 +64,7 @@ from .knowledge_lint import lint_knowledge_base
 from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks, project_lock_key
 from .migrations import format_pending_warning
 from .refresher import IndexRefresher, RefreshProgress
-from .retrieval import MAX_SEMANTIC_LIMIT, semantic_search
+from .retrieval import MAX_SEMANTIC_LIMIT, format_probe_error, probe_read_path, semantic_search
 from .retrieval_index import RetrievalIndex
 from .secrets import (
     AuditLog,
@@ -1632,10 +1632,20 @@ def self_test_impl(
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     project, store = build_runtime_context(cwd=cwd, environ=environ)
-    return build_self_test_payload(
+    payload = build_self_test_payload(
         storage_root=str(store.storage_root),
         current_project=build_current_project_payload(project),
     )
+    try:
+        read_probe = probe_read_path(store)
+    except Exception as exc:
+        # Advisory: a probe that itself breaks is not evidence of a broken index.
+        payload["read_probe"] = {"state": "unavailable", "error": format_probe_error(exc)}
+        return payload
+    payload["read_probe"] = read_probe
+    if any(scope_probe["state"] == "failed" for scope_probe in read_probe.values()):
+        payload["status"] = "degraded"
+    return payload
 
 
 # Entity schemes that are hierarchical (authority-based) and therefore MUST use

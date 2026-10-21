@@ -551,3 +551,102 @@ def test_heal_null_list_columns_never_raises(tmp_path: Path) -> None:
     index.heal_null_list_columns("global")  # no table at all
     with patch.object(retrieval_index, "_backfill_null_lists", side_effect=RuntimeError("commit conflict")):
         index.heal_null_list_columns("project")  # a failed heal must not break the read that triggered it
+
+
+# --- self_test read probe (GitHub issue #6) ---
+# self_test returned a static contract snapshot and never opened the index, so a
+# table that search could not read still reported ok. The probe runs a sample of
+# real rows through the code a search runs on them, read-only and without an
+# embedder.
+
+
+def _block_rows(store: MemoryStore, count: int) -> list[dict[str, object]]:
+    from turbo_memory_mcp.retrieval_index import mirror_markdown_block
+
+    _write_blocks(store, count)
+    return [mirror_markdown_block(store, b, project_id=store.project.project_id) for b in store.list_markdown_blocks()]
+
+
+def test_read_probe_catches_a_damaged_note_row_behind_many_healthy_blocks(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+    from turbo_memory_mcp.retrieval import probe_read_path
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="damaged-note")
+    # Blocks are written first, as sync_project does, so a head sample would only ever see blocks.
+    rows = _block_rows(store, 6) + _null_list_note_rows(store, "project")
+    _create_items_table(index, "project", rows, declared=True)
+
+    # Search tolerates NULL at its read boundary, so take that away: the probe must find what would choke it.
+    with patch.object(retrieval_index, "_normalize_row", new=dict):
+        result = probe_read_path(store, per_kind=3)
+
+    assert result["project"]["state"] == "failed"
+    assert result["project"]["item_id"] == "damaged-note"
+    assert result["project"]["error"].startswith("TypeError")
+    assert result["global"] == {"state": "ok", "rows_checked": 0}
+
+
+def test_read_probe_does_not_flag_what_search_tolerates_and_never_writes(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+    from turbo_memory_mcp.retrieval import probe_read_path
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="damaged-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+    version = index._open_scope_table("project").version
+
+    with (
+        patch.object(RetrievalIndex, "_overwrite_scope", side_effect=AssertionError("write")),
+        patch.object(RetrievalIndex, "sync_project", side_effect=AssertionError("write")),
+        patch.object(RetrievalIndex, "heal_null_list_columns", side_effect=AssertionError("write")),
+        patch.object(retrieval_index, "_backfill_null_lists", side_effect=AssertionError("write")),
+    ):
+        result = probe_read_path(store)
+
+    assert result["project"] == {"state": "ok", "rows_checked": 1}  # 0.33.1 reads NULL as [], so no false alarm
+    assert index._open_scope_table("project").version == version
+    assert [(r["heading_path"], r["tags"]) for r in _mirror_rows(index, "project")] == [(None, None)]
+
+
+def test_read_probe_reports_ok_for_missing_healthy_and_empty_tables(tmp_path: Path) -> None:
+    from turbo_memory_mcp.retrieval import probe_read_path
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    assert probe_read_path(store) == {
+        "project": {"state": "ok", "rows_checked": 0},
+        "global": {"state": "ok", "rows_checked": 0},
+    }
+
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    _write_blocks(store, 2)
+    index.sync_project()
+    _create_items_table(index, "global", [], declared=True)
+
+    result = probe_read_path(store)
+
+    assert result["project"] == {"state": "ok", "rows_checked": 3}
+    assert result["global"] == {"state": "ok", "rows_checked": 0}
+
+
+def test_read_probe_counts_a_note_whose_json_is_gone_as_skipped(tmp_path: Path) -> None:
+    from turbo_memory_mcp.retrieval import probe_read_path
+    from turbo_memory_mcp.retrieval_index import mirror_note_record
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="gone-note")
+    _create_items_table(index, "project", [mirror_note_record(store, n) for n in store.list_notes("project")], declared=True)
+    store.project_note_path("gone-note").unlink()
+
+    result = probe_read_path(store)
+
+    # Search skips such a candidate rather than failing, so the probe must not call it broken.
+    assert result["project"] == {"state": "ok", "rows_checked": 0, "rows_skipped": 1}

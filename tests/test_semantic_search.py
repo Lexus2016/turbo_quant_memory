@@ -600,3 +600,46 @@ def test_semantic_search_heals_a_damaged_global_table_too(tmp_path: Path) -> Non
 
     assert payload["result_count"] >= 1
     assert all(value is not None for pair in _raw_list_columns(store, "global") for value in pair)
+
+
+def test_self_test_reports_a_broken_read_path_as_degraded(tmp_path: Path) -> None:
+    from turbo_memory_mcp import retrieval_index
+    from turbo_memory_mcp.server import self_test_impl
+
+    env = _test_env(tmp_path)
+    remember_note_impl("Auth Flow Note", "Project auth refresh rotation note.", kind="lesson", environ=env)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    _null_out_list_columns(store, "project")
+
+    with patch.object(retrieval_index, "_normalize_row", new=dict):
+        payload = self_test_impl(environ=env)
+
+    assert payload["status"] == "degraded"
+    assert payload["read_probe"]["project"]["state"] == "failed"
+    assert payload["read_probe"]["project"]["error"].startswith("TypeError")
+
+
+def test_self_test_stays_ok_on_a_table_search_can_read(tmp_path: Path) -> None:
+    from turbo_memory_mcp.server import self_test_impl
+
+    env = _test_env(tmp_path)
+    remember_note_impl("Auth Flow Note", "Project auth refresh rotation note.", kind="lesson", environ=env)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    _null_out_list_columns(store, "project")
+
+    payload = self_test_impl(environ=env)
+
+    assert payload["status"] == "ok"
+    assert payload["read_probe"]["project"] == {"state": "ok", "rows_checked": 1}
+
+
+def test_self_test_survives_a_crashing_probe(tmp_path: Path) -> None:
+    from turbo_memory_mcp.server import self_test_impl
+
+    env = _test_env(tmp_path)
+    with patch("turbo_memory_mcp.retrieval._probe_scope", side_effect=RuntimeError("boom")):
+        payload = self_test_impl(environ=env)
+
+    assert payload["status"] == "ok"  # a broken probe is not evidence of a broken index
+    assert payload["read_probe"] == {"state": "unavailable", "error": "RuntimeError: boom"}
+    assert payload["tool_count"] > 0
