@@ -550,3 +550,53 @@ def test_source_filter_combines_with_tier_filter_and_hybrid_scope(tmp_path: Path
     )
     assert payload["result_count"] >= 1
     assert all(item["source_kind"] == "memory_note" for item in payload["items"])
+
+
+def _null_out_list_columns(store, scope: str) -> None:
+    """Leave a scope's table as 0.32.0 repaired it: declared types, NULL in the list columns."""
+    import lancedb
+    import pyarrow as pa
+
+    from turbo_memory_mcp.retrieval_index import RetrievalIndex, _table_schema
+
+    index = RetrievalIndex(store)
+    rows = [{**row, "heading_path": None, "tags": None} for row in index.list_rows(scope)]
+    assert rows
+    schema = _table_schema(384)
+    db_path = index.project_db_path() if scope == "project" else index.global_db_path()
+    table = lancedb.connect(str(db_path)).create_table("items", schema=schema, mode="overwrite")
+    table.add(pa.Table.from_pylist(rows, schema=schema))
+
+
+def _raw_list_columns(store, scope: str) -> list[tuple[object, object]]:
+    from turbo_memory_mcp.retrieval_index import RetrievalIndex
+
+    table = RetrievalIndex(store)._open_scope_table(scope)
+    return [(row["heading_path"], row["tags"]) for row in table.to_arrow().to_pylist()]
+
+
+def test_semantic_search_heals_null_list_columns_it_finds_on_read(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    remember_note_impl("Auth Flow Note", "Project auth refresh rotation note.", kind="lesson", tags=["auth"], environ=env)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    _null_out_list_columns(store, "project")
+    assert _raw_list_columns(store, "project") == [(None, None)]
+
+    payload = semantic_search_impl("auth refresh rotation", scope="project", limit=5, environ=env)
+
+    assert payload["result_count"] == 1
+    # The NULL tags are filled with [], not rebuilt; the note's tags stay in its own JSON and in content_search.
+    assert _raw_list_columns(store, "project") == [([], [])]
+
+
+def test_semantic_search_heals_a_damaged_global_table_too(tmp_path: Path) -> None:
+    env = _test_env(tmp_path)
+    stored = remember_note_impl("Global Pattern", "Reusable session cache pattern.", kind="pattern", environ=env)
+    promote_note_impl(stored["item"]["item_id"], environ=env)
+    _, store = build_runtime_context(cwd=tmp_path / "repo", environ=env)
+    _null_out_list_columns(store, "global")
+
+    payload = semantic_search_impl("session cache pattern", scope="hybrid", limit=5, environ=env)
+
+    assert payload["result_count"] >= 1
+    assert all(value is not None for pair in _raw_list_columns(store, "global") for value in pair)

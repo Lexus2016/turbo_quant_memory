@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`semantic_search` no longer fails with `TypeError: 'NoneType' object is not
+  iterable` on an index that holds NULL list columns** (#5). The 0.32.0 repair
+  of null-typed mirror columns dropped and re-added `heading_path` and `tags`,
+  and the re-added column is NULL in every existing row, although those rows
+  meant an empty list. Search read `heading_path`/`tags` with
+  `.get(key, [])`, which does not help when the key is present with a `None`
+  value, so project and hybrid search failed on any table repaired that way
+  (a global table breaks the same way after its next write). Rows now leave
+  the index with NULL list columns read as `[]`, so an existing table is
+  searchable at once. The first search of a table in a process, and any later
+  write to it, also fills those NULLs with empty lists in place (no
+  re-embedding, no full re-sync); a failed fill never fails the search. Only
+  the list columns are filled; a NULL `block_id`, `note_kind` or `note_id` is
+  correct for the other kind of row.
+
 ## [0.33.0] - 2026-10-19
 
 ### Changed

@@ -335,3 +335,219 @@ def retrieval_index_mirror_block(store: MemoryStore, block: dict[str, object]) -
     from turbo_memory_mcp.retrieval_index import mirror_markdown_block
 
     return mirror_markdown_block(store, block, project_id=store.project.project_id)
+
+
+# --- NULL list columns (GitHub issue #5) ---
+# _repair_null_columns retyped list<null> columns by dropping and re-adding
+# them, which left NULL where every existing row held an empty list. Search
+# then crashed on list(None) / iterating None. The reader must tolerate NULL
+# (persisted tables already hold it) and the next write must heal it.
+
+
+def _create_items_table(index: RetrievalIndex, scope: str, rows: list[dict[str, object]], *, declared: bool) -> None:
+    import lancedb
+    import pyarrow as pa
+
+    from turbo_memory_mcp.retrieval_index import _table_schema
+
+    db_path = index.project_db_path() if scope == "project" else index.global_db_path()
+    db_path.mkdir(parents=True, exist_ok=True)
+    with_vectors = [{**row, "vector": StaticEmbedder().encode([str(row["content_search"])])[0]} for row in rows]
+    database = lancedb.connect(str(db_path))
+    if not declared:
+        # A pre-0.32 table: the schema is inferred from the rows (empty lists become list<null>).
+        database.create_table("items", with_vectors, mode="overwrite")
+        return
+    # Declared schema, NULL values: lancedb cannot infer a type from an all-None column.
+    schema = _table_schema(384)
+    table = database.create_table("items", schema=schema, mode="overwrite")
+    table.add(pa.Table.from_pylist(with_vectors, schema=schema))
+
+
+def _null_list_note_rows(store: MemoryStore, scope: str) -> list[dict[str, object]]:
+    from turbo_memory_mcp.retrieval_index import mirror_note_record
+
+    return [
+        {**mirror_note_record(store, note), "heading_path": None, "tags": None}
+        for note in store.list_notes(scope)
+    ]
+
+
+def _search(store: MemoryStore, scope: str) -> dict[str, object]:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp.retrieval import semantic_search
+
+    with patch("turbo_memory_mcp.retrieval_index.build_default_embedder", return_value=StaticEmbedder()):
+        return semantic_search(store, "auth", scope=scope, limit=5)
+
+
+def test_notes_only_legacy_table_stays_searchable_after_repair(tmp_path: Path) -> None:
+    from turbo_memory_mcp.retrieval_index import mirror_note_record
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    for note_id in ("old-note-1", "old-note-2"):
+        store.write_project_note(f"Auth {note_id}", f"Auth body {note_id}", note_kind="decision", note_id=note_id)
+    _create_items_table(
+        index, "project", [mirror_note_record(store, n) for n in store.list_notes("project")], declared=False
+    )
+    store.write_project_note("Auth new", "Auth fresh note", note_kind="lesson", tags=["auth"], note_id="new-note")
+    index.sync_project_notes(["new-note"])
+
+    for scope in ("project", "hybrid"):
+        payload = _search(store, scope)
+        assert payload["result_count"] == 3, scope
+        assert all(item["heading_path"] == [] for item in payload["items"]), scope
+
+
+def test_blocks_only_legacy_table_with_later_note_stays_searchable(tmp_path: Path) -> None:
+    from turbo_memory_mcp.retrieval_index import mirror_markdown_block
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 3)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    _create_items_table(
+        index,
+        "project",
+        [mirror_markdown_block(store, b, project_id=store.project.project_id) for b in store.list_markdown_blocks()],
+        declared=False,
+    )
+    store.write_project_note("Auth", "Auth note body.", note_kind="pattern", tags=["auth"], note_id="auth-note")
+    index.sync_project_notes(["auth-note"])
+
+    payload = _search(store, "project")
+
+    assert payload["result_count"] == 4
+    assert {item["source_kind"] for item in payload["items"]} == {"markdown", "memory_note"}
+
+
+def test_search_tolerates_null_list_columns_without_any_write(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+
+    payload = _search(store, "project")
+
+    assert payload["result_count"] == 1
+    assert payload["items"][0]["heading_path"] == []
+    assert index.list_rows("project")[0]["tags"] == []
+
+
+def test_hybrid_search_with_both_scopes_damaged(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth project", "Auth body", note_kind="decision", note_id="project-note")
+    store.write_global_note("Auth global", "Auth body", note_kind="pattern", note_id="global-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+    _create_items_table(index, "global", _null_list_note_rows(store, "global"), declared=True)
+
+    payload = _search(store, "hybrid")
+
+    assert {item["scope"] for item in payload["items"]} == {"project", "global"}
+
+
+def test_next_sync_backfills_null_list_columns_without_a_full_rewrite(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp.retrieval_index import mirror_markdown_block
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 2)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="damaged-note")
+    damaged_blocks = [
+        mirror_markdown_block(store, b, project_id=store.project.project_id) for b in store.list_markdown_blocks()
+    ]
+    # Blocks keep their real heading_path; only tags (and the note's heading_path) are NULL.
+    rows = [{**row, "tags": None} for row in damaged_blocks] + _null_list_note_rows(store, "project")
+    _create_items_table(index, "project", rows, declared=True)
+    store.write_project_note("New", "Auth fresh", note_kind="lesson", tags=["auth"], note_id="new-note")
+
+    with patch.object(RetrievalIndex, "_overwrite_scope", side_effect=AssertionError("full rewrite")):
+        assert index.sync_project_notes(["new-note"]) == 1
+
+    schema = index._open_scope_table("project").schema
+    # The fill must keep the declared type, or the merge falls back to a full re-sync.
+    assert str(schema.field("heading_path").type) == "list<item: string>"
+    assert str(schema.field("tags").type) == "list<item: string>"
+    by_id = {row["item_id"]: row for row in _mirror_rows(index, "project")}
+    assert all(row["tags"] is not None and row["heading_path"] is not None for row in by_id.values())
+    assert by_id["damaged-note"]["heading_path"] == []
+    assert by_id["block-0000"]["heading_path"] == ["block-0000"]  # untouched, not blanked
+    assert by_id["new-note"]["tags"] == ["auth"]
+
+
+def test_backfill_leaves_a_healthy_table_alone(tmp_path: Path) -> None:
+    from turbo_memory_mcp.retrieval_index import _backfill_null_lists
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    index.sync_project()
+    table = index._open_scope_table("project")
+    version = table.version
+
+    _backfill_null_lists(table)
+
+    assert table.version == version  # no write when nothing is NULL
+
+
+def test_backfill_keeps_an_existing_fts_index_working(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp.retrieval_index import _ensure_fts_index, _safe_fts_search
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body zebra", note_kind="decision", note_id="damaged-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+    # A table that has ever been searched already carries the BM25 index the update must not break.
+    _ensure_fts_index(index._open_scope_table("project"))
+    # _ensure_fts_index swallows errors, so prove the index is really there before the update.
+    indexed_columns = [column for config in index._open_scope_table("project").list_indices() for column in config.columns]
+    assert "content_search" in indexed_columns
+    store.write_project_note("New", "Auth fresh", note_kind="lesson", tags=["auth"], note_id="new-note")
+
+    with patch.object(RetrievalIndex, "_overwrite_scope", side_effect=AssertionError("full rewrite")):
+        assert index.sync_project_notes(["new-note"]) == 1
+
+    table = index._open_scope_table("project")
+    assert [row["item_id"] for row in _safe_fts_search(table, "zebra", 5, None)] == ["damaged-note"]
+
+
+# --- heal on read (GitHub issue #5) ---
+
+
+def test_heal_null_list_columns_fills_a_damaged_table_once_per_process(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+
+    with patch.object(retrieval_index, "_backfill_null_lists", wraps=retrieval_index._backfill_null_lists) as backfill:
+        index.heal_null_list_columns("project")
+        index.heal_null_list_columns("project")
+
+    assert backfill.call_count == 1
+    assert [(row["heading_path"], row["tags"]) for row in _mirror_rows(index, "project")] == [([], [])]
+
+
+def test_heal_null_list_columns_never_raises(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    _create_items_table(index, "project", _null_list_note_rows(store, "project"), declared=True)
+
+    index.heal_null_list_columns("global")  # no table at all
+    with patch.object(retrieval_index, "_backfill_null_lists", side_effect=RuntimeError("commit conflict")):
+        index.heal_null_list_columns("project")  # a failed heal must not break the read that triggered it

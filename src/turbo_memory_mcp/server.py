@@ -2001,12 +2001,14 @@ def semantic_search_impl(
     index_refresh: dict[str, Any] | None = None
     if resolved_scope in {PROJECT_SCOPE, "hybrid"}:
         index_refresh = _refresh_project_for_read(store, cwd=cwd, environ=environ)
+        RetrievalIndex(store).heal_null_list_columns(PROJECT_SCOPE)
     if resolved_scope in {GLOBAL_SCOPE, "hybrid"}:
         # The only global write a search makes; see _GLOBAL_WRITE_TOOLS.
         with DEFAULT_SCOPE_LOCKS.hold(
             [GLOBAL_LOCK_KEY], timeout=_resolve_dispatch_lock_timeout(), tool="semantic_search"
         ):
             _refresh_global_retrieval_if_needed(store)
+            RetrievalIndex(store).heal_null_list_columns(GLOBAL_SCOPE)
     payload = semantic_search(
         store, query, scope=scope, limit=limit, tier_filter=tier_filter,
         source_filter=source_filter, sync_empty_project=False,

@@ -175,6 +175,8 @@ EMBED_CHUNK_SIZE = 64
 SYNC_CHUNK_ROWS = 256
 DELETE_CHUNK_IDS = 500
 _EMBED_LOCK = threading.Lock()
+# Tables whose NULL list columns were already looked for in this process (heal_null_list_columns).
+_HEALED_TABLES: set[str] = set()
 
 
 def encode_texts(texts: Sequence[str], *, embedder: TextEmbedder | None = None) -> list[list[float]]:
@@ -516,7 +518,7 @@ class RetrievalIndex:
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None or self.count_rows(scope, project_id=project_id) == 0:
             return []
-        return [dict(row) for row in table.to_arrow().to_pylist()]
+        return [_normalize_row(row) for row in table.to_arrow().to_pylist()]
 
     def existing_item_ids(self, scope: str, *, project_id: str | None = None) -> set[str]:
         """Set of ``item_id`` currently materialized in the scope table.
@@ -655,6 +657,7 @@ class RetrievalIndex:
             )
             return
         _repair_null_columns(table)
+        _backfill_null_lists(table)
         table.merge_insert(ITEM_ID_FIELD).when_matched_update_all().when_not_matched_insert_all().execute(indexed)
 
     def _with_vectors(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -691,6 +694,30 @@ class RetrievalIndex:
             return False
         _rebuild_fts_index(table)
         return True
+
+    def heal_null_list_columns(self, scope: str, *, project_id: str | None = None) -> None:
+        """Fill the NULL list columns of an existing table, once per process per table.
+
+        For a read to call: reads already treat NULL as [], so this is best
+        effort and never raises. A heal that fails (say a commit conflict with
+        another writer) is not retried by every search; the next write to the
+        table heals it as well. The caller holds the scope's lock.
+        """
+        db_path = self.project_db_path(project_id) if scope == PROJECT_SCOPE else self.global_db_path()
+        key = str(db_path)
+        if key in _HEALED_TABLES:
+            return
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None:
+            return
+        _HEALED_TABLES.add(key)
+        try:
+            _backfill_null_lists(table)
+        except Exception as exc:
+            print(
+                f"[tqmemory] could not backfill NULL list columns of the {scope} index: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
 
     def _open_scope_table(self, scope: str, project_id: str | None = None) -> Any | None:
         if scope == PROJECT_SCOPE:
@@ -761,6 +788,43 @@ def _repair_null_columns(table: Any) -> None:
     table.add_columns(pa.schema([expected.field(name) for name in broken]))
 
 
+# list<string> mirror columns. Rows carry [] (never NULL) where there is nothing to list.
+_LIST_COLUMNS = ("heading_path", "tags")
+_EMPTY_STRING_LIST_SQL = "arrow_cast(make_array(), 'List(Utf8)')"
+
+
+def _backfill_null_lists(table: Any) -> None:
+    """Turn NULL into [] in the list columns, in place and without re-embedding.
+
+    _repair_null_columns re-adds a retyped column with NULL in every existing
+    row, though those rows meant an empty list, and tables repaired by 0.32
+    already hold that NULL. Only list columns are filled: a NULL block_id,
+    note_kind or note_id is correct for the other kind of row. The count guard
+    keeps a healthy table from getting a new Lance version on every sync.
+    """
+    for name in _LIST_COLUMNS:
+        if name not in table.schema.names or _is_null_type(table.schema.field(name).type):
+            continue
+        if table.count_rows(f"{name} IS NULL") == 0:
+            continue
+        print(f"[tqmemory] backfilling NULL {name} with empty lists", file=sys.stderr)
+        table.update(where=f"{name} IS NULL", values_sql={name: _EMPTY_STRING_LIST_SQL})
+
+
+def _normalize_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A mirror row with NULL list columns read as [].
+
+    Tables healed before this version, and any table nobody has written to
+    since upgrading, still hold NULL there; `.get(key, [])` does not help
+    because the key is present.
+    """
+    normalized = dict(row)
+    for name in _LIST_COLUMNS:
+        if name in normalized and normalized[name] is None:
+            normalized[name] = []
+    return normalized
+
+
 def _chunked(items: Iterable[Any], size: int) -> Iterator[list[Any]]:
     chunk: list[Any] = []
     for item in items:
@@ -792,7 +856,7 @@ def _safe_vector_search(
         builder = table.search(query_vector).metric("cosine").limit(limit)
         if where_clause:
             builder = builder.where(where_clause)
-        return [dict(row) for row in builder.to_list()]
+        return [_normalize_row(row) for row in builder.to_list()]
     except Exception as exc:
         # The vector lane is primary; a persistent failure here (corrupt table,
         # disk full) otherwise looks like "no results". Make it visible (M2).
@@ -816,7 +880,7 @@ def _safe_fts_search(
         builder = table.search(query_text, query_type="fts").limit(limit)
         if where_clause:
             builder = builder.where(where_clause)
-        return [dict(row) for row in builder.to_list()]
+        return [_normalize_row(row) for row in builder.to_list()]
     except Exception as exc:
         # FTS is the secondary lane; on current installs the index exists, so a
         # failure here (not just a legacy missing-index) is worth surfacing (M2).
