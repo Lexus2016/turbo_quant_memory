@@ -231,3 +231,108 @@ def test_doctor_skips_socket_probe_for_named_pipe(
     assert "live primary" in out  # live PID is not treated as stale
     assert "probe skipped for family=AF_PIPE" in out
     assert exit_code == 0  # a skipped probe is not an issue
+
+
+# --- doctor read path (GitHub issue #7) ---
+# doctor checked the lock, the socket, migrations and the project, but never opened
+# the index, so it said "All checks passed" for a table search could not read.
+
+
+class _FlatEmbedder:
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 384 for _ in texts]
+
+
+def _index_a_note(home: Path, monkeypatch: pytest.MonkeyPatch):
+    """One project note in a synced index under ``home``; returns the store."""
+    from turbo_memory_mcp.retrieval_index import RetrievalIndex
+    from turbo_memory_mcp.server import build_runtime_context
+
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+    _, store = build_runtime_context()
+    store.write_project_note("Auth", "Auth body", note_kind="decision", note_id="auth-note")
+    RetrievalIndex(store, embedder=_FlatEmbedder()).sync_project_notes(["auth-note"])
+    return store
+
+
+def _null_the_list_columns(store) -> None:
+    """Leave the project table as 0.32.0 repaired it: declared types, NULL list columns."""
+    import lancedb
+    import pyarrow as pa
+
+    from turbo_memory_mcp.retrieval_index import RetrievalIndex, _table_schema
+
+    index = RetrievalIndex(store, embedder=_FlatEmbedder())
+    rows = [{**row, "heading_path": None, "tags": None} for row in index.list_rows("project")]
+    schema = _table_schema(384)
+    table = lancedb.connect(str(index.project_db_path())).create_table("items", schema=schema, mode="overwrite")
+    table.add(pa.Table.from_pylist(rows, schema=schema))
+
+
+def test_doctor_reports_the_read_path_of_a_healthy_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    _index_a_note(home, monkeypatch)
+
+    main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert "[PASS] read path (project): 1 rows checked" in out
+    assert "[PASS] read path (global): 0 rows checked" in out
+
+
+def test_doctor_fails_when_the_index_cannot_be_read_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from unittest.mock import patch
+
+    from turbo_memory_mcp import retrieval_index
+    from turbo_memory_mcp.retrieval_index import RetrievalIndex
+
+    home = tmp_path / "home"
+    home.mkdir()
+    store = _index_a_note(home, monkeypatch)
+    healthy_code = main(["doctor"])  # other checks may already count issues (pending migrations)
+    capsys.readouterr()
+    _null_the_list_columns(store)
+    version = RetrievalIndex(store)._open_scope_table("project").version
+
+    # Search reads NULL as [] at its boundary; take that away so the row is one search would choke on.
+    with patch.object(retrieval_index, "_normalize_row", new=dict):
+        code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert "[FAIL] read path (project): auth-note: TypeError" in out
+    assert code == healthy_code + 1  # exactly one more issue, so a non-zero exit code
+    assert RetrievalIndex(store)._open_scope_table("project").version == version
+
+
+def test_doctor_does_not_flag_null_list_columns_that_search_reads_fine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    store = _index_a_note(home, monkeypatch)
+    _null_the_list_columns(store)
+
+    main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert "[PASS] read path (project): 1 rows checked" in out
+
+
+def test_doctor_reports_a_missing_index_as_passing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+
+    exit_code = main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[PASS] read path (project): 0 rows checked" in out
+    assert "All checks passed." in out

@@ -172,11 +172,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser(
         "doctor",
-        help="Quick diagnostics for daemon lock, migrations, and storage health.",
+        help="Quick diagnostics for daemon lock, migrations, storage health, and index readability.",
         description=(
             "Run a suite of quick checks: lockfile state, migration status, "
-            "storage directory health, and socket reachability. Prints "
-            "PASS/FAIL for each check with a short summary."
+            "storage directory health, socket reachability, and whether a "
+            "sample of index rows can be read the way a search reads them. "
+            "Prints PASS/FAIL for each check with a short summary."
         ),
     )
     doctor_parser.set_defaults(handler=_handle_doctor)
@@ -620,7 +621,7 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
 
 
 def _handle_doctor(_: argparse.Namespace) -> int:
-    """Run quick diagnostics: lock, migrations, storage, socket."""
+    """Run quick diagnostics: lock, migrations, storage, socket, index read path."""
     import socket
 
     from .daemon import (
@@ -711,6 +712,23 @@ def _handle_doctor(_: argparse.Namespace) -> int:
                 print("[PASS] migrations: all subsystems up to date")
         except Exception as exc:
             print(f"[WARN] migrations: cannot detect status — {exc}")
+            issues += 1
+
+        # Read path: a sample of real index rows through the code a search runs
+        # on them. Read-only, so it is safe next to a running daemon.
+        try:
+            from .retrieval import probe_read_path
+
+            for scope_name, probe in probe_read_path(store).items():
+                if probe["state"] == "ok":
+                    skipped = f", {probe['rows_skipped']} skipped" if probe.get("rows_skipped") else ""
+                    print(f"[PASS] read path ({scope_name}): {probe['rows_checked']} rows checked{skipped}")
+                else:
+                    broken = f"{probe['item_id']}: " if probe.get("item_id") else ""
+                    print(f"[FAIL] read path ({scope_name}): {broken}{probe['error']}")
+                    issues += 1
+        except Exception as exc:
+            print(f"[WARN] read path: cannot probe — {exc}")
             issues += 1
 
         print(f"[PASS] project: {project.project_name} (id={project.project_id})")

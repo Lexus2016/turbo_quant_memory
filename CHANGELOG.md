@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`doctor` now checks that the index can be read** (#7). It checked the
+  lockfile, the socket, migrations and the project, but never opened the
+  index, so it printed `All checks passed.` for a table that `semantic_search`
+  could not read (#5). It now runs the same read probe as `self_test` (#6) and
+  prints `[PASS] read path (project): N rows checked` per scope, or
+  `[FAIL] read path (project): <item_id>: <error>`, which counts as an issue
+  and gives a non-zero exit code. The check only reads, so it is safe next to
+  a running daemon. The `SKILL.md` diagnostics row says so too.
+
 ## [0.34.0] - 2026-10-21
 
 ### Added
