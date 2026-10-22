@@ -102,6 +102,11 @@ include = [
   "/LICENSE",
   "/server.json",
 ]
+# The README demo is fetched from GitHub. Keep the ~2 MB mp4 out of the sdist;
+# the poster JPEG under /assets stays.
+exclude = [
+  "/assets/*.mp4",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/turbo_memory_mcp"]

@@ -26,6 +26,19 @@
 
 ---
 
+## Demo
+
+<!-- Absolute on purpose, same as the hero: this file is the PyPI long_description.
+     PyPI's camo proxy cannot resolve a repo-relative image, and a relative link
+     would not open the mp4 on GitHub. README.uk.md / README.ru.md stay relative. -->
+<p align="center">
+  <a href="https://github.com/Lexus2016/turbo_quant_memory/blob/main/assets/turbo-quant-memory-promo.mp4">
+    <img src="https://raw.githubusercontent.com/Lexus2016/turbo_quant_memory/main/assets/turbo-quant-memory-poster.jpg" alt="30-second demo of Turbo Quant Memory" width="300">
+  </a>
+  <br>
+  <a href="https://github.com/Lexus2016/turbo_quant_memory/blob/main/assets/turbo-quant-memory-promo.mp4">Watch the 30-second demo</a>
+</p>
+
 ## The problem
 
 A long session accumulates hard-won detail about why the code is the way it is. Then the context compacts and it is gone. Next session the agent re-reads the same files, re-derives the same conclusions, and bills you for the same tokens again.
