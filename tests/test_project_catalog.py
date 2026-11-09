@@ -6,12 +6,15 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Coroutine
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest.mock import patch
 
+import anyio
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -341,6 +344,52 @@ def test_projects_cli_lists_saved_projects(tmp_path: Path, monkeypatch: pytest.M
     assert "alpha  Alpha  labels: work" in capsys.readouterr().out
 
 
+def _is_benign_stream_close(exc: BaseException) -> bool:
+    """True for a transport stream the other side already closed.
+
+    ``mcp`` 1.26's ``stdio_client.stdout_reader`` ignores ``ClosedResourceError``
+    but lets ``BrokenResourceError`` escape when a line arrives while the client
+    is closing the read stream, and the transport's TaskGroup then raises that
+    group into the caller. Every assertion here runs inside a live session, so a
+    group built only from these leaves means the probe passed and only the
+    shutdown raced (seen on the Windows CI lane, run 42595057330).
+    """
+    return isinstance(exc, (anyio.BrokenResourceError, anyio.ClosedResourceError))
+
+
+def _run_stdio_probe(probe: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    """Run one stdio client session; re-raise anything but a benign close race.
+
+    Mirrors ``server._reraise_unless_stdio_disconnect``: only the benign leaves
+    are stripped, so a real error, a cancellation, ``KeyboardInterrupt`` or
+    ``SystemExit`` still fails the test.
+    """
+    try:
+        asyncio.run(probe())
+    except BaseException as exc:
+        if isinstance(exc, BaseExceptionGroup):
+            _, remaining = exc.split(_is_benign_stream_close)
+            if remaining is not None:
+                raise
+            return
+        if _is_benign_stream_close(exc):
+            return
+        raise
+
+
+def test_stdio_probe_teardown_close_is_tolerated_but_real_errors_are_not() -> None:
+    async def closed_during_teardown() -> None:
+        raise BaseExceptionGroup("transport", [anyio.BrokenResourceError()])
+
+    async def mixed() -> None:
+        raise BaseExceptionGroup("transport", [anyio.BrokenResourceError(), ValueError("boom")])
+
+    _run_stdio_probe(closed_during_teardown)
+    with pytest.raises(BaseExceptionGroup) as excinfo:
+        _run_stdio_probe(mixed)
+    assert [type(leaf) for leaf in excinfo.value.exceptions] == [anyio.BrokenResourceError, ValueError]
+
+
 def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> None:
     storage = tmp_path / "memory"
     original = tmp_path / "original"
@@ -360,19 +409,20 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
     )
     promote_note_impl(global_note["item"]["item_id"], environ=original_env)
 
-    async def probe() -> None:
-        env = {
-            **os.environ,
-            "TQMEMORY_HOME": str(storage),
-            "TQMEMORY_DAEMON_DISABLE": "1",
-            "TQMEMORY_WORKSPACE_DISABLE": "1",
-        }
-        params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "turbo_memory_mcp", "serve"],
-            cwd=other,
-            env=env,
-        )
+    env = {
+        **os.environ,
+        "TQMEMORY_HOME": str(storage),
+        "TQMEMORY_DAEMON_DISABLE": "1",
+        "TQMEMORY_WORKSPACE_DISABLE": "1",
+    }
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "turbo_memory_mcp", "serve"],
+        cwd=other,
+        env=env,
+    )
+
+    async def first_client() -> None:
         async with stdio_client(params) as (read, write), ClientSession(
             read, write, read_timeout_seconds=timedelta(seconds=20)
         ) as client:
@@ -413,10 +463,15 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
             assert payload(await client.call_tool("unbind_project"))["removed"] is False
             assert payload(await client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
 
+    async def second_client() -> None:
+        def payload(result):
+            return result.structuredContent or json.loads(result.content[0].text)
+
         async with stdio_client(params) as (second_read, second_write), ClientSession(
             second_read, second_write, read_timeout_seconds=timedelta(seconds=20)
         ) as second_client:
             await second_client.initialize()
             assert payload(await second_client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
 
-    asyncio.run(probe())
+    _run_stdio_probe(first_client)
+    _run_stdio_probe(second_client)
