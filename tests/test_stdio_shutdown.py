@@ -23,6 +23,17 @@ from turbo_memory_mcp.daemon import BootstrapResult
 def _no_workspace_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run modes start a workspace session; keep these entry-point tests from registering one for real."""
     monkeypatch.setattr(server.WorkspaceRuntime, "start", classmethod(lambda cls, *a, **k: None))
+    class _NoopMaintenance:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(server, "IndexMaintenance", _NoopMaintenance)
 
 
 class _FakeServer:
@@ -223,3 +234,24 @@ def test_run_primary_reraises_real_error_but_still_cleans_up(
             BootstrapResult(role="primary", endpoint=object(), client=None)
         )
     assert events == ["start", "stop", "release"]
+
+
+def test_primary_starts_maintenance_and_stops_it_before_releasing_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _patch_primary(monkeypatch, BaseExceptionGroup("t", [BrokenPipeError()]))
+
+    class _Maintenance:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("maintenance-start")
+
+        def stop(self) -> None:
+            events.append("maintenance-stop")
+
+    monkeypatch.setattr(server, "IndexMaintenance", _Maintenance)
+    server._run_primary(BootstrapResult(role="primary", endpoint=object(), client=None))
+
+    assert events == ["start", "maintenance-start", "stop", "maintenance-stop", "release"]

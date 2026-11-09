@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
-description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.35.0
+description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use for persistent agent memory, project selection, index maintenance, MCP client setup, and tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
+version: 0.36.0
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -23,7 +23,7 @@ Check whether tqmemory is already available:
 
 ```bash
 uv tool install turbo-quant-memory
-# or pinned: uv tool install 'turbo-quant-memory==0.35.0'
+# or pinned: uv tool install 'turbo-quant-memory==0.36.0'
 ```
 
 ### 2.2 Install this skill
@@ -137,6 +137,12 @@ Several agent sessions may share one working tree. tqmemory shows them to each o
 - While other sessions are live, do not run destructive git commands (`checkout -- .`, `reset --hard`, `stash`, `clean`, branch switch) without the human's explicit confirmation.
 - "Live" means listed in `sessions`. A session under `idle_sessions` made no tqmemory call for 30+ minutes: it is not an active peer and its areas are not in `overlaps`. A session's presence or old `last_activity_at` is never a reason to postpone work; only `overlaps` and `recent_changes` are.
 - If your edit overwrote someone's work, or theirs overwrote yours: `file_history(path)` then `restore_file(path, version)`; a restore is itself undoable.
+
+### 3.7 Index maintenance / Обслуговування індексів
+
+EN: The primary storage-owning server starts a background index-maintenance pass immediately after startup, then checks again every six hours. It optimizes each project and global LanceDB table only when full-text rows are unindexed or versions older than seven days remain. Requests to a project may briefly return busy while its table is optimized. Its write lock is process-local; independent standalone or CLI writers are not covered, and a conflict is logged for retry on a later pass. Proxy clients and uncoordinated standalone fallback processes do not run maintenance. Use `turbo-memory-mcp index-status` for a read-only summary of size and coverage. Recent versions are retained for seven days, so a busy table can temporarily grow after optimization. Never delete LanceDB files by hand. Restart old MCP clients after upgrading so the new server becomes the storage owner. A first full sync of a legacy table re-embeds its rows once; future full syncs skip unchanged rows only while model, backend, and backend version match. Scheduled maintenance does not re-embed vectors.
+
+UK: Головний процес, який володіє сховищем, одразу після запуску починає фонову перевірку індексів і повторює її кожні шість годин. Він обслуговує таблиці проєктів та глобальну таблицю лише за наявності непроіндексованих рядків або версій старших за сім днів. Запит до проєкту під час оптимізації може тимчасово отримати відповідь «зайнято». Блокування діє лише всередині головного процесу; незалежні автономні процеси й команди термінала ним не охоплені, а конфлікт буде записано для повторної спроби. Клієнти-посередники й автономні процеси не запускають дубль. Команда `turbo-memory-mcp index-status` без зміни даних показує обсяг і покриття. Недавні версії зберігаються сім днів, тому активна таблиця після обслуговування може тимчасово зрости. Не видаляйте файли LanceDB вручну. Після оновлення перезапустіть старі клієнти MCP, щоб новий процес став власником сховища. Перше повне узгодження старої таблиці один раз перебудує її вектори; далі незмінені рядки пропускаються лише за однакової моделі, способу обчислення та версії бібліотеки. Регулярне обслуговування вектори не перебудовує.
 
 ## 4. Troubleshoot
 

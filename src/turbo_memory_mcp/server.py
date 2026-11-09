@@ -60,6 +60,7 @@ from .identity import (
     ProjectIdentity,
     resolve_project_identity,
 )
+from .index_maintenance import IndexMaintenance
 from .ingestion import assess_project_index_freshness, index_paths_with_sync_plan
 from .knowledge_lint import lint_knowledge_base
 from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks, project_lock_key
@@ -1366,6 +1367,7 @@ class ProxyRuntime:
         self._active_dispatcher: Dispatcher = make_proxy_dispatcher(initial_client)
         self._listener: DaemonListener | None = None
         self._endpoint: Any = None
+        self._maintenance: IndexMaintenance | None = None
 
     def __call__(self, tool: str, kwargs: Mapping[str, Any]) -> Any:
         with self._state_lock:
@@ -1450,6 +1452,8 @@ class ProxyRuntime:
                     self._endpoint = None
                     raise
                 self._active_dispatcher = local_dispatcher
+                self._maintenance = IndexMaintenance(resolve_storage_root(), DEFAULT_SCOPE_LOCKS)
+                self._maintenance.start()
             elif bootstrap.role == "proxy" and bootstrap.client is not None:
                 self._client = bootstrap.client
                 self._active_dispatcher = make_proxy_dispatcher(bootstrap.client)
@@ -1464,9 +1468,11 @@ class ProxyRuntime:
             listener = self._listener
             endpoint = self._endpoint
             client = self._client
+            maintenance = self._maintenance
             self._listener = None
             self._endpoint = None
             self._client = None
+            self._maintenance = None
 
         if listener is not None:
             try:
@@ -1475,6 +1481,8 @@ class ProxyRuntime:
                 pass
         # A promoted proxy may be running background index batches: finish
         # them before another process can take the lock over.
+        if maintenance is not None:
+            maintenance.stop()
         DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
         if endpoint is not None:
             try:
@@ -1648,14 +1656,17 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
     )
     listener.start()
     workspace: WorkspaceRuntime | None = None
+    maintenance: IndexMaintenance | None = None
     try:
         workspace = WorkspaceRuntime.start()
         _gate_primary_ready(ready)
+        maintenance = IndexMaintenance(resolve_storage_root(), DEFAULT_SCOPE_LOCKS)
+        maintenance.start()
         build_server(dispatcher, workspace=workspace).run(transport="stdio")
     except BaseException as exc:
         _reraise_unless_stdio_disconnect(exc)
     finally:
-        _stop_primary(listener, endpoint, workspace)
+        _stop_primary(listener, endpoint, workspace, maintenance)
 
 
 # How long shutdown waits for a running background index batch. The daemon
@@ -1663,7 +1674,12 @@ def _run_primary(bootstrap: BootstrapResult) -> None:
 REFRESHER_SHUTDOWN_TIMEOUT_SECONDS = 30.0
 
 
-def _stop_primary(listener: DaemonListener, endpoint: DaemonEndpoint, workspace: WorkspaceRuntime | None) -> None:
+def _stop_primary(
+    listener: DaemonListener,
+    endpoint: DaemonEndpoint,
+    workspace: WorkspaceRuntime | None,
+    maintenance: IndexMaintenance | None = None,
+) -> None:
     """Stop serving, finish the background batch, then hand the lock over.
 
     Another process may become primary as soon as the lock is released; it
@@ -1673,6 +1689,8 @@ def _stop_primary(listener: DaemonListener, endpoint: DaemonEndpoint, workspace:
         listener.stop()
     finally:
         try:
+            if maintenance is not None:
+                maintenance.stop()
             DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
         finally:
             try:
@@ -1711,8 +1729,12 @@ def _run_standalone() -> None:
         _shutdown_background(workspace)
 
 
-def _shutdown_background(workspace: WorkspaceRuntime | None) -> None:
+def _shutdown_background(
+    workspace: WorkspaceRuntime | None, maintenance: IndexMaintenance | None = None
+) -> None:
     try:
+        if maintenance is not None:
+            maintenance.stop()
         DEFAULT_REFRESHER.shutdown(timeout=REFRESHER_SHUTDOWN_TIMEOUT_SECONDS)
     finally:
         if workspace is not None:

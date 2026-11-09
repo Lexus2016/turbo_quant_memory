@@ -157,6 +157,14 @@ Memory calls follow the selected folder; `workspace_status`, `file_history`, and
 
 When restoring a storage snapshot on another machine, project notes, global notes, labels, and encrypted secrets move with the storage root. Local folder bindings contain the old machine's absolute paths; use `select_project` by ID and rebind folders on the new machine when needed. The secrets vault also requires its original passphrase or keyring key.
 
+## Automatic index maintenance
+
+The primary storage-owning MCP process checks retrieval indexes immediately after startup and every six hours while it runs. It optimizes tables that have unindexed full-text rows or versions older than seven days. Work runs in the background under each project's in-process write lock; requests for that project may briefly receive a busy response while optimization holds the lock. Independent standalone or CLI writers are not covered by this lock; an optimization conflict is logged and retried on a later pass. Proxy clients and uncoordinated standalone fallback processes do not run maintenance. The source Markdown and canonical JSON notes are not changed. `turbo-memory-mcp index-status` reports table size, version age, and full-text coverage without modifying data.
+
+LanceDB keeps recent versions for seven days, so optimization can temporarily increase disk use on an active table. Do not delete LanceDB files manually. If an older MCP process still owns the storage, restart its clients so the new process can become the owner and start maintenance.
+
+The first full sync of a legacy table re-embeds its rows once. Later full syncs skip unchanged rows while the embedding model, backend, and backend version remain the same. Changing any of these rebuilds the vectors on the next full sync; scheduled maintenance alone does not re-embed them.
+
 ## The 29 MCP tools
 
 | Group | Tools |

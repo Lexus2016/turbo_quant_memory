@@ -76,6 +76,17 @@ def test_serve_routes_to_stdio_server(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called["value"] is True
 
 
+def test_index_status_reads_empty_storage_without_creating_tables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "memory"
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+
+    assert main(["index-status"]) == 0
+    assert "Tables: 0" in capsys.readouterr().out
+    assert not home.exists()
+
+
 def test_prune_orphans_dry_run_lists_without_moving(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

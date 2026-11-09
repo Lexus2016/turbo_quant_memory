@@ -239,6 +239,131 @@ def test_sync_project_merges_in_bounded_chunks(tmp_path: Path) -> None:
     assert mirrored == 600
 
 
+def test_sync_project_skips_unchanged_rows_without_new_table_version(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    store = _build_store(tmp_path)
+    _write_blocks(store, 3)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    assert index.sync_project() == 3
+    before = index._open_scope_table("project").version
+
+    with patch.object(index, "_write_chunk", side_effect=AssertionError("unchanged rows embedded")):
+        assert index.sync_project() == 3
+
+    assert index._open_scope_table("project").version == before
+
+    store.write_markdown_block(
+        {
+            "block_id": "block-0000",
+            "root_id": "docs-root",
+            "source_path": "docs/block-0000.md",
+            "heading_path": ["block-0000"],
+            "chunk_index": 0,
+            "content_raw": "Updated body.",
+            "block_checksum": sha256_text("Updated body."),
+            "source_checksum": sha256_text("Updated body."),
+        }
+    )
+    written: list[list[str]] = []
+    real_write = index._write_chunk
+
+    def spy(scope: str, rows: list[dict[str, object]], **kwargs: object) -> None:
+        written.append([str(row["item_id"]) for row in rows])
+        real_write(scope, rows, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(index, "_write_chunk", side_effect=spy):
+        assert index.sync_project() == 3
+
+    assert written == [["block-0000"]]
+
+
+def test_full_sync_rebuilds_vectors_after_embedding_model_change(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    _write_blocks(store, 2)
+    first = RetrievalIndex(store, embedder=StaticEmbedder(), embedding_model_name="model-a")
+    assert first.sync_project() == 2
+    before = first._open_scope_table("project").to_arrow().to_pylist()
+
+    class ChangedEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[0.25] * 384 for _ in texts]
+
+    second = RetrievalIndex(store, embedder=ChangedEmbedder(), embedding_model_name="model-b")
+    assert second.sync_project() == 2
+    after = second._open_scope_table("project").to_arrow().to_pylist()
+    assert all(row["vector"] == [0.25] * 384 for row in after)
+    assert any(row["vector"] != [0.25] * 384 for row in before)
+    assert store.read_project_retrieval_manifest()["embedding_identity"].startswith("model-b|")
+
+
+def test_full_sync_rebuilds_legacy_vectors_without_model_marker(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    _write_blocks(store, 1)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    assert index.sync_project() == 1
+    manifest = store.read_project_retrieval_manifest()
+    manifest.pop("embedding_identity")
+    from turbo_memory_mcp.store import _write_json_atomic
+
+    _write_json_atomic(store.project_retrieval_manifest_path(), manifest)
+    before = index._open_scope_table("project").version
+    assert index.sync_project() == 1
+    assert index._open_scope_table("project").version > before
+
+
+def test_embedding_identity_changes_when_backend_version_changes(monkeypatch, tmp_path: Path) -> None:
+    index = RetrievalIndex(_build_store(tmp_path))
+    monkeypatch.setattr("turbo_memory_mcp.retrieval_index.importlib.metadata.version", lambda _name: "1.0")
+    first = index._embedding_identity()
+    monkeypatch.setattr("turbo_memory_mcp.retrieval_index.importlib.metadata.version", lambda _name: "2.0")
+    assert index._embedding_identity() != first
+
+
+def test_incremental_write_with_changed_model_invalidates_full_sync_marker(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    store.write_project_note("Memory", "unchanged content", note_kind="lesson", note_id="note-one")
+    first = RetrievalIndex(store, embedder=StaticEmbedder(), embedding_model_name="model-a")
+    assert first.sync_project() == 1
+    original_vector = first._open_scope_table("project").to_arrow().to_pylist()[0]["vector"]
+
+    class ChangedEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[0.25] * 384 for _ in texts]
+
+    changed = RetrievalIndex(store, embedder=ChangedEmbedder(), embedding_model_name="model-b")
+    assert changed.sync_project_notes(["note-one"]) == 1
+    assert store.read_project_retrieval_manifest()["embedding_identity"] == "mixed"
+
+    assert first.sync_project() == 1
+    assert first._open_scope_table("project").to_arrow().to_pylist()[0]["vector"] == original_vector
+    assert store.read_project_retrieval_manifest()["embedding_identity"] == first._embedding_identity()
+
+
+def test_full_sync_updates_metadata_without_body_change(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    store.write_project_note("Original title", "unchanged content", note_kind="lesson", note_id="note-one", tags=["old"])
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    assert index.sync_project() == 1
+
+    store.write_project_note("New title", "unchanged content", note_kind="lesson", note_id="note-one", tags=["new"])
+    assert index.sync_project() == 1
+    row = index._open_scope_table("project").to_arrow().to_pylist()[0]
+    assert row["title"] == "New title"
+    assert row["tags"] == ["new"]
+
+
+def test_repeated_empty_full_sync_does_not_create_versions(tmp_path: Path) -> None:
+    store = _build_store(tmp_path)
+    index = RetrievalIndex(store, embedder=StaticEmbedder())
+    assert index.sync_global() == 0
+    before = index._open_scope_table("global").version
+
+    assert index.sync_global() == 0
+
+    assert index._open_scope_table("global").version == before
+
+
 def test_sync_project_removes_rows_missing_from_the_store(tmp_path: Path) -> None:
     store = _build_store(tmp_path)
     block_ids = _write_blocks(store, 300)

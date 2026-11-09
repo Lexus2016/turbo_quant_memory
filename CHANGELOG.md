@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-09
+
+### Added
+- Automatic, primary-owner-only LanceDB maintenance starts in the background after startup and repeats every six hours. It optimizes tables with unindexed full-text rows or versions past the seven-day retention window, under the same per-scope locks as MCP calls. Proxy and uncoordinated standalone clients do not run duplicate workers.
+- `turbo-memory-mcp index-status` reports retrieval size, row coverage, and expired-version counts without modifying storage.
+
+### Changed
+- Full retrieval sync compares streamed non-vector row signatures and skips unchanged rows, avoiding repeated embeddings and LanceDB versions while still detecting same-second content or metadata edits. Legacy tables re-embed once; changes to the model, backend, or backend package version force a full vector rebuild on the next full sync.
+- Source Markdown and canonical JSON remain unchanged; LanceDB maintenance never deletes unverified files.
+
 ## [0.35.0] - 2026-11-09
 
 ### Added

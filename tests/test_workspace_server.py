@@ -338,6 +338,17 @@ def test_run_primary_shuts_workspace_down_even_when_lock_release_fails(monkeypat
     monkeypatch.setattr(server, "_warn_about_pending_migrations", lambda: None)
     monkeypatch.setattr(server, "release_daemon_lock", _release_fails)
     monkeypatch.setattr(server, "build_server", lambda dispatcher, **k: _NoopServer())
+    class _NoopMaintenance:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(server, "IndexMaintenance", _NoopMaintenance)
 
     with pytest.raises(OSError, match="lock file vanished"):
         server._run_primary(BootstrapResult(role="primary", endpoint=object(), client=None))

@@ -300,7 +300,9 @@ class MemoryStore:
     def read_markdown_manifest(self, project_id: str | None = None) -> dict[str, Any] | None:
         return _read_json_if_exists(self.project_markdown_manifest_path(project_id))
 
-    def write_project_retrieval_manifest(self, project_id: str | None = None) -> dict[str, Any]:
+    def write_project_retrieval_manifest(
+        self, project_id: str | None = None, *, embedding_identity: str | None = None
+    ) -> dict[str, Any]:
         resolved_project_id = project_id or self.project.project_id
         self.ensure_retrieval_layout(resolved_project_id)
         existing = self.read_project_retrieval_manifest(resolved_project_id) or {}
@@ -313,13 +315,16 @@ class MemoryStore:
             "package_version": __version__,
             "updated_at": utc_now(),
         }
+        identity = embedding_identity or existing.get("embedding_identity")
+        if identity:
+            manifest["embedding_identity"] = identity
         _write_json_atomic(self.project_retrieval_manifest_path(resolved_project_id), manifest)
         return manifest
 
     def read_project_retrieval_manifest(self, project_id: str | None = None) -> dict[str, Any] | None:
         return _read_json_if_exists(self.project_retrieval_manifest_path(project_id))
 
-    def write_global_retrieval_manifest(self) -> dict[str, Any]:
+    def write_global_retrieval_manifest(self, *, embedding_identity: str | None = None) -> dict[str, Any]:
         self.ensure_retrieval_layout()
         existing = self.read_global_retrieval_manifest() or {}
         format_version = max(int(existing.get("format_version", 0)), RETRIEVAL_FORMAT_VERSION)
@@ -330,6 +335,9 @@ class MemoryStore:
             "package_version": __version__,
             "updated_at": utc_now(),
         }
+        identity = embedding_identity or existing.get("embedding_identity")
+        if identity:
+            manifest["embedding_identity"] = identity
         _write_json_atomic(self.global_retrieval_manifest_path(), manifest)
         return manifest
 

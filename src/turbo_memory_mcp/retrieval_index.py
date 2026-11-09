@@ -8,6 +8,9 @@ vector table, it never pays the import cost of these libraries.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
+import json
 import os
 import sys
 import threading
@@ -29,8 +32,8 @@ DEFAULT_EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-Mi
 # BAAI/bge-m3. The retrieval table's vector dimension is DERIVED from whatever
 # model is configured (see _resolve_vector_dimensions), so a higher-dimensional
 # model just works after a reindex — there is no hardcoded dimension to bump.
-# Switching the model requires a retrieval re-embed (reset + re-sync) because the
-# old vectors are dimension/space-incompatible.
+# A full sync re-embeds when the model, backend, or backend version changes.
+# Повне узгодження перебудовує вектори після зміни моделі або бібліотеки.  # noqa: RUF003
 EMBEDDING_MODEL_NAME = os.environ.get("TQMEMORY_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL_NAME)
 RETRIEVAL_TABLE_NAME = "items"
 # Fallback only — used when the active embedder cannot be probed (e.g. an empty
@@ -41,6 +44,21 @@ VECTOR_DIMENSIONS = DEFAULT_VECTOR_DIMENSIONS  # back-compat export; default fal
 PROJECT_RETRIEVAL_LAYOUT = "projects/<project_id>/retrieval/"
 GLOBAL_RETRIEVAL_LAYOUT = "global/retrieval/"
 ITEM_ID_FIELD = "item_id"
+_MIRROR_SIGNATURE_FIELDS = (
+    "scope", "project_id", "project_name", "source_kind", "note_kind", "tier",
+    "item_id", "block_id", "note_id", "source_path", "heading_path", "title",
+    "tags", "content_search", "content_summary_seed", "updated_at",
+)
+
+
+def _mirror_signature(row: Mapping[str, Any]) -> str:
+    """Compare the full mirrored payload without loading or recomputing vectors."""
+    payload = {
+        key: (row.get(key) or []) if key in {"heading_path", "tags"} else row.get(key)
+        for key in _MIRROR_SIGNATURE_FIELDS
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 # Retrieval fusion tuning. Equal-weight RRF was measured to underperform pure
 # vector on real corpora (the BM25 lane surfaces lexically-similar-but-wrong rows
@@ -204,7 +222,7 @@ def build_default_embedder() -> TextEmbedder:
     the client install free of multi-GB torch wheels. The PyTorch backend needs
     the [torch] extra (dev installs get it via the dev dependency group for the
     parity test). Both backends produce vector-compatible embeddings for the
-    default model, so switching needs no reindex.
+    default model. A full sync checks backend identity before reusing vectors.
     """
     backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "fastembed").strip().lower()
     with _EMBED_LOCK:
@@ -234,7 +252,7 @@ def _load_torch_embedder() -> _TorchEmbedder:
             "TQMEMORY_EMBEDDING_BACKEND=sentence-transformers requests the legacy "
             "PyTorch backend, but sentence-transformers is not installed. Install it "
             "with `uv tool install --force 'turbo-quant-memory[torch]'` or unset the env var to use "
-            "the default fastembed/ONNX backend (vector-compatible, no reindex)."
+            "the default fastembed/ONNX backend (full sync re-embeds when needed)."
         ) from exc
 
     return _TorchEmbedder(SentenceTransformer(EMBEDDING_MODEL_NAME))
@@ -272,6 +290,20 @@ class RetrievalIndex:
         self.store = store
         self.embedding_model_name = embedding_model_name
         self._embedder = embedder
+        self._custom_embedder_type = type(embedder) if embedder is not None else None
+
+    def _embedding_identity(self) -> str:
+        """Name, backend and version define vector compatibility. / Ідентичність простору векторів."""
+        if self._custom_embedder_type is not None:
+            backend = f"custom:{self._custom_embedder_type.__module__}.{self._custom_embedder_type.__qualname__}"
+            return f"{self.embedding_model_name}|{backend}"
+        backend = os.environ.get("TQMEMORY_EMBEDDING_BACKEND", "fastembed").strip().lower()
+        package = "sentence-transformers" if backend == "sentence-transformers" else "fastembed"
+        try:
+            package_version = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            package_version = "unknown"
+        return f"{self.embedding_model_name}|{backend}|{package_version}"
 
     def project_db_path(self, project_id: str | None = None) -> Path:
         return self.store.project_retrieval_dir(project_id)
@@ -364,6 +396,16 @@ class RetrievalIndex:
         """Insert or update rows in ``SYNC_CHUNK_ROWS`` chunks; returns how many."""
         written = 0
         for chunk in _chunked((dict(row) for row in rows), SYNC_CHUNK_ROWS):
+            if written == 0:
+                manifest = (
+                    self.store.read_project_retrieval_manifest(project_id)
+                    if scope == PROJECT_SCOPE
+                    else self.store.read_global_retrieval_manifest()
+                )
+                if manifest is None or manifest.get("embedding_identity") != self._embedding_identity():
+                    # Mark before writing: a crash cannot leave mixed vectors under a valid identity.
+                    # Позначте до запису, щоб збій не приховав змішані вектори.
+                    self._write_scope_manifest(scope, project_id=project_id, embedding_identity="mixed")
             self._write_chunk(scope, chunk, project_id=project_id)
             written += len(chunk)
         if written:
@@ -579,6 +621,20 @@ class RetrievalIndex:
             if item_id is not None
         }
 
+    def existing_item_signatures(self, scope: str, *, project_id: str | None = None) -> dict[str, str]:
+        """Stream non-vector columns for a bounded-memory full-sync diff."""
+        table = self._open_scope_table(scope, project_id=project_id)
+        if table is None or self.count_rows(scope, project_id=project_id) == 0:
+            return {}
+        if not set(_MIRROR_SIGNATURE_FIELDS).issubset(table.schema.names):
+            return {}  # A legacy schema needs a full re-merge.
+        signatures: dict[str, str] = {}
+        batches = table.search().select(list(_MIRROR_SIGNATURE_FIELDS)).limit(None).to_batches(batch_size=512)
+        for batch in batches:
+            for row in batch.to_pylist():
+                signatures[str(row[ITEM_ID_FIELD])] = _mirror_signature(row)
+        return signatures
+
     def count_rows(self, scope: str, project_id: str | None = None) -> int:
         table = self._open_scope_table(scope, project_id=project_id)
         if table is None:
@@ -614,17 +670,34 @@ class RetrievalIndex:
     ) -> int:
         """Make the scope table hold exactly the rows of ``row_source``.
 
-        Rows are embedded and merged ``SYNC_CHUNK_ROWS`` at a time; rows the
-        source no longer has are deleted afterwards. If a merge fails, the
+        Source rows are embedded in ``SYNC_CHUNK_ROWS`` batches, while existing
+        signatures remain in memory; missing rows are deleted afterwards. If a merge fails, the
         table is rewritten from a fresh pass over the source, streamed the
         same way.
         """
-        existing_ids = set(self.existing_item_updated_at(scope, project_id=project_id))
+        manifest = (
+            self.store.read_project_retrieval_manifest(project_id)
+            if scope == PROJECT_SCOPE
+            else self.store.read_global_retrieval_manifest()
+        )
+        has_table = self._open_scope_table(scope, project_id=project_id) is not None
+        identity = self._embedding_identity()
+        if has_table and (manifest is None or manifest.get("embedding_identity") != identity):
+            # Old or changed model: every vector needs replacing, including unchanged text.
+            # Стара або змінена модель: усі вектори треба побудувати заново.  # noqa: RUF003
+            return self._overwrite_scope(scope, row_source, project_id=project_id)
+        existing_signatures = self.existing_item_signatures(scope, project_id=project_id)
+        existing_ids = set(existing_signatures) or self.existing_item_ids(scope, project_id=project_id)
         seen_ids: set[str] = set()
         try:
             for chunk in _chunked(row_source(), SYNC_CHUNK_ROWS):
-                self._write_chunk(scope, chunk, project_id=project_id)
                 seen_ids.update(str(row[ITEM_ID_FIELD]) for row in chunk)
+                changed = [
+                    row for row in chunk
+                    if existing_signatures.get(str(row[ITEM_ID_FIELD])) != _mirror_signature(row)
+                ]
+                if changed:
+                    self._write_chunk(scope, changed, project_id=project_id)
         except Exception as exc:
             print(
                 f"[tqmemory] {scope} mirror merge failed ({type(exc).__name__}: {exc}); rewriting the table",
@@ -632,12 +705,14 @@ class RetrievalIndex:
             )
             return self._overwrite_scope(scope, row_source, project_id=project_id)
         if not seen_ids:
-            self.reset_scope(scope, project_id=project_id)
+            if existing_ids or not has_table:
+                self.reset_scope(scope, project_id=project_id)
+            self._write_scope_manifest(scope, project_id=project_id, embedding_identity=identity)
             return 0
         stale_ids = existing_ids - seen_ids
         if stale_ids:
             self.delete_items(scope, sorted(stale_ids), project_id=project_id)
-        self._write_scope_manifest(scope, project_id=project_id)
+        self._write_scope_manifest(scope, project_id=project_id, embedding_identity=identity)
         return len(seen_ids)
 
     def _overwrite_scope(
@@ -660,8 +735,9 @@ class RetrievalIndex:
             written += len(chunk)
         if table is None:
             self.reset_scope(scope, project_id=project_id)
+            self._write_scope_manifest(scope, project_id=project_id, embedding_identity=self._embedding_identity())
             return 0
-        self._write_scope_manifest(scope, project_id=project_id)
+        self._write_scope_manifest(scope, project_id=project_id, embedding_identity=self._embedding_identity())
         return written
 
     def _write_chunk(self, scope: str, rows: list[dict[str, Any]], *, project_id: str | None = None) -> None:
@@ -758,12 +834,14 @@ class RetrievalIndex:
         except Exception:
             return None
 
-    def _write_scope_manifest(self, scope: str, *, project_id: str | None = None) -> None:
+    def _write_scope_manifest(
+        self, scope: str, *, project_id: str | None = None, embedding_identity: str | None = None
+    ) -> None:
         if scope == PROJECT_SCOPE:
-            self.store.write_project_retrieval_manifest(project_id)
+            self.store.write_project_retrieval_manifest(project_id, embedding_identity=embedding_identity)
             return
         if scope == GLOBAL_SCOPE:
-            self.store.write_global_retrieval_manifest()
+            self.store.write_global_retrieval_manifest(embedding_identity=embedding_identity)
             return
         raise ValueError(f"Unsupported retrieval scope: {scope}")
 

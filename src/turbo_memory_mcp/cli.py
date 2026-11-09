@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     projects_parser.set_defaults(handler=_handle_projects)
 
+    index_parser = subparsers.add_parser(
+        "index-status",
+        help="Inspect retrieval index size, versions, and full-text coverage without writes.",
+    )
+    index_parser.set_defaults(handler=_handle_index_status)
+
     migrate_parser = subparsers.add_parser(
         "migrate",
         help="Inspect or apply pending schema migrations.",
@@ -286,6 +292,24 @@ def _handle_projects(_: argparse.Namespace) -> int:
     if not projects:
         print("No saved projects.")
     return 0
+
+
+def _handle_index_status(_: argparse.Namespace) -> int:
+    from .index_maintenance import index_status
+    from .store import resolve_storage_root
+
+    status = index_status(resolve_storage_root())
+    print(
+        f"Tables: {status['tables']} (FTS: {status['fts_tables']}); "
+        f"rows: {status['rows']}; FTS indexed: {status['indexed_rows']}; "
+        f"unindexed: {status['unindexed_rows']}"
+    )
+    print(
+        f"Allocated: {status['allocated_bytes'] / 1048576:.1f} MiB; "
+        f"tables with versions older than 7 days: {status['expired_tables']}; "
+        f"errors: {status['errors']}"
+    )
+    return 1 if status["errors"] else 0
 
 
 def _handle_prune_orphans(args: argparse.Namespace) -> int:
