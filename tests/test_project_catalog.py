@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -372,7 +373,9 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
             cwd=other,
             env=env,
         )
-        async with stdio_client(params) as (read, write), ClientSession(read, write) as client:
+        async with stdio_client(params) as (read, write), ClientSession(
+            read, write, read_timeout_seconds=timedelta(seconds=20)
+        ) as client:
             await client.initialize()
 
             def payload(result):
@@ -410,7 +413,9 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
             assert payload(await client.call_tool("unbind_project"))["removed"] is False
             assert payload(await client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
 
-        async with stdio_client(params) as (second_read, second_write), ClientSession(second_read, second_write) as second_client:
+        async with stdio_client(params) as (second_read, second_write), ClientSession(
+            second_read, second_write, read_timeout_seconds=timedelta(seconds=20)
+        ) as second_client:
             await second_client.initialize()
             assert payload(await second_client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
 
