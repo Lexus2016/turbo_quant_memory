@@ -671,10 +671,10 @@ def _handle_secret_set(args: argparse.Namespace) -> int:
 
 def _handle_doctor(_: argparse.Namespace) -> int:
     """Run quick diagnostics: lock, migrations, storage, socket, index read path."""
-    import socket
-
     from .daemon import (
         HEALTH_CONNECT_TIMEOUT_SECONDS,
+        DaemonClient,
+        DaemonEndpoint,
         _is_pid_alive,
         _read_lockfile,
     )
@@ -730,12 +730,14 @@ def _handle_doctor(_: argparse.Namespace) -> int:
                 issues += 1
             else:
                 try:
-                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    sock.settimeout(HEALTH_CONNECT_TIMEOUT_SECONDS)
-                    sock.connect(addr)
-                    sock.close()
+                    endpoint = DaemonEndpoint.from_lockfile(payload)
+                    client = DaemonClient(endpoint)
+                    try:
+                        client.ping(connect_timeout=HEALTH_CONNECT_TIMEOUT_SECONDS)
+                    finally:
+                        client.close()
                     print(f"[PASS] socket: reachable at {addr}")
-                except OSError as exc:
+                except Exception as exc:
                     print(f"[FAIL] socket: cannot connect to {addr} — {exc}")
                     issues += 1
 

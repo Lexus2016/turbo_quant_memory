@@ -33,7 +33,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from multiprocessing.connection import Client, Listener
+from multiprocessing.connection import Client, Listener, answer_challenge, deliver_challenge
 from pathlib import Path
 from typing import Any
 
@@ -478,7 +478,7 @@ class DaemonListener:
         self._listener = Listener(
             self._endpoint.address,
             family=self._endpoint.family,
-            authkey=self._endpoint.authkey,
+            authkey=None,
             backlog=LISTENER_BACKLOG,
         )
         if self._endpoint.family == "AF_UNIX":
@@ -510,9 +510,13 @@ class DaemonListener:
             try:
                 conn = listener.accept()
             except (OSError, EOFError):
-                return
+                if self._stop_event.is_set():
+                    return
+                # Avoid a busy loop on a persistent listener error. / Уникайте циклу без паузи при сталій помилці.
+                time.sleep(0.1)
+                continue
             except Exception:
-                # Untrusted authkey, malformed handshake: swallow and keep serving.
+                time.sleep(0.1)
                 continue
             worker = threading.Thread(
                 target=self._serve_conn,
@@ -524,6 +528,16 @@ class DaemonListener:
 
     def _serve_conn(self, conn: Any) -> None:
         try:
+            try:
+                deliver_challenge(conn, self._endpoint.authkey)
+                if not conn.poll(CONNECT_TIMEOUT_SECONDS):
+                    return
+                answer_challenge(conn, self._endpoint.authkey)
+            except (OSError, EOFError, AssertionError, TimeoutError):
+                return
+            except Exception:
+                # Invalid credentials or malformed handshake affect this peer only. / Помилка стосується лише цього клієнта.
+                return
             try:
                 hello = _recv(conn, CONNECT_TIMEOUT_SECONDS)
             except (TimeoutError, EOFError, OSError):

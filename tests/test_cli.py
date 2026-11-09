@@ -244,6 +244,37 @@ def test_doctor_skips_socket_probe_for_named_pipe(
     assert exit_code == 0  # a skipped probe is not an issue
 
 
+def test_doctor_does_not_wedge_live_daemon_authentication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from turbo_memory_mcp.daemon import (
+        DaemonClient,
+        DaemonListener,
+        lockfile_path,
+        make_primary_endpoint,
+        release_daemon_lock,
+    )
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("TQMEMORY_HOME", str(home))
+    endpoint = make_primary_endpoint()
+    lockfile_path().write_text(json.dumps(endpoint.to_lockfile()), encoding="utf-8")
+    listener = DaemonListener(endpoint, lambda _tool, _kwargs: {"status": "ok"})
+    listener.start()
+    try:
+        assert main(["doctor"]) == 0
+        assert "[PASS] socket: reachable" in capsys.readouterr().out
+        client = DaemonClient(endpoint)
+        try:
+            client.ping(connect_timeout=1.0)
+        finally:
+            client.close()
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)
+
+
 # --- doctor read path (GitHub issue #7) ---
 # doctor checked the lock, the socket, migrations and the project, but never opened
 # the index, so it said "All checks passed" for a table search could not read.

@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use for persistent agent memory, project selection, index maintenance, MCP client setup, and tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.36.0
+version: 0.36.1
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -23,7 +23,7 @@ Check whether tqmemory is already available:
 
 ```bash
 uv tool install turbo-quant-memory
-# or pinned: uv tool install 'turbo-quant-memory==0.36.0'
+# or pinned: uv tool install 'turbo-quant-memory==0.36.1'
 ```
 
 ### 2.2 Install this skill
@@ -149,6 +149,6 @@ UK: Головний процес, який володіє сховищем, о�
 | Symptom | Action |
 | --- | --- |
 | `migrations_pending` in `health()` | Surface `migrations_hint` verbatim; the user runs `turbo-memory-mcp migrate --apply` with MCP clients closed. Never self-apply. |
-| MCP tool timeouts | Run `turbo-memory-mcp doctor` FIRST — it prints the lockfile path and whether its owner PID is still alive. Owner dead → just restart the MCP client; the server reclaims stale locks itself. Owner alive → leave the lock alone. Never `pkill -f turbo-memory-mcp`: it kills every tqmemory server on the host, including your own. |
+| MCP tool timeouts | Run `turbo-memory-mcp doctor` FIRST — it prints the lockfile path, checks the owner with an authenticated connection, and does not block the daemon's listener. Owner dead → just restart the MCP client; the server reclaims stale locks itself. Owner alive → leave the lock alone. Never `pkill -f turbo-memory-mcp`: it kills every tqmemory server on the host, including your own. |
 | `master_key_unavailable` / `master_key_mismatch` | Print the `setup_hint` field verbatim; stop. For a mismatch, suspect a `TQMEMORY_SECRETS_PASSPHRASE` shadowing a keyring-keyed vault. |
 | Anything else | `turbo-memory-mcp doctor` runs lock / migration / storage / socket / index read-path diagnostics and prints PASS/FAIL per check. A `[FAIL] read path` line names the index row search cannot read; report it verbatim and do not retry the search. |

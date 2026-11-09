@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-09
+
+### Fixed
+- `doctor` now checks a running daemon through the authenticated protocol. Its former raw socket probe could block the daemon listener and cause a reconnecting agent to mistake a healthy primary for a stale one.
+- The daemon authenticates each client in its own worker, so a silent or disconnected peer cannot block the listener and prevent other agents from connecting.
+
 ## [0.36.0] - 2026-11-09
 
 ### Added

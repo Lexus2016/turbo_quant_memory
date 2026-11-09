@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import socket
 import sys
 import threading
 import time
@@ -287,6 +288,40 @@ def test_listener_defers_calls_until_ready_event(storage_env: dict[str, str]) ->
         assert results["reply"] == {"echo": "echo_tool", "kwargs": {"x": 1}}
         assert recorded == [("echo_tool", {"x": 1})]
         client.close()
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)
+
+
+@pytestmark_win_daemon
+def test_aborted_authentication_does_not_stop_listener(storage_env: dict[str, str]) -> None:
+    recorded: list[tuple[str, dict[str, Any]]] = []
+    listener, endpoint = _start_primary(storage_env, _make_handler(recorded))
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
+            raw.connect(endpoint.address)
+        client = DaemonClient(endpoint)
+        try:
+            client.ping(connect_timeout=2.0)
+        finally:
+            client.close()
+    finally:
+        listener.stop()
+        release_daemon_lock(endpoint)
+
+
+@pytestmark_win_daemon
+def test_silent_peer_does_not_block_other_clients(storage_env: dict[str, str]) -> None:
+    recorded: list[tuple[str, dict[str, Any]]] = []
+    listener, endpoint = _start_primary(storage_env, _make_handler(recorded))
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as silent:
+            silent.connect(endpoint.address)
+            client = DaemonClient(endpoint)
+            try:
+                client.ping(connect_timeout=2.0)
+            finally:
+                client.close()
     finally:
         listener.stop()
         release_daemon_lock(endpoint)
