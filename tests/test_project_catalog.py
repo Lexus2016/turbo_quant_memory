@@ -383,10 +383,6 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
             selected = payload(await client.call_tool("select_project", {"project_id": "alpha"}))
             assert selected["selection"] == "explicit"
             assert payload(await client.call_tool("server_info"))["current_project"]["project_id"] == "alpha"
-            async with stdio_client(params) as (second_read, second_write), ClientSession(second_read, second_write) as second_client:
-                await second_client.initialize()
-                assert payload(await second_client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
-                assert payload(await client.call_tool("server_info"))["current_project"]["project_id"] == "alpha"
             project_results = payload(await client.call_tool("semantic_search", {
                 "query": "Project folder continuity", "scope": "project",
             }))
@@ -413,5 +409,9 @@ def test_stdio_binding_selects_only_current_client_context(tmp_path: Path) -> No
             assert "Selected folder no longer resolves" in stale.content[0].text
             assert payload(await client.call_tool("unbind_project"))["removed"] is False
             assert payload(await client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
+
+        async with stdio_client(params) as (second_read, second_write), ClientSession(second_read, second_write) as second_client:
+            await second_client.initialize()
+            assert payload(await second_client.call_tool("server_info"))["current_project"]["project_id"] == "beta"
 
     asyncio.run(probe())
