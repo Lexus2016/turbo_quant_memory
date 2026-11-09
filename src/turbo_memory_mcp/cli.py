@@ -62,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.set_defaults(handler=_handle_serve)
 
+    projects_parser = subparsers.add_parser(
+        "projects",
+        help="List saved local projects, labels, and bound folders.",
+    )
+    projects_parser.set_defaults(handler=_handle_projects)
+
     migrate_parser = subparsers.add_parser(
         "migrate",
         help="Inspect or apply pending schema migrations.",
@@ -260,6 +266,25 @@ def _handle_serve(_: argparse.Namespace) -> int:
     from .server import run_stdio_server
 
     run_stdio_server()
+    return 0
+
+
+def _handle_projects(_: argparse.Namespace) -> int:
+    from .project_catalog import list_projects
+    from .store import resolve_storage_root
+
+    try:
+        projects = list_projects(resolve_storage_root())
+    except ValueError as exc:
+        print(f"Project catalog error: {exc}", file=sys.stderr)
+        return 1
+    for project in projects:
+        labels = ", ".join(project["labels"]) or "-"
+        print(f"{project['project_id']}  {project['project_name']}  labels: {labels}")
+        for folder in project["bound_folders"]:
+            print(f"  bound: {folder}")
+    if not projects:
+        print("No saved projects.")
     return 0
 
 

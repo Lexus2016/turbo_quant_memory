@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 ENV_PROJECT_ROOT = "TQMEMORY_PROJECT_ROOT"
 ENV_PROJECT_ID = "TQMEMORY_PROJECT_ID"
 ENV_PROJECT_NAME = "TQMEMORY_PROJECT_NAME"
+ENV_ACTIVE_PROJECT_ID = "_TQMEMORY_ACTIVE_PROJECT_ID"
 GIT_SHOW_TOPLEVEL_COMMAND = "git rev-parse --show-toplevel"
 GIT_ORIGIN_URL_COMMAND = "git remote get-url origin"
 _GIT_COMMAND_TIMEOUT_SECONDS = 3.0
@@ -164,6 +165,7 @@ def _identity_cache_key(cwd: Path | str | None, env: Mapping[str, str]) -> tuple
         str(resolved_start),
         explicit_root,
         _clean_value(env.get(ENV_PROJECT_ID)),
+        _clean_value(env.get(ENV_ACTIVE_PROJECT_ID)),
         _clean_value(env.get(ENV_PROJECT_NAME)),
         _git_config_fingerprint(resolved_start),
     )
@@ -201,7 +203,18 @@ def _resolve_project_identity_uncached(
 ) -> ProjectIdentity:
     project_root = resolve_project_root(cwd=cwd, environ=env)
     project_name = _clean_value(env.get(ENV_PROJECT_NAME)) or project_root.name
+    selected_project_id = _clean_value(env.get(ENV_ACTIVE_PROJECT_ID))
     explicit_project_id = _clean_value(env.get(ENV_PROJECT_ID))
+
+    if selected_project_id:
+        _ensure_safe_id(selected_project_id, field="selected project_id")
+        return ProjectIdentity(
+            project_id=selected_project_id,
+            project_name=project_name,
+            project_root=project_root,
+            identity_source=selected_project_id,
+            identity_kind="selected_project",
+        )
 
     if explicit_project_id:
         # A client-set TQMEMORY_PROJECT_ID becomes the storage bucket name for

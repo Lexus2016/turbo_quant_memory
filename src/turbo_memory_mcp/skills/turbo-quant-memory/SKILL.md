@@ -1,7 +1,7 @@
 ---
 name: turbo-quant-memory
 description: Install, configure, and operate the Turbo Quant Memory (tqmemory) MCP server. Use when setting up persistent agent memory in a workspace, registering the tqmemory MCP server in a client, or working with tqmemory tools (remember_note, semantic_search, recent_context, link_entities, secrets vault).
-version: 0.34.0
+version: 0.35.0
 ---
 
 # Turbo Quant Memory (tqmemory)
@@ -23,7 +23,7 @@ Check whether tqmemory is already available:
 
 ```bash
 uv tool install turbo-quant-memory
-# or pinned: uv tool install 'turbo-quant-memory==0.34.0'
+# or pinned: uv tool install 'turbo-quant-memory==0.35.0'
 ```
 
 ### 2.2 Install this skill
@@ -78,6 +78,20 @@ This skill's `version:` (frontmatter) always equals the package version it shipp
 2. Call `recent_context()` FIRST — a query-free bootstrap, **including session `handoff` notes** that a plain `semantic_search` hides by default. Ordering: `project`/`global` scopes are pure recency (newest first); in `hybrid` the current project's notes fill the window first and other projects' promoted notes only backfill leftover slots. `recent_context(format="text")` returns the same window as one line per note plus a short summary, about 5× smaller than the JSON.
 3. For a specific task: `semantic_search(query="<task topic>", scope="hybrid")`. Asking "what did we decide/learn about X"? Pass `source_filter="notes"` so indexed doc blocks don't crowd decision/lesson notes out of the top ranks. Recovering a handoff by query? Pass `tier_filter=["episodic"]`.
 4. A `semantic_search` or `hydrate` result that carries `index_refresh` (`{"state": "refreshing", "pending_files": N, "pending_items": M}`) means the project's index is still catching up in the background after a large change. Results can miss very recent doc edits. Carry on, and repeat the search later if those edits matter.
+
+### 3.1.1 Project catalog and folder bindings / Каталог проєктів і прив’язки папок
+
+EN: To use an existing project from another folder without storing a folder binding, call `select_project(project_id="<exact-id>")` after `list_projects()`, then verify `server_info().current_project.project_id`. It affects only this MCP connection. `select_project()` clears the choice and returns to automatic project detection. Selection does not index files or rewrite the project's original root. `TQMEMORY_PROJECT_ID` must not conflict with the selected ID.
+
+UK: Щоб користуватися наявним проєктом з іншої папки без збереження прив’язки, після `list_projects()` викличте `select_project(project_id="<точний-ідентифікатор>")`, а потім перевірте `server_info().current_project.project_id`. Вибір діє лише в цьому підключенні MCP. `select_project()` скидає його й повертає автоматичне визначення проєкту. Вибір не індексує файли та не змінює початковий корінь проєкту. `TQMEMORY_PROJECT_ID` не повинен суперечити вибраному ідентифікатору.
+
+EN: Call `list_projects()` to discover existing project IDs, names, labels, original roots, and bound folders. The CLI equivalent is `turbo-memory-mcp projects`. If the user explicitly says a new folder belongs to an existing project, call `bind_project(project_id="<exact-id>", path="/absolute/folder")`, then verify `server_info().current_project.project_id`. This selects the folder only for the current MCP connection and persists its exact folder-to-project binding. Use `set_project_labels(project_id, labels=[...])` only for display; labels are not identity. `unbind_project(path=...)` removes a binding. Do not bind on a guessed or ambiguous name. Binding does not index files; call `index_paths` separately only when requested. An explicit `TQMEMORY_PROJECT_ID` overrides folder bindings.
+
+UK: Викликайте `list_projects()`, щоб побачити ідентифікатори, назви, мітки та прив’язані папки; у терміналі — `turbo-memory-mcp projects`. Коли користувач прямо вказав, що нова папка належить наявному проєкту, викличте `bind_project(project_id="<точний-ідентифікатор>", path="/абсолютний/шлях")` і перевірте `server_info().current_project.project_id`. Прив’язка зберігається, а вибір папки діє лише в поточному підключенні MCP. Мітки через `set_project_labels` служать тільки для відображення. `unbind_project` прибирає прив’язку. Не обирайте проєкт за неоднозначною назвою. Прив’язка не індексує файли; `index_paths` — окрема дія. Явне `TQMEMORY_PROJECT_ID` має вищий пріоритет.
+
+EN: After restoring storage on another machine, use `select_project` by ID. Saved folder bindings contain machine-specific absolute paths; rebind them explicitly if needed. An encrypted secrets vault needs the original passphrase or system keyring key.
+
+UK: Після відновлення сховища на іншому комп’ютері виберіть проєкт через `select_project` за ідентифікатором. Збережені прив’язки містять абсолютні шляхи старого комп’ютера; за потреби прив’яжіть папки заново. Для зашифрованих секретів потрібен початковий пароль або ключ зі сховища ключів системи.
 
 ### 3.2 Memory writing discipline
 

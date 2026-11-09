@@ -15,7 +15,7 @@
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=turbo-quant-memory"><img alt="MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-listed-6f42c1.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg">
   <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="MCP-інструменти" src="https://img.shields.io/badge/MCP-24%20tools-green.svg">
+  <img alt="MCP-інструменти" src="https://img.shields.io/badge/MCP-29%20tools-green.svg">
   <img alt="Локально" src="https://img.shields.io/badge/data-100%25%20local-success.svg">
 </p>
 
@@ -131,12 +131,25 @@ Turbo Quant Memory не просто *обіцяє* економити токе�
 
 Це частковий захист, який не гарантує збереження всіх змін. Запис не блокується, тож два агенти все ще можуть перезаписати роботу один одного; tqmemory лише показує це й допомагає відновити. Агенти, які ніколи не викликають tqmemory, нічого не бачать. Працює лише на одному комп'ютері. Щоб вимкнути, встановіть `TQMEMORY_WORKSPACE_DISABLE=1`.
 
-## 24 MCP-інструменти
+## Пам’ять одного проєкту в іншій папці
+
+Для тимчасового вибору без прив’язки папки викличте `list_projects()`, а потім `select_project(project_id="<ідентифікатор>")`. Поточне підключення MCP одразу користується пам’яттю цього проєкту. `select_project()` повертає автоматичне визначення. Вибір не змінює початкову папку проєкту й не індексує місцеві файли. Явне `TQMEMORY_PROJECT_ID` не повинно суперечити вибраному ідентифікатору.
+
+`list_projects()` показує збережені проєкти: сталі ідентифікатори, назви, мітки, початкові папки й додаткові прив’язки. У терміналі цей перелік показує `turbo-memory-mcp projects`. Щоб користуватися пам’яттю наявного проєкту з нової папки, агент викликає `bind_project(project_id="<ідентифікатор>", path="/абсолютний/шлях/до/папки")`. Прив’язка зберігається локально й одразу діє для поточного підключення агента. `server_info()` підтверджує вибраний проєкт. `set_project_labels(project_id, labels=[...])` змінює мітки для відображення; мітки не визначають проєкт. `unbind_project(path="/абсолютний/шлях/до/папки")` прибирає точну прив’язку.
+
+Прив’язувати можна лише наявний ідентифікатор. Сама прив’язка не індексує файли нової папки: для цього окремо викликають `index_paths`. Прив’язка стосується точної папки, тому вкладений репозиторій не підхоплюється мовчки. Якщо папку замінено або змінено її зареєстровану адресу Git, програма вимагатиме нової явної прив’язки. Налаштування `TQMEMORY_PROJECT_ID`, якщо воно задане, має вищий пріоритет.
+
+Інструменти пам’яті працюють із вибраною папкою; `workspace_status`, `file_history` і `restore_file` надалі стосуються початкового робочого дерева процесу MCP.
+
+Після перенесення знімка сховища на інший комп’ютер записи проєктів, глобальні записи, мітки та зашифровані секрети зберігаються. Прив’язки папок містять абсолютні шляхи старого комп’ютера: виберіть проєкт через `select_project` і за потреби прив’яжіть папки заново. Для читання секретів потрібен початковий пароль або ключ зі сховища ключів системи.
+
+## 29 MCP-інструментів
 
 | Група | Інструменти |
 | :--- | :--- |
 | Запис | `remember_note` · `deprecate_note` · `promote_note` · `index_paths` |
-| Читання | `semantic_search` · `hydrate` · `recent_context` · `list_scopes` |
+| Читання | `semantic_search` · `hydrate` · `recent_context` · `list_scopes` · `list_projects` |
+| Проєкти | `select_project` · `set_project_labels` · `bind_project` · `unbind_project` |
 | Граф | `link_entities` · `unlink_entities` · `get_related_entities` |
 | Гігієна | `lint_knowledge_base` · `health` · `self_test` · `server_info` |
 | Сховище | `set_secret` · `get_secret` · `list_secrets` · `delete_secret` |

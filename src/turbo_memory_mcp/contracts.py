@@ -31,7 +31,11 @@ PHASE_7_TOOL_NAMES = (*PHASE_6_TOOL_NAMES, "link_entities", "unlink_entities", "
 PHASE_9_TOOL_NAMES = (*PHASE_7_TOOL_NAMES, "set_secret", "get_secret", "list_secrets", "delete_secret")
 PHASE_10_TOOL_NAMES = (*PHASE_9_TOOL_NAMES, "recent_context")
 PHASE_11_TOOL_NAMES = (*PHASE_10_TOOL_NAMES, "announce_work", "finish_work", "workspace_status", "file_history", "restore_file")
-CURRENT_TOOL_NAMES = PHASE_11_TOOL_NAMES
+CURRENT_TOOL_NAMES = (
+    *PHASE_11_TOOL_NAMES[:3],
+    "list_projects", "select_project", "set_project_labels", "bind_project", "unbind_project",
+    *PHASE_11_TOOL_NAMES[3:],
+)
 
 
 

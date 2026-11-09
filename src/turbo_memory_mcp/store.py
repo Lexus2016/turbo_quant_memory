@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from . import __version__
 from .identity import ProjectIdentity, _ensure_safe_id
+from .project_catalog import bound_identity, selected_identity
 
 ENV_STORAGE_HOME = "TQMEMORY_HOME"
 DEFAULT_STORAGE_DIRNAME = ".turbo-quant-memory"
@@ -225,14 +226,21 @@ class MemoryStore:
         if not prior_sources:
             legacy = existing.get("identity_source")
             prior_sources = [legacy] if legacy else []
-        identity_sources = sorted({*prior_sources, self.project.identity_source})
-        manifest = {
-            "scope": PROJECT_SCOPE,
-            **self.project.as_dict(),
-            "identity_sources": identity_sources,
-            "format_version": format_version,
-            "updated_at": utc_now(),
-        }
+        if self.project.identity_kind in {"folder_binding", "selected_project"}:
+            # A folder alias or connection selection must keep the bucket's
+            # canonical identity. Прив'язка чи вибір не змінюють первинний опис.
+            if not existing:
+                raise ValueError("Selected project manifest disappeared")
+            manifest = {**existing, "format_version": format_version, "updated_at": utc_now()}
+        else:
+            identity_sources = sorted({*prior_sources, self.project.identity_source})
+            manifest = {
+                "scope": PROJECT_SCOPE,
+                **self.project.as_dict(),
+                "identity_sources": identity_sources,
+                "format_version": format_version,
+                "updated_at": utc_now(),
+            }
         _write_json_atomic(self.project_manifest_path(), manifest)
         return manifest
 
@@ -997,6 +1005,8 @@ class MemoryStore:
 def reconcile_project_identity(
     candidate: ProjectIdentity,
     storage_root: Path,
+    *,
+    cwd: Path | str | None = None,
 ) -> ProjectIdentity:
     """Return the canonical identity for a repo, reusing an existing bucket
     instead of minting a new id when a project's identity *source* changes.
@@ -1018,8 +1028,14 @@ def reconcile_project_identity(
     It never writes; ``MemoryStore.write_project_manifest`` records the
     accumulated sources. Idempotent and side-effect free.
     """
+    if candidate.identity_kind == "selected_project":
+        return selected_identity(storage_root, candidate)
     if candidate.identity_kind == "override":
         return candidate
+
+    binding = bound_identity(storage_root, candidate, cwd=cwd)
+    if binding is not None:
+        return binding
 
     projects_root = storage_root / "projects"
     if not projects_root.is_dir():

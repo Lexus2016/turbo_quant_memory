@@ -53,6 +53,7 @@ from .daemon import (
 )
 from .hydration import hydrate
 from .identity import (
+    ENV_ACTIVE_PROJECT_ID,
     ENV_PROJECT_ID,
     ENV_PROJECT_NAME,
     ENV_PROJECT_ROOT,
@@ -63,6 +64,21 @@ from .ingestion import assess_project_index_freshness, index_paths_with_sync_pla
 from .knowledge_lint import lint_knowledge_base
 from .locks import DEFAULT_SCOPE_LOCKS, GLOBAL_LOCK_KEY, ScopeLocks, project_lock_key
 from .migrations import format_pending_warning
+from .project_catalog import (
+    bind_project as bind_project_folder,
+)
+from .project_catalog import (
+    list_projects as list_catalog_projects,
+)
+from .project_catalog import (
+    resolve_folder,
+)
+from .project_catalog import (
+    set_project_labels as update_project_labels,
+)
+from .project_catalog import (
+    unbind_project as unbind_project_folder,
+)
 from .refresher import IndexRefresher, RefreshProgress
 from .retrieval import MAX_SEMANTIC_LIMIT, format_probe_error, probe_read_path, semantic_search
 from .retrieval_index import RetrievalIndex
@@ -131,6 +147,7 @@ _FORWARDED_ENV_KEYS: tuple[str, ...] = (
 # here: those are process-level and stay the primary's unless the proxy forwards
 # its own value.
 _PROJECT_IDENTITY_ENV_KEYS: tuple[str, ...] = (
+    ENV_ACTIVE_PROJECT_ID,
     ENV_PROJECT_ROOT,
     ENV_PROJECT_ID,
     ENV_PROJECT_NAME,
@@ -385,8 +402,22 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         except Exception:
             return result
 
+    selected_folder: Path | None = None
+    selected_project_id: str | None = None
+
     def _memory_call(tool: str, kwargs: Mapping[str, Any]) -> Any:
-        return _decorate(dispatcher(tool, kwargs))
+        payload = dict(kwargs)
+        if selected_folder is not None:
+            payload["_cwd"] = str(selected_folder)
+            if tool not in {"health", "list_scopes", "list_projects", "bind_project", "unbind_project", "set_project_labels"}:
+                payload["_required_project_id"] = selected_project_id
+        elif selected_project_id is not None and tool not in {
+            "list_projects", "set_project_labels", "bind_project", "unbind_project", "select_project"
+        }:
+            payload["_selected_project_id"] = selected_project_id
+            if tool not in {"health", "list_scopes"}:
+                payload["_required_project_id"] = selected_project_id
+        return _decorate(dispatcher(tool, payload))
 
     def _with_workspace_block(result: Any) -> Any:
         """health and server_info carry the workspace description; a digest, if any, is merged into it."""
@@ -396,6 +427,11 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
         digest = result.get("workspace")
         if isinstance(digest, dict):
             block = {**block, **digest}
+        if selected_folder is not None and workspace is not None and selected_folder != workspace.workspace.root:
+            block["bound_folder_notice"] = (
+                "Memory tools use the bound folder; workspace_status and file history "
+                "still describe the MCP process's original working tree."
+            )
         return {**result, "workspace": block}
 
     def _workspace_call(action: Callable[[WorkspaceRuntime], dict[str, Any]]) -> dict[str, Any]:
@@ -421,6 +457,51 @@ def build_server(dispatcher: Dispatcher, workspace: WorkspaceRuntime | None = No
     @mcp.tool()
     def list_scopes() -> dict[str, Any]:
         return _memory_call("list_scopes", {})
+
+    @mcp.tool()
+    def list_projects() -> dict[str, Any]:
+        """List saved projects with labels and explicitly bound folders."""
+        return _memory_call("list_projects", {})
+
+    @mcp.tool()
+    def select_project(project_id: str | None = None) -> dict[str, Any]:
+        """Select an existing project by ID for this connection; omit ID to reset.
+
+        Вибирає наявний проєкт для цього підключення; без ідентифікатора скидає вибір.
+        """
+        nonlocal selected_folder, selected_project_id
+        result = _decorate(dispatcher("select_project", {"project_id": project_id}))
+        selected_folder = None
+        selected_project_id = result["project_id"] if project_id is not None else None
+        return result
+
+    @mcp.tool()
+    def set_project_labels(project_id: str, labels: list[str]) -> dict[str, Any]:
+        """Set display-only labels for an existing project id."""
+        return _memory_call("set_project_labels", {"project_id": project_id, "labels": labels})
+
+    @mcp.tool()
+    def bind_project(project_id: str, path: str = ".") -> dict[str, Any]:
+        """Bind a folder to an existing project and use it in this MCP session.
+
+        The folder must already exist. This does not index its files. Use the
+        exact project_id from list_projects; labels are never identifiers.
+        """
+        nonlocal selected_folder, selected_project_id
+        result = _memory_call("bind_project", {"project_id": project_id, "path": path})
+        selected_folder = Path(result["path"])
+        selected_project_id = result["project_id"]
+        return result
+
+    @mcp.tool()
+    def unbind_project(path: str = ".") -> dict[str, Any]:
+        """Remove an exact folder binding; reset this session if it used it."""
+        nonlocal selected_folder, selected_project_id
+        result = _memory_call("unbind_project", {"path": path})
+        if selected_folder == Path(result["path"]):
+            selected_folder = None
+            selected_project_id = None
+        return result
 
     @mcp.tool()
     def self_test() -> dict[str, Any]:
@@ -829,6 +910,54 @@ def _tool_list_scopes(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> A
     return build_scope_payload()
 
 
+def _tool_list_projects(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    projects = list_catalog_projects(resolve_storage_root(environ))
+    return {"status": "ok", "project_count": len(projects), "projects": projects}
+
+
+def _tool_select_project(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    project_id = kwargs.get("project_id")
+    env = dict(os.environ if environ is None else environ)
+    if project_id is None:
+        env.pop(ENV_ACTIVE_PROJECT_ID, None)
+        project, _ = build_runtime_context(cwd=cwd, environ=env)
+        return {"status": "ok", "selection": "automatic", "project_id": project.project_id,
+                "project_name": project.project_name}
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("project_id must be a non-empty existing project ID")
+    explicit_id = str(env.get(ENV_PROJECT_ID, "")).strip()
+    if explicit_id and explicit_id != project_id:
+        raise ValueError(f"TQMEMORY_PROJECT_ID={explicit_id!r} overrides the requested selection")
+    env[ENV_ACTIVE_PROJECT_ID] = project_id
+    project, _ = build_runtime_context(cwd=cwd, environ=env)
+    return {"status": "ok", "selection": "explicit", "project_id": project.project_id,
+            "project_name": project.project_name}
+
+
+def _tool_set_project_labels(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    project_id = str(kwargs["project_id"])
+    labels = update_project_labels(resolve_storage_root(environ), project_id, kwargs["labels"])
+    return {"status": "ok", "project_id": project_id, "labels": labels}
+
+
+def _tool_bind_project(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    project_id = str(kwargs["project_id"])
+    env = os.environ if environ is None else environ
+    explicit_id = str(env.get(ENV_PROJECT_ID, "")).strip()
+    if explicit_id and explicit_id != project_id:
+        raise ValueError(f"TQMEMORY_PROJECT_ID={explicit_id!r} overrides the requested binding")
+    folder = bind_project_folder(
+        resolve_storage_root(environ), project_id, str(kwargs.get("path", ".")), cwd=cwd
+    )
+    return {"status": "ok", "project_id": project_id, "path": str(folder), "files_indexed": False}
+
+
+def _tool_unbind_project(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
+    folder = resolve_folder(str(kwargs.get("path", ".")), cwd=cwd, must_exist=False)
+    removed = unbind_project_folder(resolve_storage_root(environ), folder)
+    return {"status": "ok", "path": str(folder), "removed": removed}
+
+
 def _tool_self_test(kwargs: Mapping[str, Any], *, cwd: Any, environ: Any) -> Any:
     return self_test_impl(cwd=cwd, environ=environ)
 
@@ -973,6 +1102,11 @@ TOOL_HANDLERS: dict[str, Callable[..., Any]] = {
     "health": _tool_health,
     "server_info": _tool_server_info,
     "list_scopes": _tool_list_scopes,
+    "list_projects": _tool_list_projects,
+    "select_project": _tool_select_project,
+    "set_project_labels": _tool_set_project_labels,
+    "bind_project": _tool_bind_project,
+    "unbind_project": _tool_unbind_project,
     "self_test": _tool_self_test,
     "remember_note": _tool_remember_note,
     "promote_note": _tool_promote_note,
@@ -1046,6 +1180,7 @@ _GLOBAL_WRITE_TOOLS = frozenset({"remember_note", "deprecate_note", "link_entiti
 # Lock key for a call whose project cannot be resolved; its handler then
 # reports the real error. Outside the project namespace, so no project's key.
 _UNRESOLVED_LOCK_KEY = "unresolved"
+_CATALOG_WRITE_TOOLS = frozenset({"set_project_labels", "bind_project", "unbind_project"})
 
 
 def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str | None) -> list[str]:
@@ -1053,19 +1188,24 @@ def lock_keys_for(tool: str, kwargs: Mapping[str, Any], project_id: str | None) 
 
     project_key = project_lock_key(project_id) if project_id is not None else _UNRESOLVED_LOCK_KEY
     scope = str(kwargs.get("scope") or "").strip().lower()
+    if tool in _CATALOG_WRITE_TOOLS:
+        return [project_key, GLOBAL_LOCK_KEY]
     if tool in GLOBAL_SCOPE_TOOLS or (tool in _GLOBAL_WRITE_TOOLS and scope == GLOBAL_SCOPE):
         return [project_key, GLOBAL_LOCK_KEY]
     return [project_key]
 
 
-def _lock_project_id(cwd: Path | str | None, environ: Mapping[str, str] | None) -> str | None:
-    """Resolve a call's project like build_runtime_context, minus the store."""
+def _lock_project_identity(
+    cwd: Path | str | None, environ: Mapping[str, str] | None
+) -> tuple[str | None, bool]:
+    """Resolve a call's project and whether a mutable folder binding selected it."""
 
     try:
         candidate = resolve_project_identity(cwd=cwd, environ=environ)
-        return reconcile_project_identity(candidate, resolve_storage_root(environ)).project_id
+        project = reconcile_project_identity(candidate, resolve_storage_root(environ), cwd=cwd)
+        return project.project_id, project.identity_kind == "folder_binding"
     except Exception:
-        return None
+        return None, False
 
 
 def make_local_dispatcher(
@@ -1104,6 +1244,8 @@ def make_local_dispatcher(
         merged_kwargs = dict(kwargs)
         cwd_override = merged_kwargs.pop("_cwd", None)
         environ_override = merged_kwargs.pop("_environ", None)
+        required_project_id = merged_kwargs.pop("_required_project_id", None)
+        selected_project_id = merged_kwargs.pop("_selected_project_id", None)
         resolved_cwd = cwd_override if cwd_override is not None else default_cwd
         resolved_environ: Mapping[str, str] | None = None
         if environ_override is not None:
@@ -1118,9 +1260,27 @@ def make_local_dispatcher(
             resolved_environ.update({str(k): str(v) for k, v in environ_override.items()})
         else:
             resolved_environ = default_environ
+        if selected_project_id is not None:
+            resolved_environ = dict(os.environ if resolved_environ is None else resolved_environ)
+            resolved_environ[ENV_ACTIVE_PROJECT_ID] = str(selected_project_id)
+        resolved_project_id, uses_binding = _lock_project_identity(resolved_cwd, resolved_environ)
+        if required_project_id is not None and resolved_project_id != required_project_id:
+            selected_name = "Selected project" if selected_project_id is not None else "Selected folder"
+            hint = "check project availability" if selected_project_id is not None else "check its binding"
+            raise ValueError(
+                f"{selected_name} no longer resolves to project {required_project_id}; "
+                f"{hint} before continuing"
+            )
         if dispatch_lock is None:
-            keys = lock_keys_for(tool, merged_kwargs, _lock_project_id(resolved_cwd, resolved_environ))
+            keys = lock_keys_for(tool, merged_kwargs, resolved_project_id)
+            if (uses_binding or required_project_id is not None) and GLOBAL_LOCK_KEY not in keys:
+                keys = [*keys, GLOBAL_LOCK_KEY]
             with locks.hold(keys, timeout=timeout, tool=tool):
+                if (uses_binding or required_project_id is not None) and (
+                    _lock_project_identity(resolved_cwd, resolved_environ)[0] != resolved_project_id
+                ):
+                    subject = "selection" if selected_project_id is not None else "binding"
+                    raise ValueError(f"Project {subject} changed while waiting for the memory lock; retry after checking it")
                 return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
         lock = dispatch_lock
         acquired = lock.acquire(timeout=timeout) if timeout > 0 else lock.acquire()
@@ -1140,6 +1300,11 @@ def make_local_dispatcher(
             previous_holder = _DISPATCH_HOLDER["tool"]
             _DISPATCH_HOLDER["tool"] = tool
         try:
+            if (uses_binding or required_project_id is not None) and (
+                _lock_project_identity(resolved_cwd, resolved_environ)[0] != resolved_project_id
+            ):
+                subject = "selection" if selected_project_id is not None else "binding"
+                raise ValueError(f"Project {subject} changed while waiting for the memory lock; retry after checking it")
             return handler(merged_kwargs, cwd=resolved_cwd, environ=resolved_environ)
         finally:
             # Restore rather than clear: RLock is reentrant, so a nested
@@ -1164,7 +1329,7 @@ def make_proxy_dispatcher(client: DaemonClient) -> Dispatcher:
 
     def _dispatch(tool: str, kwargs: Mapping[str, Any]) -> Any:
         payload = dict(kwargs)
-        payload["_cwd"] = str(Path(os.getcwd()).resolve())
+        payload["_cwd"] = str(Path(payload.get("_cwd") or os.getcwd()).resolve())
         payload["_environ"] = _collect_env()
         return client.call(tool, payload)
 
@@ -2210,7 +2375,7 @@ def build_runtime_context(
     # Reconcile the pure git/path identity against existing buckets so a repo
     # that gains (or loses) a git remote keeps its original memory bucket
     # instead of silently splitting into a fresh one.
-    project = reconcile_project_identity(candidate, storage_root)
+    project = reconcile_project_identity(candidate, storage_root, cwd=cwd)
     store = MemoryStore(project, storage_root=storage_root)
     return project, store
 

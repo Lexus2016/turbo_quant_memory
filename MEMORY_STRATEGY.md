@@ -53,9 +53,11 @@ There is no separate memory engine per agent. Clients share the same server cont
 
 The current project identity resolves in this order:
 
-1. normalized `origin` remote URL
-2. repository root path hash fallback
-3. explicit overrides
+1. `select_project(project_id)` for the current MCP connection, if selected; a conflicting `TQMEMORY_PROJECT_ID` is rejected
+2. explicit `TQMEMORY_PROJECT_ID` override
+3. exact folder binding in `project-catalog.json`, if present
+4. previously seen normalized `origin` remote URL or repository root
+5. repository root path hash fallback for a new project
 
 Supported overrides:
 
@@ -65,12 +67,17 @@ Supported overrides:
 
 This makes project memory stable across sessions, while still allowing controlled overrides for unusual launch environments.
 
+`list_projects()` reads existing project manifests and adds display-only labels and bound folders from the catalog. `bind_project(project_id, path)` attaches an existing project to one exact folder; it does not index that folder or rewrite the project's original root. The binding is checked against the folder identity on use. A damaged catalog or a stale binding fails visibly rather than silently switching memory buckets. `unbind_project(path)` removes the alias. The current MCP connection starts using a folder immediately after binding it; another connection keeps its own context.
+
+`select_project(project_id)` chooses an existing bucket by ID without saving a client folder path. It affects only the current MCP connection; `select_project()` clears the choice. It does not index files or rewrite the original project manifest. This is the portable selection path for a later remote service.
+
 ## Storage Layout
 
 Storage is file-backed and local-first:
 
 ```text
 ~/.turbo-quant-memory/
+  project-catalog.json  # created only after labels or bindings are set
   projects/
     <project_id>/
       manifest.json

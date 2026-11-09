@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-09
+
 ### Added
+- `list_projects`, `set_project_labels`, `bind_project`, and `unbind_project`
+  expose the local project catalog and exact folder aliases to agents. The
+  `projects` CLI command lists saved projects and labels.
+- `select_project(project_id)` switches one MCP connection to an existing
+  project without saving a folder path; `select_project()` restores automatic
+  detection. Selection leaves the original project manifest unchanged.
+- Isolated transfer and restore coverage for project notes, global notes,
+  project labels, and the secrets vault. Test storage is removed afterwards.
 - **`doctor` now checks that the index can be read** (#7). It checked the
   lockfile, the socket, migrations and the project, but never opened the
   index, so it printed `All checks passed.` for a table that `semantic_search`

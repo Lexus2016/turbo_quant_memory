@@ -446,6 +446,12 @@ def test_proxy_dispatcher_forwards_cwd_and_environ(
         assert str(Path(captured["kwargs"]["_cwd"]).resolve()) == str(proxy_cwd.resolve())
         assert captured["kwargs"]["_environ"]["TQMEMORY_PROJECT_ID"] == "proxy-project-xyz"
         assert captured["kwargs"]["_environ"]["TQMEMORY_PROJECT_NAME"] == "Proxy Project"
+
+        selected_folder = tmp_path / "selected_folder"
+        selected_folder.mkdir()
+        dispatcher("server_info", {"_cwd": str(selected_folder), "_required_project_id": "alpha"})
+        assert captured["kwargs"]["_cwd"] == str(selected_folder.resolve())
+        assert captured["kwargs"]["_required_project_id"] == "alpha"
         client.close()
     finally:
         listener.stop()
