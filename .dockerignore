@@ -1,0 +1,17 @@
+.git
+.gitignore
+.github
+.venv
+.glama-venv
+.pytest_cache
+__pycache__
+**/__pycache__
+*.py[cod]
+.fastembed-cache
+.planning
+benchmarks
+tests
+assets/*.mp4
+docs
+examples
+*.log
