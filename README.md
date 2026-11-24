@@ -22,6 +22,7 @@
   <a href="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Lexus2016/turbo_quant_memory/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP-29%20tools-green.svg">
   <img alt="Local-first" src="https://img.shields.io/badge/data-100%25%20local-success.svg">
+  <a href="https://glama.ai/mcp/servers/Lexus2016/turbo_quant_memory"><img alt="Lexus2016/turbo_quant_memory MCP server" src="https://glama.ai/mcp/servers/Lexus2016/turbo_quant_memory/badges/score.svg"></a>
 </p>
 
 ---
